@@ -1,0 +1,22 @@
+{
+  "name": "CalmSpace.Tests.PlayMode",
+  "rootNamespace": "CalmSpace.Tests",
+  "references": [
+    "CalmSpace.Runtime",
+    "UniTask",
+    "Unity.InputSystem",
+    "Unity.InputSystem.TestFramework"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

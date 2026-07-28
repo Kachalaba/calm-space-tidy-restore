@@ -1,0 +1,23 @@
+{
+  "name": "CalmSpace.Tests.EditMode",
+  "rootNamespace": "CalmSpace.Tests",
+    "references": [
+    "CalmSpace.Runtime",
+    "UniTask",
+    "Unity.Addressables"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

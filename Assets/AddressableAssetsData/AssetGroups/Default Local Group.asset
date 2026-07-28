@@ -1,0 +1,59 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: Default Local Group
+  m_EditorClassIdentifier: 
+  m_GroupName: Default Local Group
+  m_GUID: 140b81b5e9c1846689a52e5e0340e485
+  m_SerializeEntries:
+  - m_GUID: 538fba6b8f37c425d8cfd5ce7bce87b0
+    m_Address: levels/03-tea-drawer
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 5467394e30f5e41018920934ce6f7ec9
+    m_Address: levels/05-fastener-tray
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 58f7d436d39a447ff846b00dd126fc8c
+    m_Address: levels/02-pebble-pairs
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 624efd75efc044d7686022db6cbe3b76
+    m_Address: levels/06-fresh-surface
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 7929738a8468a4be4b0f72e84801f95b
+    m_Address: levels/01-soft-blocks
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: e722de1c7ca064185ab3d108862e6236
+    m_Address: levels/04-color-shelf
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: b5867f9643ee2430799ed603710bc627, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: de99f057d3a1f481fbf9ce6149cdc3c2, type: 2}
+    - {fileID: 11400000, guid: 02567189004da463c98a6c143412cfe7, type: 2}

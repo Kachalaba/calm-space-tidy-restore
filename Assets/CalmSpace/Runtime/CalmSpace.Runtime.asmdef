@@ -1,0 +1,25 @@
+{
+  "name": "CalmSpace.Runtime",
+  "rootNamespace": "CalmSpace",
+  "references": [
+    "Unity.InputSystem",
+    "Unity.Addressables",
+    "Unity.ResourceManager",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime",
+    "Unity.ugui",
+    "UniTask",
+    "UniTask.Addressables",
+    "VContainer",
+    "VContainer.Unity"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

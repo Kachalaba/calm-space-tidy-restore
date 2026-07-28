@@ -1,0 +1,27 @@
+{
+  "name": "CalmSpace.Editor",
+  "rootNamespace": "CalmSpace.Editor",
+  "references": [
+    "CalmSpace.Runtime",
+    "Unity.Addressables",
+    "Unity.Addressables.Editor",
+    "Unity.ResourceManager",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime",
+    "Unity.InputSystem",
+    "Unity.ugui",
+    "VContainer",
+    "VContainer.Unity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
