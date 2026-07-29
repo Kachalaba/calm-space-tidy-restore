@@ -41,7 +41,7 @@ settings are invalid. It writes:
 
 ## Verified baseline
 
-- EditMode tests: 109 passed, 0 failed.
+- EditMode tests: 118 passed, 0 failed.
 - PlayMode tests: 35 passed, 0 failed. Coverage includes all eight Addressable
   levels, English/Ukrainian switching, compatible-slot sorting, cancellation,
   slot occupancy, a full touchscreen-to-physics drag through the generated
@@ -83,6 +83,9 @@ Console preparation.
   only once.
 - Eight demo spaces: Soft Blocks, Pebble Pairs, Tea Drawer, Color Shelf,
   Fastener Tray, Fresh Surface, Cabinet Hinge, and Dusty Window.
+- Levels 03-08 form a localized Cozy Workshop restoration journey with
+  chapter-stage context, true stage names, continuation copy, and validated
+  contiguous authoring metadata.
 - Hold-to-unscrew fasteners: a screw turns only while a finger rests on it,
   ticks once per whole turn, and never rewinds when the finger lifts. A panel
   keeps its colliders off until its last screw is out, so taps fall through to
@@ -112,6 +115,10 @@ Console preparation.
   asynchronous GPU readback, and a CPU-safe fallback.
 - Spatialized pooled ASMR snap audio through an AudioMixer.
 - VContainer composition root and UniTask asynchronous flows.
+- Provider-neutral product telemetry for session, level funnel, abandon, Undo,
+  room economy, theme, music, and locale events. Development builds expose
+  structured logs; release collection remains disabled until a consent-aware
+  production adapter is selected.
 - Rewarded-only ad/IAP policy with no interstitial API, atomic gameplay and
   drag gates, explicit hint/decor rewards, Relax Pass state, and
   authenticated local entitlement storage.
@@ -143,6 +150,10 @@ Start with [`docs/LLM_REVIEW_GUIDE.md`](docs/LLM_REVIEW_GUIDE.md) for a focused
 architecture, mobile UX, game-design, and release-readiness review. Asset
 origins are documented in
 [`docs/ASSET_PROVENANCE.md`](docs/ASSET_PROVENANCE.md).
+
+The fact-checked commercial hypothesis, instrumentation scope, and soft-launch
+go/no-go sequence are in
+[`docs/PRODUCT_VALIDATION_PLAN.md`](docs/PRODUCT_VALIDATION_PLAN.md).
 
 The repository is public for inspection, but no open-source or asset-reuse
 license is granted unless a separate `LICENSE` file is added.

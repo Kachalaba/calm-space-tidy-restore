@@ -1075,7 +1075,7 @@ namespace CalmSpace.Editor
                     "Name",
                     "Level",
                     font,
-                    32,
+                    28,
                     FontStyle.Bold,
                     TextAnchor.LowerLeft,
                     Paper);
@@ -1083,10 +1083,18 @@ namespace CalmSpace.Editor
                     name.rectTransform,
                     new Vector2(0f, 0f),
                     new Vector2(0f, 0f),
-                    new Vector2(28f, 27f),
-                    new Vector2(330f, 94f));
+                    new Vector2(28f, 23f),
+                    new Vector2(368f, 116f));
                 name.rectTransform.pivot =
                     new Vector2(0f, 0f);
+                name.resizeTextForBestFit = true;
+                name.resizeTextMinSize = 23;
+                name.resizeTextMaxSize = 28;
+                name.horizontalOverflow =
+                    HorizontalWrapMode.Wrap;
+                name.verticalOverflow =
+                    VerticalWrapMode.Truncate;
+                name.lineSpacing = 0.9f;
 
                 GameObject lockRoot =
                     CreateUiObject("Locked", card.Rect);
@@ -1240,7 +1248,7 @@ namespace CalmSpace.Editor
                 "Level Name",
                 "Soft Blocks",
                 font,
-                34,
+                26,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
                 Paper);
@@ -1249,9 +1257,17 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 0.5f),
                 new Vector2(0f, 0.5f),
                 new Vector2(162f, 0f),
-                new Vector2(300f, 84f));
+                new Vector2(370f, 104f));
             levelName.rectTransform.pivot =
                 new Vector2(0f, 0.5f);
+            levelName.resizeTextForBestFit = true;
+            levelName.resizeTextMinSize = 21;
+            levelName.resizeTextMaxSize = 26;
+            levelName.horizontalOverflow =
+                HorizontalWrapMode.Wrap;
+            levelName.verticalOverflow =
+                VerticalWrapMode.Truncate;
+            levelName.lineSpacing = 0.9f;
             primaryTexts.Add(levelName);
 
             progress = CreateText(

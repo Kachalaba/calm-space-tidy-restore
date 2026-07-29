@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using CalmSpace.Analytics;
 using CalmSpace.Audio;
 using CalmSpace.Cleaning;
 using CalmSpace.Core;
@@ -166,6 +167,8 @@ namespace CalmSpace.UI
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _musicService;
         private IUndoHistory _undoHistory;
+        private IProductAnalytics _analytics;
+        private IMonotonicClock _clock;
 
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
@@ -179,6 +182,8 @@ namespace CalmSpace.UI
         private RenderTextureCleaner _boundCleaner;
         private int _currentLevelIndex = -1;
         private int _lastCompletionReward;
+        private int _levelUndoCount;
+        private double _levelStartedAtSeconds;
         private bool _eventsBound;
         private bool _initialized;
         private bool _initializing;
@@ -200,7 +205,9 @@ namespace CalmSpace.UI
             IDemoThemeService themeService,
             IDemoLocalizationService localization,
             IBackgroundMusicService musicService,
-            IUndoHistory undoHistory)
+            IUndoHistory undoHistory,
+            IProductAnalytics analytics,
+            IMonotonicClock clock)
         {
             _levelFlow = levelFlow ??
                 throw new ArgumentNullException(nameof(levelFlow));
@@ -219,6 +226,10 @@ namespace CalmSpace.UI
                 throw new ArgumentNullException(nameof(musicService));
             _undoHistory = undoHistory ??
                 throw new ArgumentNullException(nameof(undoHistory));
+            _analytics = analytics ??
+                throw new ArgumentNullException(nameof(analytics));
+            _clock = clock ??
+                throw new ArgumentNullException(nameof(clock));
         }
 
         private void Awake()
@@ -283,6 +294,14 @@ namespace CalmSpace.UI
                 SetScreenImmediate(_loadingOverlay, false);
                 _activeScreen = _homeScreen;
                 _initialized = true;
+                _analytics.Track(
+                    ProductAnalyticsEvent.SessionStarted(
+                        _localization.CurrentLocale.ToString(),
+                        Application.version,
+                        DemoProgressRules.CountCompleted(
+                            _progressStore.Current,
+                            _levelCatalog.Count),
+                        _levelCatalog.Count));
                 RefreshNavigationAvailability();
                 RefreshRoomVisibility();
             }
@@ -445,33 +464,47 @@ namespace CalmSpace.UI
             UnbindLevel();
 
             bool loaded;
-            if (loadSequentially &&
-                _levelFlow.CurrentLevel != null &&
-                requestedIndex ==
-                    _levelFlow.CurrentLevelIndex + 1)
+            try
             {
-                loaded =
-                    await _levelFlow.LoadNextLevelAsync(
-                        cancellationToken);
+                if (loadSequentially &&
+                    _levelFlow.CurrentLevel != null &&
+                    requestedIndex ==
+                        _levelFlow.CurrentLevelIndex + 1)
+                {
+                    loaded =
+                        await _levelFlow.LoadNextLevelAsync(
+                            cancellationToken);
+                }
+                else
+                {
+                    loaded =
+                        await _levelFlow.LoadLevelAsync(
+                            levelId,
+                            cancellationToken);
+                }
             }
-            else
+            catch
             {
-                loaded =
-                    await _levelFlow.LoadLevelAsync(
-                        levelId,
-                        cancellationToken);
+                RestorePresentationAfterInterruptedLoad();
+                throw;
             }
 
             if (!loaded || _levelFlow.CurrentLevel == null)
             {
-                _currentLevelIndex = -1;
-                _levelThemeApplicator?.ClearCurrentLevel();
-                SetActiveScreenBehindCurtain(_homeScreen);
+                RestorePresentationAfterInterruptedLoad();
                 return false;
             }
 
             _currentLevelIndex = _levelFlow.CurrentLevelIndex;
             BindLevel(_levelFlow.CurrentLevel);
+            _levelUndoCount = 0;
+            _levelStartedAtSeconds = _clock.NowSeconds;
+            _analytics.Track(
+                ProductAnalyticsEvent.LevelStarted(
+                    _boundLevel.Definition,
+                    _currentLevelIndex,
+                    _progressStore.Current.CozyTokens,
+                    _levelCatalog.RestorationMetadataValid));
             ApplyCurrentThemeToLevel();
             RefreshHud(
                 _boundLevel.ProgressCurrent,
@@ -485,10 +518,37 @@ namespace CalmSpace.UI
             return true;
         }
 
+        private void RestorePresentationAfterInterruptedLoad()
+        {
+            LevelBase current = _levelFlow.CurrentLevel;
+            if (current == null)
+            {
+                _currentLevelIndex = -1;
+                _levelUndoCount = 0;
+                _levelStartedAtSeconds = 0d;
+                _levelThemeApplicator?.ClearCurrentLevel();
+                SetActiveScreenBehindCurtain(_homeScreen);
+                return;
+            }
+
+            _currentLevelIndex = _levelFlow.CurrentLevelIndex;
+            BindLevel(current);
+            ApplyCurrentThemeToLevel();
+            RefreshHud(
+                current.ProgressCurrent,
+                current.ProgressTotal);
+            if (_boundCleaner != null)
+            {
+                RefreshCleaningProgress(
+                    _boundCleaner.CleanedFraction);
+            }
+        }
+
         private async UniTask ReturnHomeCoreAsync(
             CancellationToken cancellationToken,
             bool screenBehindCurtain = false)
         {
+            TrackLevelAbandonedIfActive();
             UnbindLevel();
             if (_levelFlow.CurrentLevel != null)
             {
@@ -511,6 +571,44 @@ namespace CalmSpace.UI
                     _homeScreen,
                     cancellationToken);
             }
+        }
+
+        private void TrackLevelAbandonedIfActive()
+        {
+            if (!_initialized ||
+                _boundLevel == null ||
+                _boundLevel.State != LevelState.Active ||
+                _currentLevelIndex < 0)
+            {
+                return;
+            }
+
+            _analytics.Track(
+                ProductAnalyticsEvent.LevelAbandoned(
+                    _boundLevel.Definition,
+                    _currentLevelIndex,
+                    GetCurrentLevelDurationSeconds(),
+                    _levelUndoCount,
+                    _boundLevel.ProgressCurrent,
+                    _boundLevel.ProgressTotal,
+                    _levelCatalog.RestorationMetadataValid));
+        }
+
+        private double GetCurrentLevelDurationSeconds()
+        {
+            if (_clock == null)
+            {
+                return 0d;
+            }
+
+            double duration =
+                _clock.NowSeconds - _levelStartedAtSeconds;
+            return
+                double.IsNaN(duration) ||
+                double.IsInfinity(duration) ||
+                duration < 0d
+                    ? 0d
+                    : duration;
         }
 
         private async UniTask ShowLevelSelectAsync(
@@ -776,6 +874,16 @@ namespace CalmSpace.UI
                 _progressStore.CompleteLevelAndReward(
                     _currentLevelIndex,
                     _decorationCatalog.CompletionReward));
+            _analytics.Track(
+                ProductAnalyticsEvent.LevelCompleted(
+                    level.Definition,
+                    _currentLevelIndex,
+                    GetCurrentLevelDurationSeconds(),
+                    _levelUndoCount,
+                    _lastCompletionReward,
+                    _progressStore.Current.CozyTokens,
+                    _lastCompletionReward > 0,
+                    _levelCatalog.RestorationMetadataValid));
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshDecorationUi();
@@ -783,20 +891,38 @@ namespace CalmSpace.UI
 
             if (_completionTitleText != null)
             {
+                DemoTextKey titleKey =
+                    DemoTextKey.CompletionTitle;
+                if (_levelCatalog.TryGetRestorationStage(
+                        _currentLevelIndex,
+                        out var stage))
+                {
+                    titleKey =
+                        stage.IsFinalStage
+                            ? DemoTextKey.RestorationComplete
+                            : DemoTextKey
+                                .RestorationStageComplete;
+                }
+
                 _completionTitleText.text =
-                    _localization.Get(
-                        DemoTextKey.CompletionTitle);
+                    _localization.Get(titleKey);
             }
 
             if (_completionBodyText != null)
             {
                 _completionBodyText.text =
                     _localization.FormatCompletionBody(
-                        level.Definition);
+                        level.Definition,
+                        _levelCatalog.RestorationMetadataValid);
             }
 
-            var hasNext =
+            bool hasNext =
                 _currentLevelIndex + 1 < _levelCatalog.Count;
+            bool continuesRestoration =
+                hasNext &&
+                _levelCatalog.IsRestorationContinuation(
+                    _currentLevelIndex,
+                    _currentLevelIndex + 1);
             if (_completionHomeButton != null)
             {
                 _completionHomeButton.gameObject.SetActive(hasNext);
@@ -805,9 +931,12 @@ namespace CalmSpace.UI
             if (_nextButtonText != null)
             {
                 _nextButtonText.text =
-                    hasNext
+                    continuesRestoration
                         ? _localization.Get(
-                            DemoTextKey.NextSpace)
+                            DemoTextKey.ContinueRestoration)
+                        : hasNext
+                            ? _localization.Get(
+                                DemoTextKey.NextSpace)
                         : _localization.Get(
                             DemoTextKey.BackHome);
             }
@@ -867,6 +996,11 @@ namespace CalmSpace.UI
             }
 
             RefreshMusicUi(enabled);
+            if (_initialized)
+            {
+                _analytics.Track(
+                    ProductAnalyticsEvent.MusicChanged(enabled));
+            }
         }
 
         private void ApplyTheme(ThemePalette palette)
@@ -1050,9 +1184,23 @@ namespace CalmSpace.UI
         {
             if (_hudLevelNameText != null)
             {
+                RectTransform titleRect =
+                    _hudLevelNameText.rectTransform;
+                titleRect.sizeDelta =
+                    new Vector2(370f, 104f);
+                _hudLevelNameText.fontSize = 26;
+                _hudLevelNameText.resizeTextForBestFit = true;
+                _hudLevelNameText.resizeTextMinSize = 21;
+                _hudLevelNameText.resizeTextMaxSize = 26;
+                _hudLevelNameText.horizontalOverflow =
+                    HorizontalWrapMode.Wrap;
+                _hudLevelNameText.verticalOverflow =
+                    VerticalWrapMode.Truncate;
+                _hudLevelNameText.lineSpacing = 0.9f;
                 _hudLevelNameText.text =
-                    _localization.GetLevelName(
-                        _boundLevel?.Definition);
+                    _localization.FormatRestorationStageTitle(
+                        _boundLevel?.Definition,
+                        _levelCatalog.RestorationMetadataValid);
             }
 
             if (_hudProgressText == null)
@@ -1156,8 +1304,9 @@ namespace CalmSpace.UI
                 binding.SetVisible(true);
                 binding.SetContent(
                     index + 1,
-                    _localization.GetLevelName(
-                        entry.Definition));
+                    _localization.FormatRestorationStageTitle(
+                        entry.Definition,
+                        _levelCatalog.RestorationMetadataValid));
                 binding.SetState(
                     unlocked,
                     completed,
@@ -1592,6 +1741,20 @@ namespace CalmSpace.UI
         {
             if (CanNavigate() && _undoHistory.Undo())
             {
+                _levelUndoCount++;
+                if (_boundLevel != null &&
+                    _currentLevelIndex >= 0)
+                {
+                    _analytics.Track(
+                        ProductAnalyticsEvent.UndoUsed(
+                            _boundLevel.Definition,
+                            _currentLevelIndex,
+                            _levelUndoCount,
+                            _boundLevel.ProgressCurrent,
+                            _boundLevel.ProgressTotal,
+                            _levelCatalog.RestorationMetadataValid));
+                }
+
                 RefreshNavigationAvailability();
             }
         }
@@ -1619,6 +1782,13 @@ namespace CalmSpace.UI
 
         private void HandleLocaleChanged(DemoLocale locale)
         {
+            if (_initialized)
+            {
+                _analytics.Track(
+                    ProductAnalyticsEvent.LocaleChanged(
+                        locale.ToString()));
+            }
+
             RefreshLocalizedUi();
         }
 
@@ -1631,9 +1801,13 @@ namespace CalmSpace.UI
 
         private void HandleThemePressed(int themeIndex)
         {
-            if (CanNavigate())
+            if (CanNavigate() &&
+                _themeService.SelectTheme(themeIndex) &&
+                _themeService.Current != null)
             {
-                _themeService.SelectTheme(themeIndex);
+                _analytics.Track(
+                    ProductAnalyticsEvent.ThemeSelected(
+                        _themeService.Current.Id));
             }
         }
 
@@ -1664,14 +1838,34 @@ namespace CalmSpace.UI
                     (1 << decorationIndex)) != 0;
             if (owned)
             {
-                _progressStore.TrySelectDecoration(
-                    decorationIndex);
+                if (_progressStore.TrySelectDecoration(
+                        decorationIndex))
+                {
+                    _analytics.Track(
+                        ProductAnalyticsEvent.DecorationSelected(
+                            decoration.Id,
+                            "owned",
+                            _progressStore.Current.CozyTokens));
+                }
+
                 return;
             }
 
-            _progressStore.TryPurchaseAndSelectDecoration(
-                decorationIndex,
-                decoration.Cost);
+            if (_progressStore.TryPurchaseAndSelectDecoration(
+                    decorationIndex,
+                    decoration.Cost))
+            {
+                _analytics.Track(
+                    ProductAnalyticsEvent.DecorationPurchased(
+                        decoration.Id,
+                        decoration.Cost,
+                        _progressStore.Current.CozyTokens));
+                _analytics.Track(
+                    ProductAnalyticsEvent.DecorationSelected(
+                        decoration.Id,
+                        "purchase",
+                        _progressStore.Current.CozyTokens));
+            }
         }
 
         private void ValidateDependencies()
@@ -1683,7 +1877,9 @@ namespace CalmSpace.UI
                 _themeService == null ||
                 _localization == null ||
                 _musicService == null ||
-                _undoHistory == null)
+                _undoHistory == null ||
+                _analytics == null ||
+                _clock == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController was not injected.");
@@ -1996,6 +2192,21 @@ namespace CalmSpace.UI
 
                 if (_titleText != null)
                 {
+                    RectTransform titleRect =
+                        _titleText.rectTransform;
+                    titleRect.anchoredPosition =
+                        new Vector2(28f, 23f);
+                    titleRect.sizeDelta =
+                        new Vector2(368f, 116f);
+                    _titleText.fontSize = 28;
+                    _titleText.resizeTextForBestFit = true;
+                    _titleText.resizeTextMinSize = 23;
+                    _titleText.resizeTextMaxSize = 28;
+                    _titleText.horizontalOverflow =
+                        HorizontalWrapMode.Wrap;
+                    _titleText.verticalOverflow =
+                        VerticalWrapMode.Truncate;
+                    _titleText.lineSpacing = 0.9f;
                     _titleText.text =
                         displayName ?? string.Empty;
                 }

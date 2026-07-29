@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 07-cabinet-hinge
   _displayName: Cabinet Hinge
   _levelType: 2
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 4
+  _restorationStageCount: 6

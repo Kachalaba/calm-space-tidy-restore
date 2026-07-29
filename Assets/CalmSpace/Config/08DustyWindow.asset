@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 08-dusty-window
   _displayName: Dusty Window
   _levelType: 1
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 5
+  _restorationStageCount: 6

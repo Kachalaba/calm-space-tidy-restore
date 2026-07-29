@@ -38,7 +38,27 @@ namespace CalmSpace.Levels
         private LevelCatalogEntry[] _levels =
             Array.Empty<LevelCatalogEntry>();
 
+        [NonSerialized]
+        private bool _restorationMetadataInitialized;
+
+        [NonSerialized]
+        private bool _restorationMetadataValid;
+
         public int Count => _levels?.Length ?? 0;
+
+        /// <summary>
+        /// Catalog-wide authority for restoration presentation and analytics.
+        /// Invalid metadata fails closed at runtime, leaving every level
+        /// playable as an ordinary standalone space.
+        /// </summary>
+        public bool RestorationMetadataValid
+        {
+            get
+            {
+                EnsureRestorationMetadataValidity();
+                return _restorationMetadataValid;
+            }
+        }
 
         public bool TryGetEntry(
             int index,
@@ -98,6 +118,72 @@ namespace CalmSpace.Levels
             return false;
         }
 
+        public bool TryGetRestorationStage(
+            int levelIndex,
+            out RestorationStageInfo stage)
+        {
+            if (!RestorationMetadataValid ||
+                !TryGetEntry(levelIndex, out var entry))
+            {
+                stage = default;
+                return false;
+            }
+
+            return entry.Definition.TryGetRestorationStage(
+                out stage);
+        }
+
+        public bool IsRestorationContinuation(
+            int currentLevelIndex,
+            int nextLevelIndex)
+        {
+            if (!RestorationMetadataValid ||
+                !TryGetEntry(
+                    currentLevelIndex,
+                    out var current) ||
+                !TryGetEntry(nextLevelIndex, out var next))
+            {
+                return false;
+            }
+
+            return RestorationProgressRules.IsContinuation(
+                current.Definition,
+                next.Definition);
+        }
+
+        private void OnEnable()
+        {
+            RefreshRestorationMetadataValidity();
+        }
+
+        private void EnsureRestorationMetadataValidity()
+        {
+            if (!_restorationMetadataInitialized)
+            {
+                RefreshRestorationMetadataValidity();
+            }
+        }
+
+        private void RefreshRestorationMetadataValidity()
+        {
+            int levelCount = _levels?.Length ?? 0;
+            var definitions =
+                new LevelDefinition[levelCount];
+            for (var index = 0;
+                 index < levelCount;
+                 index++)
+            {
+                definitions[index] =
+                    _levels[index]?.Definition;
+            }
+
+            _restorationMetadataValid =
+                RestorationProgressRules.IsCatalogSequenceValid(
+                    definitions,
+                    out _);
+            _restorationMetadataInitialized = true;
+        }
+
 #if UNITY_EDITOR
         private void OnValidate()
         {
@@ -133,6 +219,30 @@ namespace CalmSpace.Levels
                             this);
                     }
                 }
+            }
+
+            RefreshRestorationMetadataValidity();
+            if (!_restorationMetadataValid)
+            {
+                var definitions =
+                    new LevelDefinition[_levels.Length];
+                for (var index = 0;
+                     index < _levels.Length;
+                     index++)
+                {
+                    definitions[index] =
+                        _levels[index]?.Definition;
+                }
+
+                RestorationProgressRules.IsCatalogSequenceValid(
+                    definitions,
+                    out var invalidIndex);
+                Debug.LogError(
+                    "Restoration chapter metadata must form contiguous, " +
+                    "complete catalog sequences. Invalid level index: " +
+                    invalidIndex +
+                    ".",
+                    this);
             }
         }
 #endif

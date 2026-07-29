@@ -195,13 +195,19 @@ namespace CalmSpace.Editor
 
             Directory.CreateDirectory(outputDirectory);
 
+            BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
+            if (!requireReleaseSigning)
+            {
+                buildOptions |= BuildOptions.Development;
+            }
+
             var options = new BuildPlayerOptions
             {
                 scenes = new[] { MainScenePath },
                 locationPathName = outputPath,
                 target = BuildTarget.Android,
                 targetGroup = BuildTargetGroup.Android,
-                options = BuildOptions.CompressWithLz4HC
+                options = buildOptions
             };
 
             BuildReport report = BuildPipeline.BuildPlayer(options);

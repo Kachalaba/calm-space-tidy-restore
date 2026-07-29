@@ -38,13 +38,15 @@ production-signing providers are deliberately not included.
 The project uses a single persistent scene. Eight gameplay prefabs are
 loaded through Addressables.
 
-The verified baseline is 109 passing EditMode tests and 35 passing PlayMode
+The verified baseline is 118 passing EditMode tests and 35 passing PlayMode
 tests. The Android development build is ARM64/IL2CPP with API 24 minimum and
 target API 36.
 
 ## High-signal review map
 
 - `README.md` — current feature and validation summary.
+- `docs/PRODUCT_VALIDATION_PLAN.md` — fact-checked commercial hypothesis,
+  analytics scope, and staged soft-launch gates.
 - `docs/PLAY_STORE_RELEASE.md` — store, signing, billing, ads, and privacy
   checklist.
 - `Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs` — menu, level
@@ -72,6 +74,10 @@ target API 36.
   selected by the shared platform factory.
 - `Assets/CalmSpace/Runtime/Levels/LevelBase.cs` — shared level lifecycle and
   completion.
+- `Assets/CalmSpace/Runtime/Levels/RestorationProgressRules.cs` — contiguous
+  restoration chapter metadata and continuation rules.
+- `Assets/CalmSpace/Runtime/Analytics/ProductAnalytics.cs` — typed,
+  provider-neutral product events and failure isolation.
 - `Assets/CalmSpace/Runtime/Monetization/MonetizationManager.cs` —
   explicit rewarded-only policy and Relax Pass state.
 - `Assets/CalmSpace/Editor/AntiAnxietyProjectValidator.cs` — build gate for

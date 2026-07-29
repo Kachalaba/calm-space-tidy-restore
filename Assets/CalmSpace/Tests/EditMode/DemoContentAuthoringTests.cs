@@ -69,6 +69,52 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void DemoCatalogAuthorsCompleteCozyWorkshopJourney()
+        {
+            LevelCatalog catalog =
+                AssetDatabase.LoadAssetAtPath<LevelCatalog>(
+                    CatalogPath);
+            Assert.That(catalog, Is.Not.Null);
+
+            var definitions =
+                new LevelDefinition[catalog.Count];
+            for (var index = 0;
+                 index < catalog.Count;
+                 index++)
+            {
+                Assert.That(
+                    catalog.TryGetEntry(index, out var entry),
+                    Is.True);
+                definitions[index] = entry.Definition;
+            }
+
+            Assert.That(
+                RestorationProgressRules.IsCatalogSequenceValid(
+                    definitions,
+                    out var invalidIndex),
+                Is.True,
+                "Invalid restoration stage at index " +
+                invalidIndex);
+            Assert.That(
+                catalog.RestorationMetadataValid,
+                Is.True);
+            Assert.That(
+                definitions[0].RestorationChapterId,
+                Is.Empty);
+            Assert.That(
+                definitions[1].RestorationChapterId,
+                Is.Empty);
+            Assert.That(
+                definitions[2].RestorationChapterId,
+                Is.EqualTo("cozy-workshop"));
+            Assert.That(
+                definitions[7].TryGetRestorationStage(
+                    out var finalStage),
+                Is.True);
+            Assert.That(finalStage.IsFinalStage, Is.True);
+        }
+
+        [Test]
         public void EveryAuthoredPrefabMatchesItsDefinitionType()
         {
             for (var index = 0; index < PrefabPaths.Length; index++)

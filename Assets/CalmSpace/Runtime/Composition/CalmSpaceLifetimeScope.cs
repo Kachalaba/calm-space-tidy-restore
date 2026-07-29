@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using CalmSpace.Analytics;
 using CalmSpace.Audio;
 using CalmSpace.Core;
 using CalmSpace.Demo;
@@ -90,6 +91,18 @@ namespace CalmSpace.Core
                     _ => new UnityMonotonicClock(),
                     Lifetime.Singleton)
                 .As<IMonotonicClock>();
+            builder
+                .Register<DevelopmentProductAnalyticsSink>(
+                    _ => new DevelopmentProductAnalyticsSink(),
+                    Lifetime.Singleton)
+                .As<IProductAnalyticsSink>();
+            builder
+                .Register<SafeProductAnalyticsService>(
+                    resolver =>
+                        new SafeProductAnalyticsService(
+                            resolver.Resolve<IProductAnalyticsSink>()),
+                    Lifetime.Singleton)
+                .As<IProductAnalytics>();
             builder
                 .Register<LevelSessionUndoHistory>(
                     _ => new LevelSessionUndoHistory(),
