@@ -1,5 +1,11 @@
 # Calm Space Product Validation Plan
 
+> **Decision update — 2026-07-30:** the previously proposed three separate hero
+> restorations have been replaced by one coherent eight-stage Living Workshop
+> vertical slice. The approved product and technical scope is defined in
+> `docs/superpowers/specs/2026-07-30-living-workshop-retention-design.md`.
+> Evidence gaps and the soft-launch gates in this document remain applicable.
+
 ## Commercial decision
 
 Keep the anti-anxiety positioning and test the **Cozy Restoration Workshop**
@@ -88,20 +94,18 @@ operations are also absent. No subscription decision should use this model.
 
 ## Next validation increment
 
-Build **three hero restorations**, each reusing the existing input modules but
-presenting one recognizable object from before to after:
+Build the approved **Old Family Workshop** vertical slice:
 
-1. keepsake music box: unscrew, clean, fit the mechanism;
-2. tea cabinet: sort contents, polish surfaces, replace the hinge;
-3. greenhouse window: clear debris, wash glass, arrange plants.
+1. connect all eight existing levels to eight permanent room transformations;
+2. make the living workshop the primary home and keep level select secondary;
+3. add the family memory layer, two reversible decor slots, one non-expiring
+   daily care ritual, and the lifetime Relax Pass boundary;
+4. validate the encrypted profile migration, typed product events, EN/UK/RU,
+   and the complete flow on Pixel 8.
 
-Each hero scenario must produce:
-
-- a satisfying 10-20 second ad hook;
-- a complete 3-7 minute first-play experience;
-- a visible before/after result in the room;
-- one optional rewarded offer;
-- one meaningful Cozy Token spend.
+Implementation is split into independently verified milestones so the core
+`level → room reveal → next task` funnel can be measured before family,
+personalization, and daily-return layers are added.
 
 ## Go / no-go sequence
 
@@ -120,11 +124,10 @@ invalidate the product's clearest positioning advantage.
 
 ## Decisions intentionally deferred
 
-- lifetime purchase versus subscription Relax Pass;
 - production analytics/attribution vendor;
 - rewarded ad network or mediation stack;
 - price points and regional pricing;
-- a second room, pet, daily ritual, or seasonal pass;
+- a second playable room, pet, or seasonal pass;
 - 30-level content production;
 - paid scaling in Tier-1 markets.
 
