@@ -15,6 +15,12 @@ MonoBehaviour:
   m_GroupName: Default Local Group
   m_GUID: 140b81b5e9c1846689a52e5e0340e485
   m_SerializeEntries:
+  - m_GUID: 41629297fe3194e0abf1c3c18a7ca826
+    m_Address: levels/08-dusty-window
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: 538fba6b8f37c425d8cfd5ce7bce87b0
     m_Address: levels/03-tea-drawer
     m_ReadOnly: 0
@@ -41,6 +47,12 @@ MonoBehaviour:
     FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: 7929738a8468a4be4b0f72e84801f95b
     m_Address: levels/01-soft-blocks
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-level
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: a4e6561bf1a76406e8dcca35e64f1b96
+    m_Address: levels/07-cabinet-hinge
     m_ReadOnly: 0
     m_SerializedLabels:
     - calm-space-level

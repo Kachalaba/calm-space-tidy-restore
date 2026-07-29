@@ -7,6 +7,7 @@ using CalmSpace.Demo;
 using CalmSpace.Haptics;
 using CalmSpace.Input;
 using CalmSpace.Levels;
+using CalmSpace.UI;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Build;
@@ -778,6 +779,8 @@ namespace CalmSpace.Editor
             CreateLighting();
             Renderer[] boardRenderers =
                 CreateEnvironment(platformMaterial);
+            DemoRoomPresenter roomPresenter =
+                CalmSpaceDemoSceneBuilder.CreateHomeRoom();
 
             var levelRootObject = new GameObject("Level Root");
             Transform levelRoot = levelRootObject.transform;
@@ -820,6 +823,9 @@ namespace CalmSpace.Editor
             DemoThemeCatalog themeCatalog =
                 CalmSpaceDemoSceneBuilder
                     .CreateOrUpdateThemeCatalog();
+            DemoDecorationCatalog decorationCatalog =
+                CalmSpaceDemoSceneBuilder
+                    .CreateOrUpdateDecorationCatalog();
             SetObjectReference(
                 lifetimeScope,
                 "_levelCatalog",
@@ -832,6 +838,10 @@ namespace CalmSpace.Editor
                 lifetimeScope,
                 "_demoThemeCatalog",
                 themeCatalog);
+            SetObjectReference(
+                lifetimeScope,
+                "_demoDecorationCatalog",
+                decorationCatalog);
 
             var inputObject = new GameObject("Input");
             DragInputRouter router =
@@ -842,8 +852,10 @@ namespace CalmSpace.Editor
                 services.transform,
                 camera,
                 boardRenderers,
+                roomPresenter,
                 menuBackground,
-                roundedSprite);
+                roundedSprite,
+                catalog.Count);
 
             if (!EditorSceneManager.SaveScene(scene, MainScenePath))
             {

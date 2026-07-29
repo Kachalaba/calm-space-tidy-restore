@@ -60,14 +60,25 @@ namespace CalmSpace.Demo
             ThemePalette palette)
         {
             _currentLevelRoot = levelRoot;
-            if (levelRoot == null || palette == null)
+            ApplyRootPalette(levelRoot, palette);
+        }
+
+        /// <summary>
+        /// Applies a palette to an arbitrary themed hierarchy without
+        /// replacing the Addressable level tracked by this applicator.
+        /// </summary>
+        public void ApplyRootPalette(
+            GameObject root,
+            ThemePalette palette)
+        {
+            if (root == null || palette == null)
             {
                 return;
             }
 
             EnsurePropertyBlock();
             var tags =
-                levelRoot.GetComponentsInChildren<
+                root.GetComponentsInChildren<
                     DemoThemeColorTag>(true);
             if (tags.Length > 0)
             {
@@ -79,7 +90,7 @@ namespace CalmSpace.Demo
                 return;
             }
 
-            ApplyFallback(levelRoot, palette);
+            ApplyFallback(root, palette);
         }
 
         public void ClearCurrentLevel()

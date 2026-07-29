@@ -21,6 +21,8 @@ namespace CalmSpace.Editor
     {
         private const string ThemeCatalogPath =
             "Assets/CalmSpace/Config/DemoThemeCatalog.asset";
+        private const string DecorationCatalogPath =
+            "Assets/CalmSpace/Config/DemoDecorationCatalog.asset";
         private static readonly Color Ink =
             new Color(0.035f, 0.045f, 0.055f, 1f);
         private static readonly Color Paper =
@@ -53,21 +55,72 @@ namespace CalmSpace.Editor
             return catalog;
         }
 
+        public static DemoDecorationCatalog
+            CreateOrUpdateDecorationCatalog()
+        {
+            DemoDecorationCatalog catalog =
+                AssetDatabase.LoadAssetAtPath<DemoDecorationCatalog>(
+                    DecorationCatalogPath);
+            if (catalog == null)
+            {
+                catalog =
+                    ScriptableObject.CreateInstance<
+                        DemoDecorationCatalog>();
+                AssetDatabase.CreateAsset(
+                    catalog,
+                    DecorationCatalogPath);
+            }
+
+            SetPrivateField(
+                catalog,
+                "_decorations",
+                DemoDecorationCatalog.CreateBuiltInDefinitions());
+            SetPrivateField(catalog, "_completionReward", 15);
+            EditorUtility.SetDirty(catalog);
+            return catalog;
+        }
+
+        public static DemoRoomPresenter CreateHomeRoom()
+        {
+            var presenterRoot =
+                new GameObject(
+                    "Home Decoration Presenter",
+                    typeof(RectTransform));
+            DemoRoomPresenter presenter =
+                presenterRoot.AddComponent<DemoRoomPresenter>();
+            return presenter;
+        }
+
         public static DemoExperienceController CreateDemoUi(
             Transform servicesRoot,
             Camera camera,
             Renderer[] boardRenderers,
+            DemoRoomPresenter roomPresenter,
             Sprite menuBackground,
-            Sprite roundedSprite)
+            Sprite roundedSprite,
+            int levelCount)
         {
             if (servicesRoot == null)
             {
                 throw new ArgumentNullException(nameof(servicesRoot));
             }
 
+            if (levelCount < 1)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(levelCount),
+                    levelCount,
+                    "The level select needs at least one entry.");
+            }
+
             if (camera == null)
             {
                 throw new ArgumentNullException(nameof(camera));
+            }
+
+            if (roomPresenter == null)
+            {
+                throw new ArgumentNullException(nameof(roomPresenter));
             }
 
             if (menuBackground == null || roundedSprite == null)
@@ -120,6 +173,8 @@ namespace CalmSpace.Editor
                 menuBackground,
                 roundedSprite,
                 font,
+                levelCount,
+                roomPresenter,
                 primaryTexts,
                 secondaryTexts,
                 accentImages,
@@ -130,11 +185,14 @@ namespace CalmSpace.Editor
                 out Button musicButton,
                 out Button languageButton,
                 out Text homeProgressText,
+                out Text roomCurrencyText,
                 out Text musicButtonText,
                 out Text languageButtonText,
                 out Image musicStateImage,
                 out DemoExperienceController.ThemeButtonBinding[]
                     themeBindings,
+                out DemoExperienceController.DecorationButtonBinding[]
+                    decorationBindings,
                 out homeWash);
 
             CanvasGroup levelSelect =
@@ -144,6 +202,7 @@ namespace CalmSpace.Editor
                 menuBackground,
                 roundedSprite,
                 font,
+                levelCount,
                 primaryTexts,
                 secondaryTexts,
                 panelImages,
@@ -181,6 +240,7 @@ namespace CalmSpace.Editor
                 out Button nextButton,
                 out Text completionTitleText,
                 out Text completionBodyText,
+                out Text completionRewardText,
                 out Text nextButtonText);
 
             CanvasGroup loading =
@@ -249,6 +309,10 @@ namespace CalmSpace.Editor
                 homeProgressText);
             SetObjectReference(
                 experience,
+                "_roomCurrencyText",
+                roomCurrencyText);
+            SetObjectReference(
+                experience,
                 "_hudLevelNameText",
                 hudLevelNameText);
             SetObjectReference(
@@ -263,6 +327,10 @@ namespace CalmSpace.Editor
                 experience,
                 "_completionBodyText",
                 completionBodyText);
+            SetObjectReference(
+                experience,
+                "_completionRewardText",
+                completionRewardText);
             SetObjectReference(
                 experience,
                 "_nextButtonText",
@@ -281,6 +349,10 @@ namespace CalmSpace.Editor
                 applicator);
             SetObjectReference(
                 experience,
+                "_roomPresenter",
+                roomPresenter);
+            SetObjectReference(
+                experience,
                 "_backgroundWash",
                 homeWash);
             SetObjectReference(
@@ -289,6 +361,10 @@ namespace CalmSpace.Editor
                 musicStateImage);
             SetPrivateField(experience, "_levelButtons", levelBindings);
             SetPrivateField(experience, "_themeButtons", themeBindings);
+            SetPrivateField(
+                experience,
+                "_decorationButtons",
+                decorationBindings);
             SetPrivateField(
                 experience,
                 "_localizedTexts",
@@ -318,6 +394,8 @@ namespace CalmSpace.Editor
             Sprite background,
             Sprite rounded,
             Font font,
+            int levelCount,
+            DemoRoomPresenter roomPresenter,
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> accentImages,
@@ -329,19 +407,25 @@ namespace CalmSpace.Editor
             out Button musicButton,
             out Button languageButton,
             out Text progressText,
+            out Text currencyText,
             out Text musicText,
             out Text languageText,
             out Image musicStateImage,
             out DemoExperienceController.ThemeButtonBinding[]
                 themeBindings,
+            out DemoExperienceController.DecorationButtonBinding[]
+                decorationBindings,
             out Image backgroundWash)
         {
-            CreateBackground(screen, background);
+            Image homeBackground = CreateBackground(
+                screen,
+                background);
+            homeBackground.color = Color.white;
             backgroundWash = CreateImage(
                 screen,
                 "Theme Wash",
                 null,
-                new Color(0.035f, 0.06f, 0.055f, 0.26f),
+                new Color(0.024f, 0.075f, 0.065f, 0.10f),
                 false);
             Stretch(backgroundWash.rectTransform);
 
@@ -470,6 +554,33 @@ namespace CalmSpace.Editor
             panelImages.Add(language.Background);
             primaryTexts.Add(language.Label);
 
+            Image currencyPill = CreateImage(
+                safe,
+                "Calm Tokens",
+                rounded,
+                SagePanel,
+                false);
+            SetAnchored(
+                currencyPill.rectTransform,
+                new Vector2(1f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(-64f, -286f),
+                new Vector2(360f, 70f));
+            currencyPill.rectTransform.pivot =
+                new Vector2(1f, 1f);
+            panelImages.Add(currencyPill);
+            currencyText = CreateText(
+                currencyPill.rectTransform,
+                "Value",
+                "CALM TOKENS · 0",
+                font,
+                23,
+                FontStyle.Bold,
+                TextAnchor.MiddleCenter,
+                Paper);
+            Stretch(currencyText.rectTransform);
+            primaryTexts.Add(currencyText);
+
             Image card = CreateImage(
                 safe,
                 "Home Card",
@@ -480,8 +591,8 @@ namespace CalmSpace.Editor
                 card.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 62f),
-                new Vector2(940f, 830f));
+                new Vector2(0f, 48f),
+                new Vector2(940f, 1000f));
             card.rectTransform.pivot = new Vector2(0.5f, 0f);
             panelImages.Add(card);
 
@@ -498,7 +609,7 @@ namespace CalmSpace.Editor
                 ritual.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 742f),
+                new Vector2(0f, 912f),
                 new Vector2(810f, 46f));
             primaryTexts.Add(ritual);
             AddLocalizedText(
@@ -509,7 +620,7 @@ namespace CalmSpace.Editor
             progressText = CreateText(
                 card.rectTransform,
                 "Progress",
-                "0 / 6 spaces restored",
+                "0 / " + levelCount + " spaces restored",
                 font,
                 34,
                 FontStyle.Bold,
@@ -519,7 +630,7 @@ namespace CalmSpace.Editor
                 progressText.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 680f),
+                new Vector2(0f, 850f),
                 new Vector2(810f, 60f));
             primaryTexts.Add(progressText);
 
@@ -536,7 +647,7 @@ namespace CalmSpace.Editor
                 mood.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 592f),
+                new Vector2(0f, 772f),
                 new Vector2(810f, 44f));
             secondaryTexts.Add(mood);
             AddLocalizedText(
@@ -565,8 +676,8 @@ namespace CalmSpace.Editor
                     theme.Rect,
                     new Vector2(0.5f, 0f),
                     new Vector2(0.5f, 0f),
-                    new Vector2(x, 466f),
-                    new Vector2(250f, 136f));
+                    new Vector2(x, 650f),
+                    new Vector2(250f, 124f));
                 panelImages.Add(theme.Background);
                 primaryTexts.Add(theme.Label);
 
@@ -619,6 +730,150 @@ namespace CalmSpace.Editor
                 themeBindings[index] = binding;
             }
 
+            Text decorLabel = CreateText(
+                card.rectTransform,
+                "Decor Label",
+                "YOUR CALM COLLECTION",
+                font,
+                22,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                SecondaryPaper);
+            SetAnchored(
+                decorLabel.rectTransform,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(0f, 552f),
+                new Vector2(810f, 40f));
+            secondaryTexts.Add(decorLabel);
+            AddLocalizedText(
+                localizedTexts,
+                decorLabel,
+                DemoTextKey.HomeDecorLabel);
+            WireCanvasDecorationPresenter(
+                card.rectTransform,
+                rounded,
+                roomPresenter);
+
+            decorationBindings =
+                new DemoExperienceController
+                    .DecorationButtonBinding[4];
+            for (var index = 0;
+                 index < decorationBindings.Length;
+                 index++)
+            {
+                ButtonVisual decor = CreateButton(
+                    card.rectTransform,
+                    "Decoration " + (index + 1),
+                    "Decoration",
+                    rounded,
+                    font,
+                    19,
+                    new Color(0.15f, 0.22f, 0.20f, 1f));
+                var row = index / 2;
+                var column = index % 2;
+                float x = column == 0 ? -202f : 202f;
+                float y = 472f - row * 120f;
+                SetAnchored(
+                    decor.Rect,
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0.5f, 0f),
+                    new Vector2(x, y),
+                    new Vector2(390f, 104f));
+                panelImages.Add(decor.Background);
+                primaryTexts.Add(decor.Label);
+
+                decor.Label.alignment = TextAnchor.MiddleLeft;
+                decor.Label.rectTransform.offsetMin =
+                    new Vector2(66f, 32f);
+                decor.Label.rectTransform.offsetMax =
+                    new Vector2(-12f, -8f);
+
+                GameObject selected =
+                    CreateUiObject("Selected", decor.Rect);
+                RectTransform selectedRect =
+                    selected.GetComponent<RectTransform>();
+                Stretch(
+                    selectedRect,
+                    new Vector2(-6f, -6f),
+                    new Vector2(6f, 6f));
+                Image selectedWash = CreateImage(
+                    selectedRect,
+                    "Wash",
+                    rounded,
+                    new Color(1f, 0.47f, 0.40f, 0.10f),
+                    false);
+                Stretch(selectedWash.rectTransform);
+                Image selectedRail = CreateImage(
+                    selectedRect,
+                    "Rail",
+                    rounded,
+                    Coral,
+                    false);
+                SetAnchored(
+                    selectedRail.rectTransform,
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(8f, 0f),
+                    new Vector2(7f, 72f));
+                selectedRail.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
+                selected.transform.SetAsFirstSibling();
+                selected.SetActive(false);
+
+                Image preview = CreateImage(
+                    decor.Rect,
+                    "Preview",
+                    rounded,
+                    index == 0
+                        ? new Color(0.44f, 0.72f, 0.57f, 1f)
+                        : index == 1
+                            ? new Color(0.66f, 0.65f, 0.60f, 1f)
+                            : index == 2
+                                ? new Color(0.96f, 0.71f, 0.30f, 1f)
+                                : new Color(0.85f, 0.47f, 0.40f, 1f),
+                    false);
+                SetAnchored(
+                    preview.rectTransform,
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(22f, 0f),
+                    new Vector2(28f, 58f));
+                preview.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
+
+                Text state = CreateText(
+                    decor.Rect,
+                    "State",
+                    "OWNED",
+                    font,
+                    15,
+                    FontStyle.Bold,
+                    TextAnchor.MiddleLeft,
+                    SecondaryPaper);
+                SetAnchored(
+                    state.rectTransform,
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(66f, -28f),
+                    new Vector2(292f, 24f));
+                state.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
+                secondaryTexts.Add(state);
+
+                var binding = new DemoExperienceController
+                    .DecorationButtonBinding();
+                SetPrivateField(binding, "_button", decor.Button);
+                SetPrivateField(binding, "_preview", preview);
+                SetPrivateField(binding, "_name", decor.Label);
+                SetPrivateField(binding, "_state", state);
+                SetPrivateField(
+                    binding,
+                    "_selectedRoot",
+                    selected);
+                decorationBindings[index] = binding;
+            }
+
             ButtonVisual play = CreateButton(
                 card.rectTransform,
                 "Play",
@@ -631,8 +886,8 @@ namespace CalmSpace.Editor
                 play.Rect,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 230f),
-                new Vector2(810f, 150f));
+                new Vector2(0f, 222f),
+                new Vector2(810f, 140f));
             playButton = play.Button;
             accentImages.Add(play.Background);
             primaryTexts.Add(play.Label);
@@ -653,8 +908,8 @@ namespace CalmSpace.Editor
                 levels.Rect,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 68f),
-                new Vector2(810f, 118f));
+                new Vector2(0f, 64f),
+                new Vector2(810f, 108f));
             levelsButton = levels.Button;
             panelImages.Add(levels.Background);
             primaryTexts.Add(levels.Label);
@@ -669,6 +924,7 @@ namespace CalmSpace.Editor
             Sprite background,
             Sprite rounded,
             Font font,
+            int levelCount,
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> panelImages,
@@ -753,7 +1009,8 @@ namespace CalmSpace.Editor
                 DemoTextKey.LevelSelectSubtitle);
 
             bindings =
-                new DemoExperienceController.LevelButtonBinding[6];
+                new DemoExperienceController.LevelButtonBinding[
+                    levelCount];
             for (var index = 0; index < bindings.Length; index++)
             {
                 var row = index / 2;
@@ -948,7 +1205,7 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 0.5f),
                 new Vector2(0f, 0.5f),
                 new Vector2(162f, 0f),
-                new Vector2(510f, 84f));
+                new Vector2(320f, 84f));
             levelName.rectTransform.pivot =
                 new Vector2(0f, 0.5f);
             primaryTexts.Add(levelName);
@@ -967,7 +1224,7 @@ namespace CalmSpace.Editor
                 new Vector2(1f, 0.5f),
                 new Vector2(1f, 0.5f),
                 new Vector2(-26f, 0f),
-                new Vector2(220f, 74f));
+                new Vector2(420f, 104f));
             progress.rectTransform.pivot =
                 new Vector2(1f, 0.5f);
             secondaryTexts.Add(progress);
@@ -987,6 +1244,7 @@ namespace CalmSpace.Editor
             out Button nextButton,
             out Text title,
             out Text body,
+            out Text reward,
             out Text nextText)
         {
             Image dim = CreateImage(
@@ -1068,6 +1326,23 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 416f),
                 new Vector2(810f, 118f));
             secondaryTexts.Add(body);
+
+            reward = CreateText(
+                card.rectTransform,
+                "Reward",
+                "+15 CALM TOKENS",
+                font,
+                24,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                Coral);
+            SetAnchored(
+                reward.rectTransform,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(0f, 344f),
+                new Vector2(810f, 52f));
+            primaryTexts.Add(reward);
 
             ButtonVisual next = CreateButton(
                 card.rectTransform,
@@ -1156,7 +1431,286 @@ namespace CalmSpace.Editor
                 DemoTextKey.Loading);
         }
 
-        private static void CreateBackground(
+        private static void WireCanvasDecorationPresenter(
+            RectTransform card,
+            Sprite rounded,
+            DemoRoomPresenter presenter)
+        {
+            if (card == null)
+            {
+                throw new ArgumentNullException(nameof(card));
+            }
+
+            if (rounded == null)
+            {
+                throw new ArgumentNullException(nameof(rounded));
+            }
+
+            if (presenter == null)
+            {
+                throw new ArgumentNullException(nameof(presenter));
+            }
+
+            GameObject previewRoot = presenter.gameObject;
+            previewRoot.name = "Active Collection Accent";
+            RectTransform previewRect =
+                previewRoot.GetComponent<RectTransform>();
+            previewRect.SetParent(card, false);
+            SetAnchored(
+                previewRect,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(350f, 552f),
+                new Vector2(120f, 42f));
+
+            var colors = new[]
+            {
+                new Color(0.44f, 0.72f, 0.57f, 1f),
+                new Color(0.66f, 0.65f, 0.60f, 1f),
+                new Color(0.96f, 0.71f, 0.30f, 1f),
+                new Color(0.85f, 0.47f, 0.40f, 1f)
+            };
+            var names = new[]
+            {
+                "Soft Fern Accent",
+                "River Stones Accent",
+                "Warm Lantern Accent",
+                "Clay Vase Accent"
+            };
+
+            var decorationRoots =
+                new GameObject[colors.Length];
+            for (var index = 0; index < colors.Length; index++)
+            {
+                GameObject visual = CreateUiObject(
+                    names[index],
+                    previewRect);
+                RectTransform visualRect =
+                    visual.GetComponent<RectTransform>();
+                Stretch(visualRect);
+
+                switch (index)
+                {
+                    case 0:
+                        CreateFernAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    case 1:
+                        CreateStonesAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    case 2:
+                        CreateLanternAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    default:
+                        CreateVaseAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                }
+
+                decorationRoots[index] = visual;
+            }
+
+            SetObjectReference(
+                presenter,
+                "_roomRoot",
+                previewRoot);
+            SetPrivateField(
+                presenter,
+                "_decorationRoots",
+                decorationRoots);
+            presenter.SelectDecoration(0);
+            EditorUtility.SetDirty(presenter);
+        }
+
+        private static void CreateFernAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
+        {
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Pot",
+                new Vector2(0f, -10f),
+                new Vector2(24f, 14f),
+                new Color(0.78f, 0.54f, 0.39f, 1f));
+
+            var positions = new[]
+            {
+                new Vector2(-12f, 4f),
+                new Vector2(0f, 7f),
+                new Vector2(12f, 4f)
+            };
+            var rotations = new[] { -34f, 0f, 34f };
+            for (var index = 0; index < positions.Length; index++)
+            {
+                Image leaf = CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Leaf " + (index + 1),
+                    positions[index],
+                    new Vector2(9f, 24f),
+                    color);
+                leaf.rectTransform.localRotation =
+                    Quaternion.Euler(0f, 0f, rotations[index]);
+            }
+        }
+
+        private static void CreateStonesAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
+        {
+            var positions = new[]
+            {
+                new Vector2(-24f, -5f),
+                new Vector2(3f, 4f),
+                new Vector2(29f, -6f)
+            };
+            var sizes = new[]
+            {
+                new Vector2(34f, 17f),
+                new Vector2(40f, 20f),
+                new Vector2(28f, 15f)
+            };
+            for (var index = 0; index < positions.Length; index++)
+            {
+                Color stoneColor = color;
+                stoneColor.a = 0.80f + index * 0.10f;
+                CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Stone " + (index + 1),
+                    positions[index],
+                    sizes[index],
+                    stoneColor);
+            }
+        }
+
+        private static void CreateLanternAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
+        {
+            Color glow = color;
+            glow.a = 0.72f;
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Glow",
+                Vector2.zero,
+                new Vector2(34f, 28f),
+                glow);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Base",
+                new Vector2(0f, -16f),
+                new Vector2(44f, 6f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Cap",
+                new Vector2(0f, 16f),
+                new Vector2(38f, 6f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Frame Left",
+                new Vector2(-18f, 0f),
+                new Vector2(4f, 30f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Frame Right",
+                new Vector2(18f, 0f),
+                new Vector2(4f, 30f),
+                color);
+        }
+
+        private static void CreateVaseAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
+        {
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Vase Body",
+                new Vector2(0f, -7f),
+                new Vector2(34f, 27f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Vase Neck",
+                new Vector2(0f, 8f),
+                new Vector2(14f, 14f),
+                color);
+
+            var stemPositions = new[]
+            {
+                new Vector2(-7f, 16f),
+                new Vector2(0f, 17f),
+                new Vector2(7f, 16f)
+            };
+            var stemRotations = new[] { -18f, 0f, 18f };
+            for (var index = 0;
+                 index < stemPositions.Length;
+                 index++)
+            {
+                Image stem = CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Stem " + (index + 1),
+                    stemPositions[index],
+                    new Vector2(3f, 13f),
+                    new Color(0.72f, 0.65f, 0.43f, 1f));
+                stem.rectTransform.localRotation =
+                    Quaternion.Euler(
+                        0f,
+                        0f,
+                        stemRotations[index]);
+            }
+        }
+
+        private static Image CreateAccentShape(
+            RectTransform parent,
+            Sprite rounded,
+            string name,
+            Vector2 position,
+            Vector2 size,
+            Color color)
+        {
+            Image image = CreateImage(
+                parent,
+                name,
+                rounded,
+                color,
+                false);
+            SetAnchored(
+                image.rectTransform,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                position,
+                size);
+            return image;
+        }
+
+        private static Image CreateBackground(
             Transform parent,
             Sprite sprite)
         {
@@ -1169,6 +1723,7 @@ namespace CalmSpace.Editor
             Stretch(background.rectTransform);
             background.type = Image.Type.Simple;
             background.preserveAspect = false;
+            return background;
         }
 
         private static CanvasGroup CreateScreen(

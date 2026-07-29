@@ -1,4 +1,5 @@
 using System;
+using CalmSpace.Cleaning;
 using CalmSpace.Levels;
 using UnityEngine;
 
@@ -29,7 +30,16 @@ namespace CalmSpace.Demo
         Loading = 14,
         SoundOn = 15,
         SoundOff = 16,
-        CleaningPrompt = 17
+        CleaningPrompt = 17,
+        ScrewPrompt = 18,
+        ToolHands = 19,
+        ToolCloth = 20,
+        ToolSponge = 21,
+        ToolSqueegee = 22,
+        HomeDecorLabel = 23,
+        DecorationBuy = 24,
+        DecorationOwned = 25,
+        DecorationSelected = 26
     }
 
     public interface IDemoLocalizationService
@@ -54,11 +64,26 @@ namespace CalmSpace.Demo
 
         string GetThemeName(ThemePalette palette);
 
+        string GetDecorationName(
+            DemoDecorationDefinition decoration);
+
         string FormatHomeProgress(int completed, int total);
+
+        string FormatRoomCurrency(int amount);
+
+        string FormatDecorationCost(int cost);
+
+        string FormatCompletionReward(int amount);
 
         string FormatCompletionBody(LevelDefinition definition);
 
         string FormatCleaningProgress(int percentage);
+
+        string FormatStageProgress(
+            CleaningToolKind tool,
+            int stage,
+            int stageCount,
+            int percentage);
     }
 
     /// <summary>
@@ -106,6 +131,10 @@ namespace CalmSpace.Demo
                     return "Таця з кріпленнями";
                 case "06-fresh-surface":
                     return "Чиста поверхня";
+                case "07-cabinet-hinge":
+                    return "Завіса шафи";
+                case "08-dusty-window":
+                    return "Запилене вікно";
                 default:
                     return fallback ?? string.Empty;
             }
@@ -129,6 +158,31 @@ namespace CalmSpace.Demo
                     return "Синя година";
                 case "sunset":
                     return "Ніжний захід";
+                default:
+                    return fallback ?? string.Empty;
+            }
+        }
+
+        public static string GetDecorationName(
+            DemoLocale locale,
+            string decorationId,
+            string fallback)
+        {
+            if (locale != DemoLocale.Ukrainian)
+            {
+                return fallback ?? string.Empty;
+            }
+
+            switch (decorationId)
+            {
+                case "soft-fern":
+                    return "Ніжна папороть";
+                case "river-stones":
+                    return "Річкове каміння";
+                case "warm-lantern":
+                    return "Теплий ліхтар";
+                case "clay-vase":
+                    return "Глиняна ваза";
                 default:
                     return fallback ?? string.Empty;
             }
@@ -174,6 +228,24 @@ namespace CalmSpace.Demo
                     return "Sound off";
                 case DemoTextKey.CleaningPrompt:
                     return "Gently clean the surface";
+                case DemoTextKey.ScrewPrompt:
+                    return "Hold a screw to turn it out";
+                case DemoTextKey.ToolHands:
+                    return "Clearing";
+                case DemoTextKey.ToolCloth:
+                    return "Cloth";
+                case DemoTextKey.ToolSponge:
+                    return "Sponge";
+                case DemoTextKey.ToolSqueegee:
+                    return "Squeegee";
+                case DemoTextKey.HomeDecorLabel:
+                    return "YOUR CALM COLLECTION";
+                case DemoTextKey.DecorationBuy:
+                    return "BUY";
+                case DemoTextKey.DecorationOwned:
+                    return "OWNED";
+                case DemoTextKey.DecorationSelected:
+                    return "SELECTED";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -222,6 +294,24 @@ namespace CalmSpace.Demo
                     return "Звук вимкнено";
                 case DemoTextKey.CleaningPrompt:
                     return "Ніжно очисть поверхню";
+                case DemoTextKey.ScrewPrompt:
+                    return "Утримуй гвинт, щоб викрутити";
+                case DemoTextKey.ToolHands:
+                    return "Прибирання";
+                case DemoTextKey.ToolCloth:
+                    return "Серветка";
+                case DemoTextKey.ToolSponge:
+                    return "Губка";
+                case DemoTextKey.ToolSqueegee:
+                    return "Водозгін";
+                case DemoTextKey.HomeDecorLabel:
+                    return "ТВОЯ КОЛЕКЦІЯ СПОКОЮ";
+                case DemoTextKey.DecorationBuy:
+                    return "ПРИДБАТИ";
+                case DemoTextKey.DecorationOwned:
+                    return "ПРИДБАНО";
+                case DemoTextKey.DecorationSelected:
+                    return "ОБРАНО";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -350,6 +440,21 @@ namespace CalmSpace.Demo
                 palette.DisplayName);
         }
 
+        public string GetDecorationName(
+            DemoDecorationDefinition decoration)
+        {
+            EnsureInitialized();
+            if (decoration == null)
+            {
+                return string.Empty;
+            }
+
+            return DemoLocalizationTable.GetDecorationName(
+                CurrentLocale,
+                decoration.Id,
+                decoration.DisplayName);
+        }
+
         public string FormatHomeProgress(
             int completed,
             int total)
@@ -358,6 +463,33 @@ namespace CalmSpace.Demo
             return CurrentLocale == DemoLocale.Ukrainian
                 ? "Відновлено: " + completed + " із " + total
                 : completed + " / " + total + " spaces restored";
+        }
+
+        public string FormatRoomCurrency(int amount)
+        {
+            EnsureInitialized();
+            var normalized = Mathf.Max(0, amount);
+            return CurrentLocale == DemoLocale.Ukrainian
+                ? "ЖЕТОНИ СПОКОЮ · " + normalized
+                : "CALM TOKENS · " + normalized;
+        }
+
+        public string FormatDecorationCost(int cost)
+        {
+            EnsureInitialized();
+            var normalized = Mathf.Max(0, cost);
+            return CurrentLocale == DemoLocale.Ukrainian
+                ? normalized + " ЖЕТОНІВ"
+                : normalized + " TOKENS";
+        }
+
+        public string FormatCompletionReward(int amount)
+        {
+            EnsureInitialized();
+            var normalized = Mathf.Max(0, amount);
+            return CurrentLocale == DemoLocale.Ukrainian
+                ? "+" + normalized + " ЖЕТОНІВ СПОКОЮ"
+                : "+" + normalized + " CALM TOKENS";
         }
 
         public string FormatCompletionBody(
@@ -382,6 +514,40 @@ namespace CalmSpace.Demo
             return CurrentLocale == DemoLocale.Ukrainian
                 ? "Очищено: " + clamped + "%"
                 : clamped + "% clean";
+        }
+
+        public string FormatStageProgress(
+            CleaningToolKind tool,
+            int stage,
+            int stageCount,
+            int percentage)
+        {
+            EnsureInitialized();
+            var clampedCount = Mathf.Max(1, stageCount);
+            var clampedStage = Mathf.Clamp(stage, 1, clampedCount);
+            var clampedPercentage = Mathf.Clamp(percentage, 0, 100);
+            var toolName = Get(GetToolKey(tool));
+
+            return CurrentLocale == DemoLocale.Ukrainian
+                ? toolName + " · крок " + clampedStage + " з " +
+                  clampedCount + " · " + clampedPercentage + "%"
+                : toolName + " · step " + clampedStage + " of " +
+                  clampedCount + " · " + clampedPercentage + "%";
+        }
+
+        private static DemoTextKey GetToolKey(CleaningToolKind tool)
+        {
+            switch (tool)
+            {
+                case CleaningToolKind.Cloth:
+                    return DemoTextKey.ToolCloth;
+                case CleaningToolKind.Sponge:
+                    return DemoTextKey.ToolSponge;
+                case CleaningToolKind.Squeegee:
+                    return DemoTextKey.ToolSqueegee;
+                default:
+                    return DemoTextKey.ToolHands;
+            }
         }
 
         private DemoLocale ResolveInitialLocale()

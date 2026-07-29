@@ -1,4 +1,5 @@
 using System;
+using CalmSpace.Cleaning;
 using CalmSpace.Demo;
 using NUnit.Framework;
 using UnityEngine;
@@ -49,6 +50,50 @@ namespace CalmSpace.Tests.EditMode
                     "future-level",
                     "Future Level"),
                 Is.EqualTo("Future Level"));
+        }
+
+        [Test]
+        public void UkrainianCatalogLocalizesRoomDecor()
+        {
+            Assert.That(
+                DemoLocalizationTable.GetDecorationName(
+                    DemoLocale.Ukrainian,
+                    "warm-lantern",
+                    "Warm Lantern"),
+                Is.EqualTo("Теплий ліхтар"));
+            Assert.That(
+                DemoLocalizationTable.GetDecorationName(
+                    DemoLocale.Ukrainian,
+                    "future-decoration",
+                    "Future Decoration"),
+                Is.EqualTo("Future Decoration"));
+        }
+
+        [Test]
+        public void UkrainianStageProgressUsesWaterSqueegeeTerm()
+        {
+            var key =
+                "calmspace.tests.locale." + Guid.NewGuid();
+            try
+            {
+                var service = new DemoLocalizationService(
+                    key,
+                    SystemLanguage.Ukrainian);
+                service.Initialize();
+
+                Assert.That(
+                    service.FormatStageProgress(
+                        CleaningToolKind.Squeegee,
+                        2,
+                        3,
+                        40),
+                    Is.EqualTo(
+                        "Водозгін · крок 2 з 3 · 40%"));
+            }
+            finally
+            {
+                PlayerPrefs.DeleteKey(key);
+            }
         }
 
         [Test]

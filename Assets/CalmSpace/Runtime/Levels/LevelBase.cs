@@ -47,6 +47,15 @@ namespace CalmSpace.Levels
 
         public int ItemCount => _items?.Length ?? 0;
 
+        /// <summary>
+        /// The same pair <see cref="ProgressChanged"/> reports. Read this for
+        /// the opening HUD value — on levels that also count screws or
+        /// cleaning stages it is wider than the item count.
+        /// </summary>
+        public int ProgressCurrent => GetProgressCurrent();
+
+        public int ProgressTotal => GetProgressTotal();
+
         public abstract LevelType SupportedType { get; }
 
         [Inject]
@@ -189,6 +198,30 @@ namespace CalmSpace.Levels
 
         protected virtual void OnLevelInitialized()
         {
+        }
+
+        /// <summary>
+        /// Placed-item count by default. Levels whose progress also counts
+        /// non-item work — screws turned out, cleaning stages finished —
+        /// widen this pair so the HUD reads the whole level.
+        /// </summary>
+        protected virtual int GetProgressCurrent()
+        {
+            return _progress?.PlacedCount ?? 0;
+        }
+
+        protected virtual int GetProgressTotal()
+        {
+            return _items?.Length ?? 0;
+        }
+
+        /// <summary>
+        /// Pushes a progress update for work that did not come from placing
+        /// an item.
+        /// </summary>
+        protected void RaiseProgressChanged()
+        {
+            InvokeProgressChanged();
         }
 
         protected virtual void OnUniqueItemPlaced(int itemInstanceId)
@@ -362,8 +395,8 @@ namespace CalmSpace.Levels
                 return;
             }
 
-            var placedCount = _progress?.PlacedCount ?? 0;
-            var itemCount = _items?.Length ?? 0;
+            var placedCount = GetProgressCurrent();
+            var itemCount = GetProgressTotal();
             foreach (Action<int, int> subscriber in
                      handler.GetInvocationList())
             {

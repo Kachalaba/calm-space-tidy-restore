@@ -38,6 +38,8 @@ namespace CalmSpace.Input
 
         public bool HasActiveStroke => _dragLease != null;
 
+        public RenderTextureCleaner Cleaner => _cleaner;
+
         [Inject]
         public void Construct(
             IPresentationActivityCoordinator activityCoordinator)
@@ -45,6 +47,22 @@ namespace CalmSpace.Input
             _activityCoordinator = activityCoordinator ??
                 throw new ArgumentNullException(
                     nameof(activityCoordinator));
+        }
+
+        /// <summary>
+        /// Points the controller at the surface the level is currently on.
+        /// Any stroke in flight is dropped rather than carried across, so a
+        /// finger already down cannot paint the newly revealed layer.
+        /// </summary>
+        public void SetActiveCleaner(RenderTextureCleaner cleaner)
+        {
+            if (_cleaner == cleaner)
+            {
+                return;
+            }
+
+            CancelStroke();
+            _cleaner = cleaner;
         }
 
         private void OnEnable()
