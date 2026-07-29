@@ -1,9 +1,13 @@
 <linker>
   <assembly fullname="CalmSpace.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null">
+    <type fullname="CalmSpace.Cleaning.CleaningStage" preserve="all" />
     <type fullname="CalmSpace.Cleaning.RenderTextureCleaner" preserve="all" />
     <type fullname="CalmSpace.Demo.DemoThemeColorTag" preserve="all" />
+    <type fullname="CalmSpace.Fasteners.FastenerPanel" preserve="all" />
+    <type fullname="CalmSpace.Fasteners.ScrewController" preserve="all" />
     <type fullname="CalmSpace.Input.CleaningInputController" preserve="all" />
     <type fullname="CalmSpace.Input.ItemSnapController" preserve="all" />
+    <type fullname="CalmSpace.Input.ScrewInputController" preserve="all" />
     <type fullname="CalmSpace.Input.SnapSlot" preserve="all" />
     <type fullname="CalmSpace.Input.SnapTargetGroup" preserve="all" />
     <type fullname="CalmSpace.Levels.CleaningLevel" preserve="all" />

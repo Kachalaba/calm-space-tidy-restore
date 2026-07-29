@@ -29,7 +29,7 @@ namespace CalmSpace.UI
         IDemoExperienceController
     {
         private const float ScreenFadeDurationSeconds = 0.2f;
-        private const int ExpectedDemoLevelCount = 6;
+        private const int MinimumDemoLevelCount = 1;
         private const int ExpectedThemeCount = 3;
 
         [Header("Screens")]
@@ -102,15 +102,29 @@ namespace CalmSpace.UI
         private LocalizedTextBinding[] _localizedTexts =
             Array.Empty<LocalizedTextBinding>();
 
-        [Header("Level selection (six entries)")]
+        [Header("Level selection (one entry per catalog level)")]
         [SerializeField]
         private LevelButtonBinding[] _levelButtons =
-            new LevelButtonBinding[ExpectedDemoLevelCount];
+            Array.Empty<LevelButtonBinding>();
 
         [Header("Themes (three entries)")]
         [SerializeField]
         private ThemeButtonBinding[] _themeButtons =
             new ThemeButtonBinding[ExpectedThemeCount];
+
+        [Header("Home room")]
+        [SerializeField]
+        private Text _roomCurrencyText;
+
+        [SerializeField]
+        private Text _completionRewardText;
+
+        [SerializeField]
+        private DecorationButtonBinding[] _decorationButtons =
+            Array.Empty<DecorationButtonBinding>();
+
+        [SerializeField]
+        private DemoRoomPresenter _roomPresenter;
 
         [Header("Theme targets")]
         [SerializeField]
@@ -136,6 +150,7 @@ namespace CalmSpace.UI
 
         private ILevelFlowController _levelFlow;
         private LevelCatalog _levelCatalog;
+        private DemoDecorationCatalog _decorationCatalog;
         private IDemoProgressStore _progressStore;
         private IDemoThemeService _themeService;
         private IDemoLocalizationService _localization;
@@ -146,10 +161,13 @@ namespace CalmSpace.UI
 
         private UnityAction[] _levelButtonActions;
         private UnityAction[] _themeButtonActions;
+        private UnityAction[] _decorationButtonActions;
         private CanvasGroup _activeScreen;
         private LevelBase _boundLevel;
+        private CleaningLevel _boundCleaningLevel;
         private RenderTextureCleaner _boundCleaner;
         private int _currentLevelIndex = -1;
+        private int _lastCompletionReward;
         private bool _eventsBound;
         private bool _initialized;
         private bool _initializing;
@@ -166,6 +184,7 @@ namespace CalmSpace.UI
         public void Construct(
             ILevelFlowController levelFlow,
             LevelCatalog levelCatalog,
+            DemoDecorationCatalog decorationCatalog,
             IDemoProgressStore progressStore,
             IDemoThemeService themeService,
             IDemoLocalizationService localization,
@@ -175,6 +194,9 @@ namespace CalmSpace.UI
                 throw new ArgumentNullException(nameof(levelFlow));
             _levelCatalog = levelCatalog ??
                 throw new ArgumentNullException(nameof(levelCatalog));
+            _decorationCatalog = decorationCatalog ??
+                throw new ArgumentNullException(
+                    nameof(decorationCatalog));
             _progressStore = progressStore ??
                 throw new ArgumentNullException(nameof(progressStore));
             _themeService = themeService ??
@@ -193,6 +215,7 @@ namespace CalmSpace.UI
             SetScreenImmediate(_completionScreen, false);
             SetScreenImmediate(_loadingOverlay, false);
             _activeScreen = _homeScreen;
+            _roomPresenter?.SetVisible(false);
         }
 
         /// <summary>
@@ -216,7 +239,8 @@ namespace CalmSpace.UI
 
                 _progressStore.Initialize(
                     _levelCatalog.Count,
-                    _themeService.DefaultThemeId);
+                    _themeService.DefaultThemeId,
+                    _decorationCatalog.CompletionReward);
                 _themeService.Initialize();
                 _localization.Initialize();
                 BindEvents();
@@ -227,6 +251,7 @@ namespace CalmSpace.UI
                 RefreshLocalizedUi();
                 RefreshProgressUi();
                 RefreshLevelButtons();
+                RefreshDecorationUi();
                 RefreshMusicUi(_musicService.IsEnabled);
 
                 if (_levelFlow.CurrentLevel != null)
@@ -245,6 +270,7 @@ namespace CalmSpace.UI
                 _activeScreen = _homeScreen;
                 _initialized = true;
                 RefreshNavigationAvailability();
+                RefreshRoomVisibility();
             }
             catch
             {
@@ -424,8 +450,8 @@ namespace CalmSpace.UI
             BindLevel(_levelFlow.CurrentLevel);
             ApplyCurrentThemeToLevel();
             RefreshHud(
-                _boundLevel.PlacedItemCount,
-                _boundLevel.ItemCount);
+                _boundLevel.ProgressCurrent,
+                _boundLevel.ProgressTotal);
             if (_boundCleaner != null)
             {
                 RefreshCleaningProgress(
@@ -451,6 +477,7 @@ namespace CalmSpace.UI
             _levelThemeApplicator?.ClearCurrentLevel();
             RefreshProgressUi();
             RefreshLevelButtons();
+            RefreshDecorationUi();
             await ShowScreenAsync(
                 _homeScreen,
                 cancellationToken);
@@ -582,25 +609,32 @@ namespace CalmSpace.UI
 
             _boundLevel.LevelCompleted += HandleLevelCompleted;
             _boundLevel.ProgressChanged += HandleLevelProgressChanged;
-            _boundCleaner =
-                _boundLevel.GetComponentInChildren<
-                    RenderTextureCleaner>(true);
-            if (_boundCleaner != null)
+            _boundCleaningLevel = _boundLevel as CleaningLevel;
+
+            if (_boundCleaningLevel != null)
             {
-                _boundCleaner.CleanProgressChanged +=
-                    HandleCleanProgressChanged;
-                RefreshCleaningProgress(
-                    _boundCleaner.CleanedFraction);
+                // A staged level moves the player from surface to surface, so
+                // follow the active one instead of the first cleaner found.
+                _boundCleaningLevel.ActiveCleanerChanged +=
+                    HandleActiveCleanerChanged;
+                BindCleaner(_boundCleaningLevel.ActiveCleaner);
+                return;
             }
+
+            BindCleaner(
+                _boundLevel.GetComponentInChildren<
+                    RenderTextureCleaner>(true));
         }
 
         private void UnbindLevel()
         {
-            if (_boundCleaner != null)
+            BindCleaner(null);
+
+            if (_boundCleaningLevel != null)
             {
-                _boundCleaner.CleanProgressChanged -=
-                    HandleCleanProgressChanged;
-                _boundCleaner = null;
+                _boundCleaningLevel.ActiveCleanerChanged -=
+                    HandleActiveCleanerChanged;
+                _boundCleaningLevel = null;
             }
 
             if (_boundLevel != null)
@@ -611,6 +645,41 @@ namespace CalmSpace.UI
             }
 
             _boundLevel = null;
+        }
+
+        private void BindCleaner(RenderTextureCleaner cleaner)
+        {
+            if (_boundCleaner == cleaner)
+            {
+                return;
+            }
+
+            if (_boundCleaner != null)
+            {
+                _boundCleaner.CleanProgressChanged -=
+                    HandleCleanProgressChanged;
+            }
+
+            _boundCleaner = cleaner;
+
+            if (_boundCleaner == null)
+            {
+                return;
+            }
+
+            _boundCleaner.CleanProgressChanged +=
+                HandleCleanProgressChanged;
+            RefreshCleaningProgress(_boundCleaner.CleanedFraction);
+        }
+
+        private void HandleActiveCleanerChanged(
+            RenderTextureCleaner cleaner)
+        {
+            BindCleaner(cleaner);
+            if (cleaner == null)
+            {
+                RefreshCleaningProgress(0f);
+            }
         }
 
         private void HandleLevelProgressChanged(
@@ -635,10 +704,15 @@ namespace CalmSpace.UI
                 return;
             }
 
-            _progressStore.MarkLevelCompleted(
-                _currentLevelIndex);
+            _lastCompletionReward = Mathf.Max(
+                0,
+                _progressStore.CompleteLevelAndReward(
+                    _currentLevelIndex,
+                    _decorationCatalog.CompletionReward));
             RefreshProgressUi();
             RefreshLevelButtons();
+            RefreshDecorationUi();
+            RefreshCompletionRewardUi();
 
             if (_completionTitleText != null)
             {
@@ -714,6 +788,7 @@ namespace CalmSpace.UI
         {
             RefreshProgressUi();
             RefreshLevelButtons();
+            RefreshDecorationUi();
         }
 
         private void HandleMusicEnabledChanged(bool enabled)
@@ -746,8 +821,12 @@ namespace CalmSpace.UI
             ApplyColor(_primaryTexts, palette.PrimaryText);
             ApplyColor(_secondaryTexts, palette.SecondaryText);
             _levelThemeApplicator?.ApplyScenePalette(palette);
+            _levelThemeApplicator?.ApplyRootPalette(
+                _roomPresenter?.RoomRoot,
+                palette);
             ApplyCurrentThemeToLevel();
             RefreshThemeButtons();
+            RefreshDecorationUi();
             RefreshMusicUi(
                 _musicService != null &&
                 _musicService.IsEnabled);
@@ -769,20 +848,136 @@ namespace CalmSpace.UI
 
         private void RefreshProgressUi()
         {
-            if (!_progressStore.IsInitialized ||
-                _homeProgressText == null)
+            if (!_progressStore.IsInitialized)
             {
                 return;
             }
 
-            var completed =
-                DemoProgressRules.CountCompleted(
-                    _progressStore.Current,
-                    _levelCatalog.Count);
-            _homeProgressText.text =
-                _localization.FormatHomeProgress(
-                    completed,
-                    _levelCatalog.Count);
+            if (_homeProgressText != null)
+            {
+                var completed =
+                    DemoProgressRules.CountCompleted(
+                        _progressStore.Current,
+                        _levelCatalog.Count);
+                _homeProgressText.text =
+                    _localization.FormatHomeProgress(
+                        completed,
+                        _levelCatalog.Count);
+            }
+
+            if (_roomCurrencyText != null)
+            {
+                _roomCurrencyText.text =
+                    _localization.FormatRoomCurrency(
+                        _progressStore.Current.CalmPoints);
+            }
+        }
+
+        private void RefreshDecorationUi()
+        {
+            if (!_progressStore.IsInitialized ||
+                _decorationCatalog == null)
+            {
+                return;
+            }
+
+            DemoProgressSnapshot progress = _progressStore.Current;
+            _roomPresenter?.SelectDecoration(
+                progress.SelectedDecorationIndex);
+
+            if (_decorationButtons == null)
+            {
+                return;
+            }
+
+            ThemePalette palette = _themeService?.Current;
+            bool navigationEnabled =
+                _initialized && !_isNavigating;
+            for (var index = 0;
+                 index < _decorationButtons.Length;
+                 index++)
+            {
+                DecorationButtonBinding binding =
+                    _decorationButtons[index];
+                if (binding == null)
+                {
+                    continue;
+                }
+
+                if (!_decorationCatalog.TryGetDefinition(
+                        index,
+                        out DemoDecorationDefinition decoration))
+                {
+                    binding.SetVisible(false);
+                    continue;
+                }
+
+                bool owned =
+                    index < 32 &&
+                    (progress.OwnedDecorationMask &
+                        (1 << index)) != 0;
+                bool selected =
+                    progress.SelectedDecorationIndex == index;
+                bool canAfford =
+                    progress.CalmPoints >= decoration.Cost;
+                string state = selected
+                    ? _localization.Get(
+                        DemoTextKey.DecorationSelected)
+                    : owned
+                        ? _localization.Get(
+                            DemoTextKey.DecorationOwned)
+                        : _localization.Get(
+                              DemoTextKey.DecorationBuy) +
+                          " · " +
+                          _localization.FormatDecorationCost(
+                              decoration.Cost);
+
+                binding.SetVisible(true);
+                binding.SetContent(
+                    _localization.GetDecorationName(decoration),
+                    state,
+                    selected,
+                    navigationEnabled && (owned || canAfford),
+                    palette,
+                    index);
+            }
+        }
+
+        private void RefreshCompletionRewardUi()
+        {
+            if (_completionRewardText == null)
+            {
+                return;
+            }
+
+            bool visible = _lastCompletionReward > 0;
+            _completionRewardText.text = visible
+                ? _localization.FormatCompletionReward(
+                    _lastCompletionReward)
+                : string.Empty;
+            if (_completionRewardText.gameObject.activeSelf != visible)
+            {
+                _completionRewardText.gameObject.SetActive(visible);
+            }
+        }
+
+        private void RefreshRoomVisibility()
+        {
+            if (_roomPresenter == null)
+            {
+                return;
+            }
+
+            bool loadingVisible =
+                _loadingOverlay != null &&
+                _loadingOverlay.gameObject.activeSelf;
+            bool visible =
+                _initialized &&
+                !_destroying &&
+                !_isNavigating &&
+                !loadingVisible &&
+                _activeScreen == _homeScreen;
+            _roomPresenter.SetVisible(visible);
         }
 
         private void RefreshHud(int placed, int total)
@@ -799,6 +994,29 @@ namespace CalmSpace.UI
                 return;
             }
 
+            // On a cleaning level the item counter is meaningless — stage and
+            // coverage are what the player is watching.
+            if (_boundCleaningLevel != null)
+            {
+                _hudProgressText.fontSize = 29;
+                RefreshCleaningProgress(
+                    _boundCleaningLevel.ActiveStageFraction);
+                return;
+            }
+
+            if (_boundLevel is ScrewPuzzleLevel)
+            {
+                _hudProgressText.fontSize = 22;
+                _hudProgressText.text =
+                    _localization.Get(DemoTextKey.ScrewPrompt) +
+                    "\n" +
+                    placed +
+                    " / " +
+                    total;
+                return;
+            }
+
+            _hudProgressText.fontSize = 29;
             _hudProgressText.text =
                 total <= 0
                     ? _localization.Get(
@@ -813,8 +1031,26 @@ namespace CalmSpace.UI
                 return;
             }
 
+            int stageCount = _boundCleaningLevel == null
+                ? 0
+                : _boundCleaningLevel.StageCount;
+            float displayFraction = _boundCleaningLevel == null
+                ? fraction
+                : _boundCleaningLevel.ActiveStageFraction;
             int percentage = Mathf.RoundToInt(
-                Mathf.Clamp01(fraction) * 100f);
+                Mathf.Clamp01(displayFraction) * 100f);
+
+            if (stageCount > 0)
+            {
+                _hudProgressText.text =
+                    _localization.FormatStageProgress(
+                        _boundCleaningLevel.ActiveTool,
+                        _boundCleaningLevel.ActiveStageIndex + 1,
+                        stageCount,
+                        percentage);
+                return;
+            }
+
             _hudProgressText.text =
                 _localization.FormatCleaningProgress(
                     percentage);
@@ -944,6 +1180,8 @@ namespace CalmSpace.UI
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshThemeButtons();
+            RefreshDecorationUi();
+            RefreshCompletionRewardUi();
             RefreshMusicUi(
                 _musicService != null &&
                 _musicService.IsEnabled);
@@ -956,8 +1194,8 @@ namespace CalmSpace.UI
             else if (_boundLevel != null)
             {
                 RefreshHud(
-                    _boundLevel.PlacedItemCount,
-                    _boundLevel.ItemCount);
+                    _boundLevel.ProgressCurrent,
+                    _boundLevel.ProgressTotal);
             }
         }
 
@@ -978,11 +1216,13 @@ namespace CalmSpace.UI
             SetButtonInteractable(_languageButton, enabled);
             RefreshLevelButtons();
             RefreshThemeButtons();
+            RefreshDecorationUi();
         }
 
         private void BeginNavigation(bool showLoading)
         {
             _isNavigating = true;
+            _roomPresenter?.SetVisible(false);
             if (showLoading)
             {
                 SetScreenImmediate(_loadingOverlay, true);
@@ -996,6 +1236,7 @@ namespace CalmSpace.UI
             _isNavigating = false;
             SetScreenImmediate(_loadingOverlay, false);
             RefreshNavigationAvailability();
+            RefreshRoomVisibility();
         }
 
         private bool CanNavigate()
@@ -1055,6 +1296,20 @@ namespace CalmSpace.UI
                     () => HandleThemePressed(capturedIndex);
                 _themeButtonActions[index] = action;
                 _themeButtons[index].Button.onClick.AddListener(
+                    action);
+            }
+
+            _decorationButtonActions =
+                new UnityAction[_decorationButtons.Length];
+            for (var index = 0;
+                 index < _decorationButtons.Length;
+                 index++)
+            {
+                var capturedIndex = index;
+                UnityAction action =
+                    () => HandleDecorationPressed(capturedIndex);
+                _decorationButtonActions[index] = action;
+                _decorationButtons[index].Button.onClick.AddListener(
                     action);
             }
 
@@ -1124,6 +1379,24 @@ namespace CalmSpace.UI
                         _themeButtons[index].Button.onClick
                             .RemoveListener(
                                 _themeButtonActions[index]);
+                    }
+                }
+            }
+
+            if (_decorationButtonActions != null &&
+                _decorationButtons != null)
+            {
+                var count = Mathf.Min(
+                    _decorationButtonActions.Length,
+                    _decorationButtons.Length);
+                for (var index = 0; index < count; index++)
+                {
+                    if (_decorationButtons[index]?.Button != null &&
+                        _decorationButtonActions[index] != null)
+                    {
+                        _decorationButtons[index].Button.onClick
+                            .RemoveListener(
+                                _decorationButtonActions[index]);
                     }
                 }
             }
@@ -1221,10 +1494,38 @@ namespace CalmSpace.UI
             }
         }
 
+        private void HandleDecorationPressed(int decorationIndex)
+        {
+            if (!CanNavigate() ||
+                !_decorationCatalog.TryGetDefinition(
+                    decorationIndex,
+                    out DemoDecorationDefinition decoration))
+            {
+                return;
+            }
+
+            bool owned =
+                decorationIndex >= 0 &&
+                decorationIndex < 32 &&
+                (_progressStore.Current.OwnedDecorationMask &
+                    (1 << decorationIndex)) != 0;
+            if (owned)
+            {
+                _progressStore.TrySelectDecoration(
+                    decorationIndex);
+                return;
+            }
+
+            _progressStore.TryPurchaseAndSelectDecoration(
+                decorationIndex,
+                decoration.Cost);
+        }
+
         private void ValidateDependencies()
         {
             if (_levelFlow == null ||
                 _levelCatalog == null ||
+                _decorationCatalog == null ||
                 _progressStore == null ||
                 _themeService == null ||
                 _localization == null ||
@@ -1251,18 +1552,29 @@ namespace CalmSpace.UI
                 _musicButton == null ||
                 _languageButton == null ||
                 _languageButtonText == null ||
+                _roomCurrencyText == null ||
+                _completionRewardText == null ||
+                _roomPresenter == null ||
                 _levelThemeApplicator == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController has missing screen, button, " +
-                    "or theme-applicator references.");
+                    "room, copy, or theme-applicator references.");
             }
 
+            // One card per catalog level. Tying this to the catalog rather
+            // than a fixed number is what lets the level set grow.
             if (_levelButtons == null ||
-                _levelButtons.Length != ExpectedDemoLevelCount)
+                _levelButtons.Length < MinimumDemoLevelCount ||
+                _levelButtons.Length != _levelCatalog.Count)
             {
                 throw new InvalidOperationException(
-                    "Exactly six demo level button bindings are required.");
+                    "The level select needs one button binding per " +
+                    "catalog level, but has " +
+                    (_levelButtons?.Length ?? 0) +
+                    " for " +
+                    _levelCatalog.Count +
+                    " levels.");
             }
 
             for (var index = 0;
@@ -1296,6 +1608,40 @@ namespace CalmSpace.UI
                 }
             }
 
+            if (_decorationButtons == null ||
+                _decorationButtons.Length !=
+                    _decorationCatalog.Count)
+            {
+                throw new InvalidOperationException(
+                    "The home room needs one decoration button binding per " +
+                    "catalog entry, but has " +
+                    (_decorationButtons?.Length ?? 0) +
+                    " for " +
+                    _decorationCatalog.Count +
+                    " decorations.");
+            }
+
+            for (var index = 0;
+                 index < _decorationButtons.Length;
+                 index++)
+            {
+                if (_decorationButtons[index] == null ||
+                    !_decorationButtons[index].IsConfigured)
+                {
+                    throw new InvalidOperationException(
+                        $"Demo decoration button {index} is incomplete.");
+                }
+            }
+
+            if (_roomPresenter.RoomRoot == null ||
+                _roomPresenter.DecorationCount !=
+                    _decorationCatalog.Count)
+            {
+                throw new InvalidOperationException(
+                    "The home room presenter must provide one visual per " +
+                    "decoration catalog entry.");
+            }
+
             if (_localizedTexts == null ||
                 _localizedTexts.Length == 0)
             {
@@ -1320,6 +1666,7 @@ namespace CalmSpace.UI
         {
             _destroying = true;
             _initialized = false;
+            _roomPresenter?.SetVisible(false);
             UnbindLevel();
             UnbindEvents();
             _lifetimeCancellation.Cancel();
@@ -1394,10 +1741,10 @@ namespace CalmSpace.UI
         private void OnValidate()
         {
             if (_levelButtons != null &&
-                _levelButtons.Length != ExpectedDemoLevelCount)
+                _levelButtons.Length < MinimumDemoLevelCount)
             {
                 Debug.LogWarning(
-                    "Calm Space demo expects exactly six level buttons.",
+                    "Calm Space needs at least one level button.",
                     this);
             }
 
@@ -1406,6 +1753,14 @@ namespace CalmSpace.UI
             {
                 Debug.LogWarning(
                     "Calm Space demo expects exactly three theme buttons.",
+                    this);
+            }
+
+            if (_decorationButtons == null ||
+                _decorationButtons.Length == 0)
+            {
+                Debug.LogWarning(
+                    "Calm Space needs home room decoration buttons.",
                     this);
             }
         }
@@ -1533,6 +1888,92 @@ namespace CalmSpace.UI
                         unlocked
                             ? palette.PrimaryText
                             : palette.SecondaryText;
+                }
+            }
+        }
+
+        [Serializable]
+        public sealed class DecorationButtonBinding
+        {
+            [SerializeField]
+            private Button _button;
+
+            [SerializeField]
+            private Image _preview;
+
+            [SerializeField]
+            private Text _name;
+
+            [SerializeField]
+            private Text _state;
+
+            [SerializeField]
+            private GameObject _selectedRoot;
+
+            public Button Button => _button;
+
+            public bool IsConfigured =>
+                _button != null &&
+                _preview != null &&
+                _name != null &&
+                _state != null &&
+                _selectedRoot != null;
+
+            public void SetVisible(bool visible)
+            {
+                if (_button != null &&
+                    _button.gameObject.activeSelf != visible)
+                {
+                    _button.gameObject.SetActive(visible);
+                }
+            }
+
+            public void SetContent(
+                string localizedName,
+                string localizedState,
+                bool selected,
+                bool interactable,
+                ThemePalette palette,
+                int paletteIndex)
+            {
+                if (_button != null)
+                {
+                    _button.interactable = interactable;
+                }
+
+                if (_name != null)
+                {
+                    _name.text = localizedName ?? string.Empty;
+                }
+
+                if (_state != null)
+                {
+                    _state.text = localizedState ?? string.Empty;
+                }
+
+                _selectedRoot?.SetActive(selected);
+
+                if (palette == null)
+                {
+                    return;
+                }
+
+                if (_preview != null)
+                {
+                    _preview.color =
+                        palette.GetPieceColor(paletteIndex);
+                }
+
+                if (_name != null)
+                {
+                    _name.color = palette.PrimaryText;
+                }
+
+                if (_state != null)
+                {
+                    _state.color = selected
+                        ? palette.SecondaryAccent
+                        : palette.SecondaryText;
                 }
             }
         }

@@ -41,21 +41,25 @@ settings are invalid. It writes:
 
 ## Verified baseline
 
-- EditMode tests: 47 passed, 0 failed.
-- PlayMode tests: 13 passed, 0 failed. Coverage includes all six Addressable
+- EditMode tests: 71 passed, 0 failed.
+- PlayMode tests: 26 passed, 0 failed. Coverage includes all eight Addressable
   levels, English/Ukrainian switching, compatible-slot sorting, cancellation,
   slot occupancy, a full touchscreen-to-physics drag through the generated
-  level prefab, and the final completion-screen state.
+  level prefab, hold-to-unscrew with panel release, cleaning-stage
+  sequencing, feedback-failure resilience, the localized screw instruction,
+  the final completion-screen state, the live home room, exact single-item
+  decoration purchases, and persistence across scene reloads.
 - Android APK and App Bundle: validated, ARM64 + IL2CPP, API 24 minimum and
   target API 36.
 - Android API 35 ARM64 emulator: cold launch, theme persistence, sequential
   progression, all five snap levels, the full cleaning level, and 6/6
   completion verified without runtime exceptions.
-- Pixel 8: final APK install and launch, automatic Ukrainian locale, portrait
-  safe areas, menu, level selection, reverse-order compatible sorting, and
-  level completion verified without Unity or Android runtime errors. Native
-  `USAGE_TOUCH` haptics were physically verified on the preceding interaction
-  build; the haptic bridge is unchanged.
+- Pixel 8: the eight-level gameplay set has been played end to end across the
+  current implementation cycle. Automatic Ukrainian locale, portrait safe
+  areas, the home/decor flow, eight-card level select, compatible sorting,
+  hold-to-unscrew, layered reveal, and debris → sponge → squeegee sequencing
+  were exercised without Unity or Android runtime crashes. Native
+  `USAGE_TOUCH` haptics were physically verified on the device.
 
 See `docs/PLAY_STORE_RELEASE.md` for signing, monetization, privacy, and Play
 Console preparation.
@@ -64,8 +68,22 @@ Console preparation.
 
 - Production-style portrait home screen, level selection, safe-area handling,
   local progression, completion flow, and three persistent color moods.
-- Six demo spaces: Soft Blocks, Pebble Pairs, Tea Drawer, Color Shelf,
-  Fastener Tray, and Fresh Surface.
+- Live themed home room with four selectable decorations. First completion of
+  each level grants 15 calm points exactly once; points can unlock River
+  Stones, Warm Lantern, and Clay Vase, while Soft Fern is included. Existing
+  version-1 progress migrates automatically and receives any earned rewards
+  only once.
+- Eight demo spaces: Soft Blocks, Pebble Pairs, Tea Drawer, Color Shelf,
+  Fastener Tray, Fresh Surface, Cabinet Hinge, and Dusty Window.
+- Hold-to-unscrew fasteners: a screw turns only while a finger rests on it,
+  ticks once per whole turn, and never rewinds when the finger lifts. A panel
+  keeps its colliders off until its last screw is out, so taps fall through to
+  the screws and the panel cannot be dragged early. Placing a freed panel
+  uncovers the layer beneath it.
+- Multi-pass cleaning: a level can run an ordered set of stages, each with its
+  own mask, brush profile, and implement. Debris is cleared by hand before the
+  implement applies, finished passes stay on screen, and the HUD reports the
+  active tool, stage, and coverage.
 - Persistent English/Ukrainian localization with Ukrainian auto-selection from
   the Android system locale.
 - Forgiving compatible-slot sorting in Pebble Pairs and Color Shelf: matching
@@ -77,7 +95,9 @@ Console preparation.
 - Touch and mouse dragging through the New Input System, including pinch
   tracking and exclusive pointer ownership.
 - ScriptableObject level catalog with Addressable level prefabs.
-- Sorting, cleaning, screw-puzzle, and fitting lifecycle components.
+- Sorting, cleaning, screw-puzzle, and fitting lifecycle components. Levels
+  report progress across every kind of work they contain, not just placed
+  items.
 - URP RenderTexture cleaning mask with asynchronous GPU readback and a
   CPU-safe fallback.
 - Spatialized pooled ASMR snap audio through an AudioMixer.

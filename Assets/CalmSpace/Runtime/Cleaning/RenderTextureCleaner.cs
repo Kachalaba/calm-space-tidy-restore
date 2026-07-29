@@ -12,7 +12,13 @@ namespace CalmSpace.Cleaning
     [DisallowMultipleComponent]
     public sealed class RenderTextureCleaner : MonoBehaviour
     {
-        private const float CompletionThreshold = 0.95f;
+        /// <summary>
+        /// Alpha-weighted coverage that counts as done. Deliberately short of
+        /// 1.0 so one missed pixel never strands the player on a surface that
+        /// already looks clean.
+        /// </summary>
+        public const float CompletionThreshold = 0.95f;
+
         private const int ReadbackSlotCount = 2;
         private const int MinimumResolution = 16;
         private const int MaximumResolution = 1024;
@@ -150,6 +156,26 @@ namespace CalmSpace.Cleaning
         {
             ResolveRaycastCameraIfNeeded();
             return TryInitialize();
+        }
+
+        /// <summary>
+        /// Swaps the brush profile so one cleaner can stand in for a
+        /// different implement. Values are clamped to the same range the
+        /// inspector enforces.
+        /// </summary>
+        public void ConfigureBrush(
+            float radiusUv,
+            float hardness)
+        {
+            if (!float.IsNaN(radiusUv))
+            {
+                brushRadiusUv = Mathf.Clamp(radiusUv, 0.001f, 0.5f);
+            }
+
+            if (!float.IsNaN(hardness))
+            {
+                brushHardness = Mathf.Clamp01(hardness);
+            }
         }
 
         public bool PaintFromScreenPoint(Vector2 screenPoint)

@@ -72,6 +72,13 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(
                 Object.FindFirstObjectByType<DragInputRouter>(),
                 Is.Not.Null);
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            Assert.That(room, Is.Not.Null);
+            Assert.That(room.IsVisible, Is.True);
+            Assert.That(room.DecorationCount, Is.EqualTo(4));
+            Assert.That(room.SelectedDecorationIndex, Is.Zero);
         }
 
         [UnityTest]
@@ -140,7 +147,7 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(languageText.text, Is.EqualTo("УКР"));
             Assert.That(
                 progressText.text,
-                Is.EqualTo("Відновлено: 0 із 6"));
+                Is.EqualTo("Відновлено: 0 із 8"));
             Assert.That(
                 playButton.GetComponentInChildren<Text>().text,
                 Is.EqualTo("Почати відновлення"));
@@ -201,6 +208,75 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(level.Definition.LevelId, Is.EqualTo(
                 "01-soft-blocks"));
             Assert.That(experience.CurrentLevelIndex, Is.Zero);
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            Assert.That(room, Is.Not.Null);
+            Assert.That(
+                room.IsVisible,
+                Is.False,
+                "The decorative room must not cover gameplay.");
+        }
+
+        [UnityTest]
+        public IEnumerator ScrewLevelHudExplainsHoldGesture()
+        {
+            AsyncOperation sceneLoad = SceneManager.LoadSceneAsync(
+                "Main",
+                LoadSceneMode.Single);
+            while (!sceneLoad.isDone)
+            {
+                yield return null;
+            }
+
+            DemoExperienceController experience = null;
+            for (var frame = 0;
+                 frame < 300 &&
+                 (experience == null || !experience.IsInitialized);
+                 frame++)
+            {
+                experience =
+                    Object.FindFirstObjectByType<
+                        DemoExperienceController>();
+                yield return null;
+            }
+
+            Assert.That(experience, Is.Not.Null);
+            Assert.That(experience.IsInitialized, Is.True);
+
+            IDemoProgressStore progress =
+                GetPrivateField<IDemoProgressStore>(
+                    experience,
+                    "_progressStore");
+            for (var index = 0; index < 4; index++)
+            {
+                progress.MarkLevelCompleted(index);
+            }
+
+            UniTask<bool> playTask =
+                experience.PlayLevelAsync(4);
+            float timeoutAt = Time.realtimeSinceStartup + 10f;
+            while (
+                playTask.Status == UniTaskStatus.Pending &&
+                Time.realtimeSinceStartup < timeoutAt)
+            {
+                yield return null;
+            }
+
+            Assert.That(
+                playTask.Status,
+                Is.Not.EqualTo(UniTaskStatus.Pending));
+            Assert.That(
+                playTask.GetAwaiter().GetResult(),
+                Is.True);
+
+            Text hudProgress =
+                GetPrivateField<Text>(
+                    experience,
+                    "_hudProgressText");
+            Assert.That(
+                hudProgress.text,
+                Does.Contain("Hold a screw to turn it out"));
         }
 
         [UnityTest]
@@ -213,7 +289,9 @@ namespace CalmSpace.Tests.PlayMode
                 "03-tea-drawer",
                 "04-color-shelf",
                 "05-fastener-tray",
-                "06-fresh-surface"
+                "06-fresh-surface",
+                "07-cabinet-hinge",
+                "08-dusty-window"
             };
             LevelType[] expectedTypes =
             {
@@ -221,6 +299,8 @@ namespace CalmSpace.Tests.PlayMode
                 LevelType.Sorting,
                 LevelType.Fitting,
                 LevelType.Sorting,
+                LevelType.ScrewPuzzle,
+                LevelType.Cleaning,
                 LevelType.ScrewPuzzle,
                 LevelType.Cleaning
             };
@@ -294,11 +374,39 @@ namespace CalmSpace.Tests.PlayMode
 
                 if (expectedTypes[index] == LevelType.Cleaning)
                 {
+                    // Staged levels hold a cleaner per pass, so ask the
+                    // level which surface the player is on rather than
+                    // assuming one lives on the root.
+                    var cleaningLevel =
+                        flow.CurrentLevel as CleaningLevel;
+                    Assert.That(
+                        cleaningLevel,
+                        Is.Not.Null,
+                        levelIds[index]);
                     RenderTextureCleaner cleaner =
-                        flow.CurrentLevel.GetComponent<
-                            RenderTextureCleaner>();
-                    Assert.That(cleaner, Is.Not.Null);
-                    Assert.That(cleaner.IsInitialized, Is.True);
+                        cleaningLevel.ActiveCleaner;
+                    if (cleaningLevel.StageCount > 0 &&
+                        cleaningLevel.ActiveTool ==
+                            CleaningToolKind.Hands)
+                    {
+                        Assert.That(
+                            cleaner,
+                            Is.Null,
+                            levelIds[index] +
+                            " must keep its cleaner locked while " +
+                            "debris remains.");
+                    }
+                    else
+                    {
+                        Assert.That(
+                            cleaner,
+                            Is.Not.Null,
+                            levelIds[index]);
+                        Assert.That(
+                            cleaner.IsInitialized,
+                            Is.True,
+                            levelIds[index]);
+                    }
                 }
             }
 
@@ -354,13 +462,27 @@ namespace CalmSpace.Tests.PlayMode
                 progressField.GetValue(experience) as
                     IDemoProgressStore;
             Assert.That(progressStore, Is.Not.Null);
-            for (var index = 0; index < 5; index++)
+
+            FieldInfo catalogField =
+                typeof(DemoExperienceController).GetField(
+                    "_levelCatalog",
+                    BindingFlags.Instance |
+                    BindingFlags.NonPublic);
+            Assert.That(catalogField, Is.Not.Null);
+            var catalog =
+                catalogField.GetValue(experience) as LevelCatalog;
+            Assert.That(catalog, Is.Not.Null);
+
+            // Derived from the catalog so growing the level set does not
+            // silently stop testing the real last level.
+            int lastLevelIndex = catalog.Count - 1;
+            for (var index = 0; index < lastLevelIndex; index++)
             {
                 progressStore.MarkLevelCompleted(index);
             }
 
             UniTask<bool> loadTask =
-                experience.PlayLevelAsync(5);
+                experience.PlayLevelAsync(lastLevelIndex);
             float loadTimeout =
                 Time.realtimeSinceStartup + 10f;
             while (
@@ -448,6 +570,135 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(nextButton.gameObject.activeSelf, Is.True);
             Assert.That(homeButton.gameObject.activeSelf, Is.False);
             Assert.That(nextText.text, Is.EqualTo("Back home"));
+        }
+
+        [UnityTest]
+        public IEnumerator RoomPurchaseAndSelectionPersistAcrossReload()
+        {
+            AsyncOperation sceneLoad = SceneManager.LoadSceneAsync(
+                "Main",
+                LoadSceneMode.Single);
+            while (!sceneLoad.isDone)
+            {
+                yield return null;
+            }
+
+            DemoExperienceController experience = null;
+            for (var frame = 0;
+                 frame < 300 &&
+                 (experience == null || !experience.IsInitialized);
+                 frame++)
+            {
+                experience =
+                    Object.FindFirstObjectByType<
+                        DemoExperienceController>();
+                yield return null;
+            }
+
+            Assert.That(experience, Is.Not.Null);
+            Assert.That(experience.IsInitialized, Is.True);
+
+            IDemoProgressStore progress =
+                GetPrivateField<IDemoProgressStore>(
+                    experience,
+                    "_progressStore");
+            DemoDecorationCatalog catalog =
+                GetPrivateField<DemoDecorationCatalog>(
+                    experience,
+                    "_decorationCatalog");
+            DemoExperienceController.DecorationButtonBinding[]
+                buttons =
+                    GetPrivateField<
+                        DemoExperienceController
+                            .DecorationButtonBinding[]>(
+                        experience,
+                        "_decorationButtons");
+            Text currency =
+                GetPrivateField<Text>(
+                    experience,
+                    "_roomCurrencyText");
+            Assert.That(progress, Is.Not.Null);
+            Assert.That(catalog, Is.Not.Null);
+            Assert.That(buttons, Has.Length.EqualTo(4));
+            Assert.That(currency, Is.Not.Null);
+            Assert.That(currency.text, Is.EqualTo("CALM TOKENS · 0"));
+
+            Assert.That(
+                progress.CompleteLevelAndReward(
+                    0,
+                    catalog.CompletionReward),
+                Is.EqualTo(15));
+            Assert.That(
+                progress.CompleteLevelAndReward(
+                    1,
+                    catalog.CompletionReward),
+                Is.EqualTo(15));
+            yield return null;
+
+            Assert.That(progress.Current.CalmPoints, Is.EqualTo(30));
+            Assert.That(buttons[1].Button.interactable, Is.True);
+            buttons[1].Button.onClick.Invoke();
+            yield return null;
+
+            Assert.That(progress.Current.CalmPoints, Is.EqualTo(10));
+            Assert.That(
+                progress.Current.OwnedDecorationMask,
+                Is.EqualTo(0b0011),
+                "One button press must buy only that decoration.");
+            Assert.That(
+                progress.Current.SelectedDecorationIndex,
+                Is.EqualTo(1));
+
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            Assert.That(room, Is.Not.Null);
+            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(1));
+
+            AsyncOperation reload = SceneManager.LoadSceneAsync(
+                "Main",
+                LoadSceneMode.Single);
+            while (!reload.isDone)
+            {
+                yield return null;
+            }
+
+            experience = null;
+            for (var frame = 0;
+                 frame < 300 &&
+                 (experience == null || !experience.IsInitialized);
+                 frame++)
+            {
+                experience =
+                    Object.FindFirstObjectByType<
+                        DemoExperienceController>();
+                yield return null;
+            }
+
+            Assert.That(experience, Is.Not.Null);
+            progress = GetPrivateField<IDemoProgressStore>(
+                experience,
+                "_progressStore");
+            room = Object.FindFirstObjectByType<DemoRoomPresenter>(
+                FindObjectsInactive.Include);
+            Assert.That(progress.Current.CalmPoints, Is.EqualTo(10));
+            Assert.That(
+                progress.Current.SelectedDecorationIndex,
+                Is.EqualTo(1));
+            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(1));
+            Assert.That(room.IsVisible, Is.True);
+        }
+
+        private static T GetPrivateField<T>(
+            object target,
+            string fieldName)
+            where T : class
+        {
+            FieldInfo field = target.GetType().GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, fieldName);
+            return field.GetValue(target) as T;
         }
     }
 }

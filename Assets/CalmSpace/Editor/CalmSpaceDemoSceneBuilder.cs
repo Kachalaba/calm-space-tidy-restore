@@ -21,6 +21,8 @@ namespace CalmSpace.Editor
     {
         private const string ThemeCatalogPath =
             "Assets/CalmSpace/Config/DemoThemeCatalog.asset";
+        private const string DecorationCatalogPath =
+            "Assets/CalmSpace/Config/DemoDecorationCatalog.asset";
         private static readonly Color Ink =
             new Color(0.035f, 0.045f, 0.055f, 1f);
         private static readonly Color Paper =
@@ -53,21 +55,171 @@ namespace CalmSpace.Editor
             return catalog;
         }
 
+        public static DemoDecorationCatalog
+            CreateOrUpdateDecorationCatalog()
+        {
+            DemoDecorationCatalog catalog =
+                AssetDatabase.LoadAssetAtPath<DemoDecorationCatalog>(
+                    DecorationCatalogPath);
+            if (catalog == null)
+            {
+                catalog =
+                    ScriptableObject.CreateInstance<
+                        DemoDecorationCatalog>();
+                AssetDatabase.CreateAsset(
+                    catalog,
+                    DecorationCatalogPath);
+            }
+
+            SetPrivateField(
+                catalog,
+                "_decorations",
+                DemoDecorationCatalog.CreateBuiltInDefinitions());
+            SetPrivateField(catalog, "_completionReward", 15);
+            EditorUtility.SetDirty(catalog);
+            return catalog;
+        }
+
+        public static DemoRoomPresenter CreateHomeRoom(
+            Material sharedMaterial)
+        {
+            if (sharedMaterial == null)
+            {
+                throw new ArgumentNullException(nameof(sharedMaterial));
+            }
+
+            var presenterRoot =
+                new GameObject("Home Room Presenter");
+            DemoRoomPresenter presenter =
+                presenterRoot.AddComponent<DemoRoomPresenter>();
+
+            var roomRoot = new GameObject("Home Room");
+            roomRoot.transform.SetParent(
+                presenterRoot.transform,
+                false);
+
+            Transform architecture =
+                new GameObject("Architecture").transform;
+            architecture.SetParent(roomRoot.transform, false);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Soft Rug",
+                new Vector3(0f, 0.015f, 0.05f),
+                new Vector3(4.4f, 0.035f, 2.65f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Socket,
+                0);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Back Wall",
+                new Vector3(0f, 0.92f, 2.48f),
+                new Vector3(5.35f, 1.72f, 0.14f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Board,
+                0);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Low Console",
+                new Vector3(0f, 0.54f, 1.82f),
+                new Vector3(3.65f, 0.16f, 0.62f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Piece,
+                1);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Console Leg Left",
+                new Vector3(-1.42f, 0.27f, 1.82f),
+                new Vector3(0.14f, 0.55f, 0.46f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Board,
+                0);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Console Leg Right",
+                new Vector3(1.42f, 0.27f, 1.82f),
+                new Vector3(0.14f, 0.55f, 0.46f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Board,
+                0);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Cube,
+                "Floating Shelf",
+                new Vector3(0f, 1.34f, 2.28f),
+                new Vector3(2.8f, 0.11f, 0.36f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Piece,
+                2);
+            CreateRoomPrimitive(
+                architecture,
+                PrimitiveType.Sphere,
+                "Floor Pouf",
+                new Vector3(-1.72f, 0.22f, 0.15f),
+                new Vector3(0.88f, 0.34f, 0.88f),
+                Quaternion.identity,
+                sharedMaterial,
+                DemoThemeColorRole.Piece,
+                0);
+
+            var decorationRoots = new[]
+            {
+                CreateFernDecoration(roomRoot.transform, sharedMaterial),
+                CreateStoneDecoration(roomRoot.transform, sharedMaterial),
+                CreateLanternDecoration(roomRoot.transform, sharedMaterial),
+                CreateVaseDecoration(roomRoot.transform, sharedMaterial)
+            };
+
+            SetObjectReference(presenter, "_roomRoot", roomRoot);
+            SetPrivateField(
+                presenter,
+                "_decorationRoots",
+                decorationRoots);
+            presenter.SelectDecoration(0);
+            EditorUtility.SetDirty(presenter);
+            return presenter;
+        }
+
         public static DemoExperienceController CreateDemoUi(
             Transform servicesRoot,
             Camera camera,
             Renderer[] boardRenderers,
+            DemoRoomPresenter roomPresenter,
             Sprite menuBackground,
-            Sprite roundedSprite)
+            Sprite roundedSprite,
+            int levelCount)
         {
             if (servicesRoot == null)
             {
                 throw new ArgumentNullException(nameof(servicesRoot));
             }
 
+            if (levelCount < 1)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(levelCount),
+                    levelCount,
+                    "The level select needs at least one entry.");
+            }
+
             if (camera == null)
             {
                 throw new ArgumentNullException(nameof(camera));
+            }
+
+            if (roomPresenter == null)
+            {
+                throw new ArgumentNullException(nameof(roomPresenter));
             }
 
             if (menuBackground == null || roundedSprite == null)
@@ -120,6 +272,7 @@ namespace CalmSpace.Editor
                 menuBackground,
                 roundedSprite,
                 font,
+                levelCount,
                 primaryTexts,
                 secondaryTexts,
                 accentImages,
@@ -130,11 +283,14 @@ namespace CalmSpace.Editor
                 out Button musicButton,
                 out Button languageButton,
                 out Text homeProgressText,
+                out Text roomCurrencyText,
                 out Text musicButtonText,
                 out Text languageButtonText,
                 out Image musicStateImage,
                 out DemoExperienceController.ThemeButtonBinding[]
                     themeBindings,
+                out DemoExperienceController.DecorationButtonBinding[]
+                    decorationBindings,
                 out homeWash);
 
             CanvasGroup levelSelect =
@@ -144,6 +300,7 @@ namespace CalmSpace.Editor
                 menuBackground,
                 roundedSprite,
                 font,
+                levelCount,
                 primaryTexts,
                 secondaryTexts,
                 panelImages,
@@ -181,6 +338,7 @@ namespace CalmSpace.Editor
                 out Button nextButton,
                 out Text completionTitleText,
                 out Text completionBodyText,
+                out Text completionRewardText,
                 out Text nextButtonText);
 
             CanvasGroup loading =
@@ -249,6 +407,10 @@ namespace CalmSpace.Editor
                 homeProgressText);
             SetObjectReference(
                 experience,
+                "_roomCurrencyText",
+                roomCurrencyText);
+            SetObjectReference(
+                experience,
                 "_hudLevelNameText",
                 hudLevelNameText);
             SetObjectReference(
@@ -263,6 +425,10 @@ namespace CalmSpace.Editor
                 experience,
                 "_completionBodyText",
                 completionBodyText);
+            SetObjectReference(
+                experience,
+                "_completionRewardText",
+                completionRewardText);
             SetObjectReference(
                 experience,
                 "_nextButtonText",
@@ -281,6 +447,10 @@ namespace CalmSpace.Editor
                 applicator);
             SetObjectReference(
                 experience,
+                "_roomPresenter",
+                roomPresenter);
+            SetObjectReference(
+                experience,
                 "_backgroundWash",
                 homeWash);
             SetObjectReference(
@@ -289,6 +459,10 @@ namespace CalmSpace.Editor
                 musicStateImage);
             SetPrivateField(experience, "_levelButtons", levelBindings);
             SetPrivateField(experience, "_themeButtons", themeBindings);
+            SetPrivateField(
+                experience,
+                "_decorationButtons",
+                decorationBindings);
             SetPrivateField(
                 experience,
                 "_localizedTexts",
@@ -318,6 +492,7 @@ namespace CalmSpace.Editor
             Sprite background,
             Sprite rounded,
             Font font,
+            int levelCount,
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> accentImages,
@@ -329,19 +504,26 @@ namespace CalmSpace.Editor
             out Button musicButton,
             out Button languageButton,
             out Text progressText,
+            out Text currencyText,
             out Text musicText,
             out Text languageText,
             out Image musicStateImage,
             out DemoExperienceController.ThemeButtonBinding[]
                 themeBindings,
+            out DemoExperienceController.DecorationButtonBinding[]
+                decorationBindings,
             out Image backgroundWash)
         {
-            CreateBackground(screen, background);
+            Image homeBackground = CreateBackground(
+                screen,
+                background);
+            homeBackground.color =
+                new Color(1f, 1f, 1f, 0.62f);
             backgroundWash = CreateImage(
                 screen,
                 "Theme Wash",
                 null,
-                new Color(0.035f, 0.06f, 0.055f, 0.26f),
+                new Color(0.035f, 0.06f, 0.055f, 0.18f),
                 false);
             Stretch(backgroundWash.rectTransform);
 
@@ -470,6 +652,33 @@ namespace CalmSpace.Editor
             panelImages.Add(language.Background);
             primaryTexts.Add(language.Label);
 
+            Image currencyPill = CreateImage(
+                safe,
+                "Calm Tokens",
+                rounded,
+                SagePanel,
+                false);
+            SetAnchored(
+                currencyPill.rectTransform,
+                new Vector2(1f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(-64f, -286f),
+                new Vector2(360f, 70f));
+            currencyPill.rectTransform.pivot =
+                new Vector2(1f, 1f);
+            panelImages.Add(currencyPill);
+            currencyText = CreateText(
+                currencyPill.rectTransform,
+                "Value",
+                "CALM TOKENS · 0",
+                font,
+                23,
+                FontStyle.Bold,
+                TextAnchor.MiddleCenter,
+                Paper);
+            Stretch(currencyText.rectTransform);
+            primaryTexts.Add(currencyText);
+
             Image card = CreateImage(
                 safe,
                 "Home Card",
@@ -480,8 +689,8 @@ namespace CalmSpace.Editor
                 card.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 62f),
-                new Vector2(940f, 830f));
+                new Vector2(0f, 48f),
+                new Vector2(940f, 1000f));
             card.rectTransform.pivot = new Vector2(0.5f, 0f);
             panelImages.Add(card);
 
@@ -498,7 +707,7 @@ namespace CalmSpace.Editor
                 ritual.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 742f),
+                new Vector2(0f, 912f),
                 new Vector2(810f, 46f));
             primaryTexts.Add(ritual);
             AddLocalizedText(
@@ -509,7 +718,7 @@ namespace CalmSpace.Editor
             progressText = CreateText(
                 card.rectTransform,
                 "Progress",
-                "0 / 6 spaces restored",
+                "0 / " + levelCount + " spaces restored",
                 font,
                 34,
                 FontStyle.Bold,
@@ -519,7 +728,7 @@ namespace CalmSpace.Editor
                 progressText.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 680f),
+                new Vector2(0f, 850f),
                 new Vector2(810f, 60f));
             primaryTexts.Add(progressText);
 
@@ -536,7 +745,7 @@ namespace CalmSpace.Editor
                 mood.rectTransform,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 592f),
+                new Vector2(0f, 772f),
                 new Vector2(810f, 44f));
             secondaryTexts.Add(mood);
             AddLocalizedText(
@@ -565,8 +774,8 @@ namespace CalmSpace.Editor
                     theme.Rect,
                     new Vector2(0.5f, 0f),
                     new Vector2(0.5f, 0f),
-                    new Vector2(x, 466f),
-                    new Vector2(250f, 136f));
+                    new Vector2(x, 650f),
+                    new Vector2(250f, 124f));
                 panelImages.Add(theme.Background);
                 primaryTexts.Add(theme.Label);
 
@@ -619,6 +828,116 @@ namespace CalmSpace.Editor
                 themeBindings[index] = binding;
             }
 
+            Text decorLabel = CreateText(
+                card.rectTransform,
+                "Decor Label",
+                "MAKE IT YOURS",
+                font,
+                22,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                SecondaryPaper);
+            SetAnchored(
+                decorLabel.rectTransform,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(0f, 552f),
+                new Vector2(810f, 40f));
+            secondaryTexts.Add(decorLabel);
+            AddLocalizedText(
+                localizedTexts,
+                decorLabel,
+                DemoTextKey.HomeDecorLabel);
+
+            decorationBindings =
+                new DemoExperienceController
+                    .DecorationButtonBinding[4];
+            for (var index = 0;
+                 index < decorationBindings.Length;
+                 index++)
+            {
+                ButtonVisual decor = CreateButton(
+                    card.rectTransform,
+                    "Decoration " + (index + 1),
+                    "Decoration",
+                    rounded,
+                    font,
+                    19,
+                    new Color(0.15f, 0.22f, 0.20f, 1f));
+                float x = (index - 1.5f) * 202f;
+                SetAnchored(
+                    decor.Rect,
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0.5f, 0f),
+                    new Vector2(x, 448f),
+                    new Vector2(188f, 126f));
+                panelImages.Add(decor.Background);
+                primaryTexts.Add(decor.Label);
+
+                decor.Label.alignment = TextAnchor.UpperCenter;
+                decor.Label.rectTransform.offsetMin =
+                    new Vector2(12f, 40f);
+                decor.Label.rectTransform.offsetMax =
+                    new Vector2(-12f, -12f);
+
+                Image selected = CreateImage(
+                    decor.Rect,
+                    "Selected",
+                    rounded,
+                    new Color(1f, 1f, 1f, 0.18f),
+                    false);
+                Stretch(
+                    selected.rectTransform,
+                    new Vector2(-6f, -6f),
+                    new Vector2(6f, 6f));
+                selected.transform.SetAsFirstSibling();
+                selected.gameObject.SetActive(false);
+
+                Image preview = CreateImage(
+                    decor.Rect,
+                    "Preview",
+                    rounded,
+                    index == 0
+                        ? Coral
+                        : new Color(0.47f, 0.78f, 0.65f, 1f),
+                    false);
+                SetAnchored(
+                    preview.rectTransform,
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0f, 17f),
+                    new Vector2(52f, 14f));
+
+                Text state = CreateText(
+                    decor.Rect,
+                    "State",
+                    "OWNED",
+                    font,
+                    16,
+                    FontStyle.Bold,
+                    TextAnchor.LowerCenter,
+                    SecondaryPaper);
+                SetAnchored(
+                    state.rectTransform,
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0.5f, 0f),
+                    new Vector2(0f, 34f),
+                    new Vector2(164f, 32f));
+                secondaryTexts.Add(state);
+
+                var binding = new DemoExperienceController
+                    .DecorationButtonBinding();
+                SetPrivateField(binding, "_button", decor.Button);
+                SetPrivateField(binding, "_preview", preview);
+                SetPrivateField(binding, "_name", decor.Label);
+                SetPrivateField(binding, "_state", state);
+                SetPrivateField(
+                    binding,
+                    "_selectedRoot",
+                    selected.gameObject);
+                decorationBindings[index] = binding;
+            }
+
             ButtonVisual play = CreateButton(
                 card.rectTransform,
                 "Play",
@@ -631,8 +950,8 @@ namespace CalmSpace.Editor
                 play.Rect,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 230f),
-                new Vector2(810f, 150f));
+                new Vector2(0f, 222f),
+                new Vector2(810f, 140f));
             playButton = play.Button;
             accentImages.Add(play.Background);
             primaryTexts.Add(play.Label);
@@ -653,8 +972,8 @@ namespace CalmSpace.Editor
                 levels.Rect,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 68f),
-                new Vector2(810f, 118f));
+                new Vector2(0f, 64f),
+                new Vector2(810f, 108f));
             levelsButton = levels.Button;
             panelImages.Add(levels.Background);
             primaryTexts.Add(levels.Label);
@@ -669,6 +988,7 @@ namespace CalmSpace.Editor
             Sprite background,
             Sprite rounded,
             Font font,
+            int levelCount,
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> panelImages,
@@ -753,7 +1073,8 @@ namespace CalmSpace.Editor
                 DemoTextKey.LevelSelectSubtitle);
 
             bindings =
-                new DemoExperienceController.LevelButtonBinding[6];
+                new DemoExperienceController.LevelButtonBinding[
+                    levelCount];
             for (var index = 0; index < bindings.Length; index++)
             {
                 var row = index / 2;
@@ -948,7 +1269,7 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 0.5f),
                 new Vector2(0f, 0.5f),
                 new Vector2(162f, 0f),
-                new Vector2(510f, 84f));
+                new Vector2(320f, 84f));
             levelName.rectTransform.pivot =
                 new Vector2(0f, 0.5f);
             primaryTexts.Add(levelName);
@@ -967,7 +1288,7 @@ namespace CalmSpace.Editor
                 new Vector2(1f, 0.5f),
                 new Vector2(1f, 0.5f),
                 new Vector2(-26f, 0f),
-                new Vector2(220f, 74f));
+                new Vector2(420f, 104f));
             progress.rectTransform.pivot =
                 new Vector2(1f, 0.5f);
             secondaryTexts.Add(progress);
@@ -987,6 +1308,7 @@ namespace CalmSpace.Editor
             out Button nextButton,
             out Text title,
             out Text body,
+            out Text reward,
             out Text nextText)
         {
             Image dim = CreateImage(
@@ -1068,6 +1390,23 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 416f),
                 new Vector2(810f, 118f));
             secondaryTexts.Add(body);
+
+            reward = CreateText(
+                card.rectTransform,
+                "Reward",
+                "+15 CALM TOKENS",
+                font,
+                24,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                Coral);
+            SetAnchored(
+                reward.rectTransform,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(0f, 344f),
+                new Vector2(810f, 52f));
+            primaryTexts.Add(reward);
 
             ButtonVisual next = CreateButton(
                 card.rectTransform,
@@ -1156,7 +1495,245 @@ namespace CalmSpace.Editor
                 DemoTextKey.Loading);
         }
 
-        private static void CreateBackground(
+        private static GameObject CreateFernDecoration(
+            Transform parent,
+            Material material)
+        {
+            var root = new GameObject("Soft Fern");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition =
+                new Vector3(0.72f, 0f, 0.34f);
+
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Cylinder,
+                "Fern Pot",
+                new Vector3(0f, 0.24f, 0f),
+                new Vector3(0.48f, 0.24f, 0.48f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Socket,
+                0);
+
+            var leafRotations = new[]
+            {
+                Quaternion.Euler(0f, 0f, -28f),
+                Quaternion.Euler(18f, 62f, 30f),
+                Quaternion.Euler(-18f, -58f, -34f),
+                Quaternion.Euler(12f, 128f, 24f),
+                Quaternion.Euler(-8f, 205f, -22f)
+            };
+            for (var index = 0;
+                 index < leafRotations.Length;
+                 index++)
+            {
+                CreateRoomPrimitive(
+                    root.transform,
+                    PrimitiveType.Capsule,
+                    "Fern Leaf " + (index + 1),
+                    new Vector3(
+                        (index - 2) * 0.08f,
+                        0.72f + (index % 2) * 0.08f,
+                        0f),
+                    new Vector3(0.18f, 0.54f, 0.12f),
+                    leafRotations[index],
+                    material,
+                    DemoThemeColorRole.Piece,
+                    1);
+            }
+
+            return root;
+        }
+
+        private static GameObject CreateStoneDecoration(
+            Transform parent,
+            Material material)
+        {
+            var root = new GameObject("River Stones");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition =
+                new Vector3(0.55f, 0f, 0.30f);
+
+            var positions = new[]
+            {
+                new Vector3(0f, 0.17f, 0f),
+                new Vector3(0.05f, 0.42f, 0f),
+                new Vector3(-0.02f, 0.64f, 0f)
+            };
+            var scales = new[]
+            {
+                new Vector3(0.92f, 0.30f, 0.66f),
+                new Vector3(0.70f, 0.27f, 0.55f),
+                new Vector3(0.50f, 0.23f, 0.42f)
+            };
+            for (var index = 0; index < positions.Length; index++)
+            {
+                CreateRoomPrimitive(
+                    root.transform,
+                    PrimitiveType.Sphere,
+                    "River Stone " + (index + 1),
+                    positions[index],
+                    scales[index],
+                    Quaternion.Euler(
+                        0f,
+                        index * 24f,
+                        index == 1 ? 6f : -3f),
+                    material,
+                    DemoThemeColorRole.Piece,
+                    index);
+            }
+
+            return root;
+        }
+
+        private static GameObject CreateLanternDecoration(
+            Transform parent,
+            Material material)
+        {
+            var root = new GameObject("Warm Lantern");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition =
+                new Vector3(0.62f, 0f, 0.32f);
+
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Cylinder,
+                "Lantern Base",
+                new Vector3(0f, 0.12f, 0f),
+                new Vector3(0.58f, 0.12f, 0.58f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Socket,
+                0);
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Sphere,
+                "Lantern Glow",
+                new Vector3(0f, 0.56f, 0f),
+                new Vector3(0.58f, 0.72f, 0.58f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Piece,
+                2);
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Cylinder,
+                "Lantern Cap",
+                new Vector3(0f, 0.96f, 0f),
+                new Vector3(0.42f, 0.08f, 0.42f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Socket,
+                0);
+            for (var index = 0; index < 4; index++)
+            {
+                float angle = index * Mathf.PI * 0.5f;
+                CreateRoomPrimitive(
+                    root.transform,
+                    PrimitiveType.Cylinder,
+                    "Lantern Frame " + (index + 1),
+                    new Vector3(
+                        Mathf.Cos(angle) * 0.30f,
+                        0.56f,
+                        Mathf.Sin(angle) * 0.30f),
+                    new Vector3(0.055f, 0.42f, 0.055f),
+                    Quaternion.identity,
+                    material,
+                    DemoThemeColorRole.Piece,
+                    0);
+            }
+
+            return root;
+        }
+
+        private static GameObject CreateVaseDecoration(
+            Transform parent,
+            Material material)
+        {
+            var root = new GameObject("Clay Vase");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition =
+                new Vector3(0.68f, 0f, 0.32f);
+
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Sphere,
+                "Vase Body",
+                new Vector3(0f, 0.38f, 0f),
+                new Vector3(0.76f, 0.72f, 0.62f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Piece,
+                0);
+            CreateRoomPrimitive(
+                root.transform,
+                PrimitiveType.Cylinder,
+                "Vase Neck",
+                new Vector3(0f, 0.77f, 0f),
+                new Vector3(0.28f, 0.25f, 0.28f),
+                Quaternion.identity,
+                material,
+                DemoThemeColorRole.Piece,
+                0);
+            for (var index = 0; index < 3; index++)
+            {
+                CreateRoomPrimitive(
+                    root.transform,
+                    PrimitiveType.Capsule,
+                    "Dried Stem " + (index + 1),
+                    new Vector3(
+                        (index - 1) * 0.13f,
+                        1.30f,
+                        0f),
+                    new Vector3(0.055f, 0.52f, 0.055f),
+                    Quaternion.Euler(
+                        0f,
+                        index * 52f,
+                        (index - 1) * 10f),
+                    material,
+                    DemoThemeColorRole.Piece,
+                    1 + index);
+            }
+
+            return root;
+        }
+
+        private static GameObject CreateRoomPrimitive(
+            Transform parent,
+            PrimitiveType type,
+            string name,
+            Vector3 localPosition,
+            Vector3 localScale,
+            Quaternion localRotation,
+            Material material,
+            DemoThemeColorRole role,
+            int paletteIndex)
+        {
+            GameObject primitive = GameObject.CreatePrimitive(type);
+            primitive.name = name;
+            primitive.transform.SetParent(parent, false);
+            primitive.transform.localPosition = localPosition;
+            primitive.transform.localScale = localScale;
+            primitive.transform.localRotation = localRotation;
+
+            MeshRenderer renderer =
+                primitive.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+
+            Collider collider = primitive.GetComponent<Collider>();
+            if (collider != null)
+            {
+                Object.DestroyImmediate(collider);
+            }
+
+            DemoThemeColorTag tag =
+                primitive.AddComponent<DemoThemeColorTag>();
+            SetPrivateField(tag, "_role", role);
+            SetPrivateField(tag, "_paletteIndex", paletteIndex);
+            return primitive;
+        }
+
+        private static Image CreateBackground(
             Transform parent,
             Sprite sprite)
         {
@@ -1169,6 +1746,7 @@ namespace CalmSpace.Editor
             Stretch(background.rectTransform);
             background.type = Image.Type.Simple;
             background.preserveAspect = false;
+            return background;
         }
 
         private static CanvasGroup CreateScreen(

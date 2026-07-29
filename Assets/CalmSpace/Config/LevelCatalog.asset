@@ -55,3 +55,17 @@ MonoBehaviour:
       m_SubObjectType: 
       m_SubObjectGUID: 
       m_EditorAssetChanged: 0
+  - _definition: {fileID: 11400000, guid: 74da4ce00a0f24a28bcbd9188ede5843, type: 2}
+    _prefab:
+      m_AssetGUID: a4e6561bf1a76406e8dcca35e64f1b96
+      m_SubObjectName: 
+      m_SubObjectType: 
+      m_SubObjectGUID: 
+      m_EditorAssetChanged: 0
+  - _definition: {fileID: 11400000, guid: c37b7736bd3c540b3b006ed0b5f72832, type: 2}
+    _prefab:
+      m_AssetGUID: 41629297fe3194e0abf1c3c18a7ca826
+      m_SubObjectName: 
+      m_SubObjectType: 
+      m_SubObjectGUID: 
+      m_EditorAssetChanged: 0

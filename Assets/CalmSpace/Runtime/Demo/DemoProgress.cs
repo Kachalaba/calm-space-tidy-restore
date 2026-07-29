@@ -16,11 +16,36 @@ namespace CalmSpace.Demo
             int completedLevelMask,
             string selectedThemeId,
             bool musicEnabled)
+            : this(
+                highestUnlockedLevelIndex,
+                completedLevelMask,
+                selectedThemeId,
+                musicEnabled,
+                0,
+                0,
+                1,
+                0)
+        {
+        }
+
+        public DemoProgressSnapshot(
+            int highestUnlockedLevelIndex,
+            int completedLevelMask,
+            string selectedThemeId,
+            bool musicEnabled,
+            int calmPoints,
+            int rewardedLevelMask,
+            int ownedDecorationMask,
+            int selectedDecorationIndex)
         {
             HighestUnlockedLevelIndex = highestUnlockedLevelIndex;
             CompletedLevelMask = completedLevelMask;
             SelectedThemeId = selectedThemeId ?? string.Empty;
             MusicEnabled = musicEnabled;
+            CalmPoints = calmPoints;
+            RewardedLevelMask = rewardedLevelMask;
+            OwnedDecorationMask = ownedDecorationMask;
+            SelectedDecorationIndex = selectedDecorationIndex;
         }
 
         public int HighestUnlockedLevelIndex { get; }
@@ -30,6 +55,14 @@ namespace CalmSpace.Demo
         public string SelectedThemeId { get; }
 
         public bool MusicEnabled { get; }
+
+        public int CalmPoints { get; }
+
+        public int RewardedLevelMask { get; }
+
+        public int OwnedDecorationMask { get; }
+
+        public int SelectedDecorationIndex { get; }
 
         public bool Equals(DemoProgressSnapshot other)
         {
@@ -41,7 +74,12 @@ namespace CalmSpace.Demo
                     SelectedThemeId,
                     other.SelectedThemeId,
                     StringComparison.Ordinal) &&
-                MusicEnabled == other.MusicEnabled;
+                MusicEnabled == other.MusicEnabled &&
+                CalmPoints == other.CalmPoints &&
+                RewardedLevelMask == other.RewardedLevelMask &&
+                OwnedDecorationMask == other.OwnedDecorationMask &&
+                SelectedDecorationIndex ==
+                    other.SelectedDecorationIndex;
         }
 
         public override bool Equals(object obj)
@@ -63,6 +101,11 @@ namespace CalmSpace.Demo
                         : 0);
                 hashCode =
                     (hashCode * 397) ^ MusicEnabled.GetHashCode();
+                hashCode = (hashCode * 397) ^ CalmPoints;
+                hashCode = (hashCode * 397) ^ RewardedLevelMask;
+                hashCode = (hashCode * 397) ^ OwnedDecorationMask;
+                hashCode =
+                    (hashCode * 397) ^ SelectedDecorationIndex;
                 return hashCode;
             }
         }
@@ -89,6 +132,11 @@ namespace CalmSpace.Demo
     public static class DemoProgressRules
     {
         public const int MaximumTrackedLevels = 30;
+        public const int MaximumTrackedDecorations = 4;
+
+        private const int StarterDecorationMask = 1;
+        private const int ValidDecorationMask =
+            (1 << MaximumTrackedDecorations) - 1;
 
         public static DemoProgressSnapshot CreateDefault(
             int levelCount,
@@ -99,7 +147,11 @@ namespace CalmSpace.Demo
                 normalizedCount > 0 ? 0 : -1,
                 0,
                 NormalizeThemeId(defaultThemeId, string.Empty),
-                true);
+                true,
+                0,
+                0,
+                StarterDecorationMask,
+                0);
         }
 
         public static DemoProgressSnapshot Normalize(
@@ -111,6 +163,18 @@ namespace CalmSpace.Demo
             var validMask = GetValidMask(normalizedCount);
             var completedMask =
                 snapshot.CompletedLevelMask & validMask;
+            var rewardedLevelMask =
+                snapshot.RewardedLevelMask &
+                completedMask &
+                validMask;
+            var ownedDecorationMask =
+                (snapshot.OwnedDecorationMask &
+                 ValidDecorationMask) |
+                StarterDecorationMask;
+            var selectedDecorationIndex =
+                NormalizeSelectedDecorationIndex(
+                    snapshot.SelectedDecorationIndex,
+                    ownedDecorationMask);
 
             var highestUnlocked = normalizedCount > 0
                 ? Mathf.Clamp(
@@ -141,7 +205,11 @@ namespace CalmSpace.Demo
                 NormalizeThemeId(
                     snapshot.SelectedThemeId,
                     defaultThemeId),
-                snapshot.MusicEnabled);
+                snapshot.MusicEnabled,
+                Mathf.Max(0, snapshot.CalmPoints),
+                rewardedLevelMask,
+                ownedDecorationMask,
+                selectedDecorationIndex);
         }
 
         public static DemoProgressSnapshot MarkCompleted(
@@ -171,7 +239,168 @@ namespace CalmSpace.Demo
                 highestUnlocked,
                 completedMask,
                 normalized.SelectedThemeId,
-                normalized.MusicEnabled);
+                normalized.MusicEnabled,
+                normalized.CalmPoints,
+                normalized.RewardedLevelMask,
+                normalized.OwnedDecorationMask,
+                normalized.SelectedDecorationIndex);
+        }
+
+        public static DemoProgressSnapshot CompleteLevelWithReward(
+            DemoProgressSnapshot snapshot,
+            int levelIndex,
+            int levelCount,
+            string defaultThemeId,
+            int rewardAmount)
+        {
+            var normalized =
+                Normalize(snapshot, levelCount, defaultThemeId);
+            var normalizedCount = NormalizeLevelCount(levelCount);
+            if (levelIndex < 0 || levelIndex >= normalizedCount)
+            {
+                return normalized;
+            }
+
+            DemoProgressSnapshot completed = MarkCompleted(
+                normalized,
+                levelIndex,
+                normalizedCount,
+                defaultThemeId);
+            if (rewardAmount <= 0)
+            {
+                return completed;
+            }
+
+            var rewardBit = 1 << levelIndex;
+            if ((completed.RewardedLevelMask & rewardBit) != 0)
+            {
+                return completed;
+            }
+
+            return new DemoProgressSnapshot(
+                completed.HighestUnlockedLevelIndex,
+                completed.CompletedLevelMask,
+                completed.SelectedThemeId,
+                completed.MusicEnabled,
+                SaturatingAdd(
+                    completed.CalmPoints,
+                    rewardAmount),
+                completed.RewardedLevelMask | rewardBit,
+                completed.OwnedDecorationMask,
+                completed.SelectedDecorationIndex);
+        }
+
+        public static DemoProgressSnapshot ReconcileCompletionRewards(
+            DemoProgressSnapshot snapshot,
+            int levelCount,
+            string defaultThemeId,
+            int rewardAmount)
+        {
+            var reconciled =
+                Normalize(snapshot, levelCount, defaultThemeId);
+            if (rewardAmount <= 0)
+            {
+                return reconciled;
+            }
+
+            var completedMask = reconciled.CompletedLevelMask;
+            for (var levelIndex = 0;
+                 levelIndex < NormalizeLevelCount(levelCount);
+                 levelIndex++)
+            {
+                if ((completedMask & (1 << levelIndex)) == 0)
+                {
+                    continue;
+                }
+
+                reconciled = CompleteLevelWithReward(
+                    reconciled,
+                    levelIndex,
+                    levelCount,
+                    defaultThemeId,
+                    rewardAmount);
+            }
+
+            return reconciled;
+        }
+
+        public static bool TryPurchaseAndSelectDecoration(
+            DemoProgressSnapshot snapshot,
+            int decorationIndex,
+            int cost,
+            int levelCount,
+            string defaultThemeId,
+            out DemoProgressSnapshot result)
+        {
+            var normalized =
+                Normalize(snapshot, levelCount, defaultThemeId);
+            result = normalized;
+            if (!IsValidDecorationIndex(decorationIndex) ||
+                cost < 0)
+            {
+                return false;
+            }
+
+            var decorationBit = 1 << decorationIndex;
+            if ((normalized.OwnedDecorationMask &
+                 decorationBit) != 0)
+            {
+                result = WithSelectedDecoration(
+                    normalized,
+                    decorationIndex);
+                return true;
+            }
+
+            if (normalized.CalmPoints < cost)
+            {
+                return false;
+            }
+
+            result = new DemoProgressSnapshot(
+                normalized.HighestUnlockedLevelIndex,
+                normalized.CompletedLevelMask,
+                normalized.SelectedThemeId,
+                normalized.MusicEnabled,
+                normalized.CalmPoints - cost,
+                normalized.RewardedLevelMask,
+                normalized.OwnedDecorationMask |
+                    decorationBit,
+                decorationIndex);
+            return true;
+        }
+
+        public static bool TrySelectDecoration(
+            DemoProgressSnapshot snapshot,
+            int decorationIndex,
+            int levelCount,
+            string defaultThemeId,
+            out DemoProgressSnapshot result)
+        {
+            var normalized =
+                Normalize(snapshot, levelCount, defaultThemeId);
+            result = normalized;
+            if (!IsValidDecorationIndex(decorationIndex) ||
+                !IsDecorationOwned(
+                    normalized,
+                    decorationIndex))
+            {
+                return false;
+            }
+
+            result = WithSelectedDecoration(
+                normalized,
+                decorationIndex);
+            return true;
+        }
+
+        public static bool IsDecorationOwned(
+            DemoProgressSnapshot snapshot,
+            int decorationIndex)
+        {
+            return
+                IsValidDecorationIndex(decorationIndex) &&
+                (snapshot.OwnedDecorationMask &
+                 (1 << decorationIndex)) != 0;
         }
 
         public static DemoProgressSnapshot WithSelectedTheme(
@@ -186,7 +415,11 @@ namespace CalmSpace.Demo
                 normalized.HighestUnlockedLevelIndex,
                 normalized.CompletedLevelMask,
                 NormalizeThemeId(themeId, defaultThemeId),
-                normalized.MusicEnabled);
+                normalized.MusicEnabled,
+                normalized.CalmPoints,
+                normalized.RewardedLevelMask,
+                normalized.OwnedDecorationMask,
+                normalized.SelectedDecorationIndex);
         }
 
         public static DemoProgressSnapshot WithMusicEnabled(
@@ -201,7 +434,11 @@ namespace CalmSpace.Demo
                 normalized.HighestUnlockedLevelIndex,
                 normalized.CompletedLevelMask,
                 normalized.SelectedThemeId,
-                enabled);
+                enabled,
+                normalized.CalmPoints,
+                normalized.RewardedLevelMask,
+                normalized.OwnedDecorationMask,
+                normalized.SelectedDecorationIndex);
         }
 
         public static bool IsLevelUnlocked(
@@ -307,6 +544,66 @@ namespace CalmSpace.Demo
             return -1;
         }
 
+        private static bool IsValidDecorationIndex(
+            int decorationIndex)
+        {
+            return
+                decorationIndex >= 0 &&
+                decorationIndex < MaximumTrackedDecorations;
+        }
+
+        private static int NormalizeSelectedDecorationIndex(
+            int selectedDecorationIndex,
+            int ownedDecorationMask)
+        {
+            if (IsValidDecorationIndex(selectedDecorationIndex) &&
+                (ownedDecorationMask &
+                 (1 << selectedDecorationIndex)) != 0)
+            {
+                return selectedDecorationIndex;
+            }
+
+            for (var index = 0;
+                 index < MaximumTrackedDecorations;
+                 index++)
+            {
+                if ((ownedDecorationMask & (1 << index)) != 0)
+                {
+                    return index;
+                }
+            }
+
+            return 0;
+        }
+
+        private static DemoProgressSnapshot WithSelectedDecoration(
+            DemoProgressSnapshot snapshot,
+            int decorationIndex)
+        {
+            return new DemoProgressSnapshot(
+                snapshot.HighestUnlockedLevelIndex,
+                snapshot.CompletedLevelMask,
+                snapshot.SelectedThemeId,
+                snapshot.MusicEnabled,
+                snapshot.CalmPoints,
+                snapshot.RewardedLevelMask,
+                snapshot.OwnedDecorationMask,
+                decorationIndex);
+        }
+
+        private static int SaturatingAdd(int value, int addition)
+        {
+            if (addition <= 0)
+            {
+                return Mathf.Max(0, value);
+            }
+
+            var sum = (long)Mathf.Max(0, value) + addition;
+            return sum >= int.MaxValue
+                ? int.MaxValue
+                : (int)sum;
+        }
+
         private static string NormalizeThemeId(
             string candidate,
             string fallback)
@@ -334,11 +631,26 @@ namespace CalmSpace.Demo
 
         void Initialize(int levelCount, string defaultThemeId);
 
+        void Initialize(
+            int levelCount,
+            string defaultThemeId,
+            int completionReward);
+
         bool IsLevelUnlocked(int levelIndex);
 
         bool IsLevelCompleted(int levelIndex);
 
         void MarkLevelCompleted(int levelIndex);
+
+        int CompleteLevelAndReward(
+            int levelIndex,
+            int rewardAmount);
+
+        bool TryPurchaseAndSelectDecoration(
+            int decorationIndex,
+            int cost);
+
+        bool TrySelectDecoration(int decorationIndex);
 
         void SetSelectedTheme(string themeId);
 
@@ -356,7 +668,8 @@ namespace CalmSpace.Demo
         public const string DefaultPlayerPrefsKey =
             "calmspace.demo.progress.v1";
 
-        private const int CurrentSchemaVersion = 1;
+        private const int LegacySchemaVersion = 1;
+        private const int CurrentSchemaVersion = 2;
 
         private readonly string _playerPrefsKey;
         private string _defaultThemeId = string.Empty;
@@ -390,6 +703,17 @@ namespace CalmSpace.Demo
             int levelCount,
             string defaultThemeId)
         {
+            Initialize(
+                levelCount,
+                defaultThemeId,
+                DemoDecorationCatalog.DefaultCompletionReward);
+        }
+
+        public void Initialize(
+            int levelCount,
+            string defaultThemeId,
+            int completionReward)
+        {
             LevelCount =
                 DemoProgressRules.NormalizeLevelCount(levelCount);
             _defaultThemeId =
@@ -397,14 +721,23 @@ namespace CalmSpace.Demo
                     ? string.Empty
                     : defaultThemeId.Trim();
 
-            var loaded = LoadOrCreateDefault();
-            Current = DemoProgressRules.Normalize(
-                loaded,
-                LevelCount,
-                _defaultThemeId);
+            DemoProgressSnapshot loaded =
+                LoadOrCreateDefault(out var loadedSchemaVersion);
+            DemoProgressSnapshot normalized =
+                DemoProgressRules.Normalize(
+                    loaded,
+                    LevelCount,
+                    _defaultThemeId);
+            Current =
+                DemoProgressRules.ReconcileCompletionRewards(
+                    normalized,
+                    LevelCount,
+                    _defaultThemeId,
+                    completionReward);
             IsInitialized = true;
 
-            if (loaded != Current)
+            if (loadedSchemaVersion != CurrentSchemaVersion ||
+                loaded != Current)
             {
                 SaveCurrent();
             }
@@ -439,6 +772,64 @@ namespace CalmSpace.Demo
                     _defaultThemeId));
         }
 
+        public int CompleteLevelAndReward(
+            int levelIndex,
+            int rewardAmount)
+        {
+            EnsureInitialized();
+            var previousPoints = Current.CalmPoints;
+            DemoProgressSnapshot next =
+                DemoProgressRules.CompleteLevelWithReward(
+                    Current,
+                    levelIndex,
+                    LevelCount,
+                    _defaultThemeId,
+                    rewardAmount);
+            Apply(next);
+            return Mathf.Max(
+                0,
+                next.CalmPoints - previousPoints);
+        }
+
+        public bool TryPurchaseAndSelectDecoration(
+            int decorationIndex,
+            int cost)
+        {
+            EnsureInitialized();
+            bool succeeded =
+                DemoProgressRules.TryPurchaseAndSelectDecoration(
+                    Current,
+                    decorationIndex,
+                    cost,
+                    LevelCount,
+                    _defaultThemeId,
+                    out DemoProgressSnapshot next);
+            if (succeeded)
+            {
+                Apply(next);
+            }
+
+            return succeeded;
+        }
+
+        public bool TrySelectDecoration(int decorationIndex)
+        {
+            EnsureInitialized();
+            bool succeeded =
+                DemoProgressRules.TrySelectDecoration(
+                    Current,
+                    decorationIndex,
+                    LevelCount,
+                    _defaultThemeId,
+                    out DemoProgressSnapshot next);
+            if (succeeded)
+            {
+                Apply(next);
+            }
+
+            return succeeded;
+        }
+
         public void SetSelectedTheme(string themeId)
         {
             EnsureInitialized();
@@ -461,8 +852,10 @@ namespace CalmSpace.Demo
                     _defaultThemeId));
         }
 
-        private DemoProgressSnapshot LoadOrCreateDefault()
+        private DemoProgressSnapshot LoadOrCreateDefault(
+            out int loadedSchemaVersion)
         {
+            loadedSchemaVersion = 0;
             var fallback = DemoProgressRules.CreateDefault(
                 LevelCount,
                 _defaultThemeId);
@@ -484,16 +877,31 @@ namespace CalmSpace.Demo
                 var serialized =
                     JsonUtility.FromJson<SerializedState>(json);
                 if (serialized == null ||
-                    serialized.version != CurrentSchemaVersion)
+                    (serialized.version != LegacySchemaVersion &&
+                     serialized.version != CurrentSchemaVersion))
                 {
                     return fallback;
+                }
+
+                loadedSchemaVersion = serialized.version;
+                if (serialized.version == LegacySchemaVersion)
+                {
+                    return new DemoProgressSnapshot(
+                        serialized.highestUnlockedLevelIndex,
+                        serialized.completedLevelMask,
+                        serialized.selectedThemeId,
+                        serialized.musicEnabled);
                 }
 
                 return new DemoProgressSnapshot(
                     serialized.highestUnlockedLevelIndex,
                     serialized.completedLevelMask,
                     serialized.selectedThemeId,
-                    serialized.musicEnabled);
+                    serialized.musicEnabled,
+                    serialized.calmPoints,
+                    serialized.rewardedLevelMask,
+                    serialized.ownedDecorationMask,
+                    serialized.selectedDecorationIndex);
             }
             catch (Exception exception)
             {
@@ -525,7 +933,13 @@ namespace CalmSpace.Demo
                     Current.HighestUnlockedLevelIndex,
                 completedLevelMask = Current.CompletedLevelMask,
                 selectedThemeId = Current.SelectedThemeId,
-                musicEnabled = Current.MusicEnabled
+                musicEnabled = Current.MusicEnabled,
+                calmPoints = Current.CalmPoints,
+                rewardedLevelMask = Current.RewardedLevelMask,
+                ownedDecorationMask =
+                    Current.OwnedDecorationMask,
+                selectedDecorationIndex =
+                    Current.SelectedDecorationIndex
             };
 
             try
@@ -560,6 +974,10 @@ namespace CalmSpace.Demo
             public int completedLevelMask;
             public string selectedThemeId;
             public bool musicEnabled;
+            public int calmPoints;
+            public int rewardedLevelMask;
+            public int ownedDecorationMask;
+            public int selectedDecorationIndex;
         }
     }
 }

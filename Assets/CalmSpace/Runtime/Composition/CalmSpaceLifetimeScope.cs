@@ -38,6 +38,9 @@ namespace CalmSpace.Core
         [SerializeField]
         private DemoThemeCatalog _demoThemeCatalog;
 
+        [SerializeField]
+        private DemoDecorationCatalog _demoDecorationCatalog;
+
         protected override void Configure(IContainerBuilder builder)
         {
             if (_levelCatalog == null)
@@ -58,8 +61,16 @@ namespace CalmSpace.Core
                     "Assign a DemoThemeCatalog to CalmSpaceLifetimeScope.");
             }
 
+            if (_demoDecorationCatalog == null)
+            {
+                throw new InvalidOperationException(
+                    "Assign a DemoDecorationCatalog to " +
+                    "CalmSpaceLifetimeScope.");
+            }
+
             builder.RegisterInstance(_levelCatalog);
             builder.RegisterInstance(_demoThemeCatalog);
+            builder.RegisterInstance(_demoDecorationCatalog);
 
             builder
                 .Register<PresentationActivityCoordinator>(

@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using CalmSpace.Cleaning;
 using CalmSpace.Demo;
+using CalmSpace.Fasteners;
 using CalmSpace.Input;
 using CalmSpace.Levels;
 using UnityEditor;
@@ -25,6 +26,47 @@ namespace CalmSpace.Editor
         private const string CleanMaterialPath =
             "Assets/CalmSpace/Materials/CleanTray.mat";
         private const string AddressableLabel = "calm-space-level";
+
+        /// <summary>
+        /// Scattered debris seats, in level XZ. Hand-placed rather than
+        /// generated so the sill never looks like a grid.
+        /// </summary>
+        private static readonly Vector2[] DebrisOffsets =
+        {
+            new Vector2(-0.64f, 0.46f),
+            new Vector2(0.22f, -0.24f),
+            new Vector2(0.68f, 0.62f),
+            new Vector2(-0.26f, 0.86f)
+        };
+
+        // Three beats, two stages. A debris-only stage would have to hide the
+        // grimy pane behind it, so the window would read as already clean
+        // while the player cleared the sill and would then dirty itself. The
+        // sill is cleared inside the sponge stage instead; CleaningStage
+        // reports the hands beat on its own while debris remains.
+        private static readonly CleaningStageSpec[] DustyWindowStages =
+        {
+            new CleaningStageSpec(
+                CleaningToolKind.Sponge,
+                debrisCount: 3,
+                brushRadiusUv: 0.072f,
+                brushHardness: 0.72f,
+                surfaceHeight: 0.43f,
+                materialPath:
+                    "Assets/CalmSpace/Materials/WindowGrime.mat",
+                dirtColor: new Color(0.26f, 0.27f, 0.21f, 1f),
+                dirtStrength: 0.86f),
+            new CleaningStageSpec(
+                CleaningToolKind.Squeegee,
+                debrisCount: 0,
+                brushRadiusUv: 0.125f,
+                brushHardness: 0.95f,
+                surfaceHeight: 0.455f,
+                materialPath:
+                    "Assets/CalmSpace/Materials/WindowStreak.mat",
+                dirtColor: new Color(0.70f, 0.77f, 0.82f, 1f),
+                dirtStrength: 0.52f)
+        };
 
         private static readonly LevelSpec[] LevelSpecs =
         {
@@ -71,8 +113,9 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Config/05FastenerTray.asset",
                 "Assets/CalmSpace/Content/Levels/05FastenerTray.prefab",
                 "levels/05-fastener-tray",
-                4,
-                0.60f),
+                0,
+                0.62f,
+                screwLayers: new[] { 4 }),
             new LevelSpec(
                 "06-fresh-surface",
                 "Fresh Surface",
@@ -81,7 +124,27 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/06FreshSurface.prefab",
                 "levels/06-fresh-surface",
                 0,
-                0f)
+                0f),
+            new LevelSpec(
+                "07-cabinet-hinge",
+                "Cabinet Hinge",
+                LevelType.ScrewPuzzle,
+                "Assets/CalmSpace/Config/07CabinetHinge.asset",
+                "Assets/CalmSpace/Content/Levels/07CabinetHinge.prefab",
+                "levels/07-cabinet-hinge",
+                0,
+                0.62f,
+                screwLayers: new[] { 3, 2 }),
+            new LevelSpec(
+                "08-dusty-window",
+                "Dusty Window",
+                LevelType.Cleaning,
+                "Assets/CalmSpace/Config/08DustyWindow.asset",
+                "Assets/CalmSpace/Content/Levels/08DustyWindow.prefab",
+                "levels/08-dusty-window",
+                0,
+                0.66f,
+                stages: DustyWindowStages)
         };
 
         public static LevelCatalog CreateOrUpdate(
@@ -112,18 +175,13 @@ namespace CalmSpace.Editor
                 LevelSpec spec = LevelSpecs[index];
                 definitions[index] = CreateOrUpdateDefinition(spec);
 
-                GameObject prefab = spec.Type == LevelType.Cleaning
-                    ? CreateOrUpdateCleaningPrefab(
-                        spec,
-                        definitions[index],
-                        cleanMaterial,
-                        targetMaterials[0])
-                    : CreateOrUpdateSnapPrefab(
-                        spec,
-                        index,
-                        definitions[index],
-                        itemMaterials,
-                        targetMaterials);
+                GameObject prefab = CreateOrUpdateLevelPrefab(
+                    spec,
+                    index,
+                    definitions[index],
+                    cleanMaterial,
+                    itemMaterials,
+                    targetMaterials);
 
                 prefabGuids[index] = RegisterAddressable(
                     prefab,
@@ -132,6 +190,44 @@ namespace CalmSpace.Editor
             }
 
             return CreateOrUpdateCatalog(definitions, prefabGuids);
+        }
+
+        private static GameObject CreateOrUpdateLevelPrefab(
+            LevelSpec spec,
+            int levelIndex,
+            LevelDefinition definition,
+            Material cleanMaterial,
+            Material[] itemMaterials,
+            Material[] targetMaterials)
+        {
+            switch (spec.Type)
+            {
+                case LevelType.Cleaning:
+                    return spec.Stages.Length > 0
+                        ? CreateOrUpdateStagedCleaningPrefab(
+                            spec,
+                            definition,
+                            itemMaterials,
+                            targetMaterials[0])
+                        : CreateOrUpdateCleaningPrefab(
+                            spec,
+                            definition,
+                            cleanMaterial,
+                            targetMaterials[0]);
+                case LevelType.ScrewPuzzle:
+                    return CreateOrUpdateScrewPrefab(
+                        spec,
+                        definition,
+                        itemMaterials,
+                        targetMaterials);
+                default:
+                    return CreateOrUpdateSnapPrefab(
+                        spec,
+                        levelIndex,
+                        definition,
+                        itemMaterials,
+                        targetMaterials);
+            }
         }
 
         private static LevelDefinition CreateOrUpdateDefinition(
@@ -350,6 +446,573 @@ namespace CalmSpace.Editor
             }
         }
 
+        private static GameObject CreateOrUpdateStagedCleaningPrefab(
+            LevelSpec spec,
+            LevelDefinition definition,
+            Material[] itemMaterials,
+            Material frameMaterial)
+        {
+            var root = new GameObject(spec.DisplayName + " Level");
+            try
+            {
+                CleaningLevel level =
+                    root.AddComponent<CleaningLevel>();
+                SetObjectReference(level, "_definition", definition);
+
+                CleaningInputController input =
+                    root.AddComponent<CleaningInputController>();
+                SetObjectReference(level, "_cleaningInput", input);
+
+                CreateTrayFrame(
+                    root.transform,
+                    new Vector3(-1.28f, 0.41f, 0f),
+                    new Vector3(0.16f, 0.20f, 2.72f),
+                    frameMaterial);
+                CreateTrayFrame(
+                    root.transform,
+                    new Vector3(1.28f, 0.41f, 0f),
+                    new Vector3(0.16f, 0.20f, 2.72f),
+                    frameMaterial);
+                CreateTrayFrame(
+                    root.transform,
+                    new Vector3(0f, 0.41f, 1.28f),
+                    new Vector3(2.72f, 0.20f, 0.16f),
+                    frameMaterial);
+                CreateTrayFrame(
+                    root.transform,
+                    new Vector3(0f, 0.41f, -1.28f),
+                    new Vector3(2.72f, 0.20f, 0.16f),
+                    frameMaterial);
+
+                var stagesRoot = new GameObject("Stages");
+                stagesRoot.transform.SetParent(root.transform, false);
+
+                CleaningStageSpec[] stageSpecs = spec.Stages;
+                var stages = new CleaningStage[stageSpecs.Length];
+                for (var index = 0;
+                     index < stageSpecs.Length;
+                     index++)
+                {
+                    stages[index] = CreateCleaningStage(
+                        spec,
+                        stageSpecs[index],
+                        index,
+                        stagesRoot.transform,
+                        itemMaterials,
+                        frameMaterial);
+                }
+
+                var levelSerialized = new SerializedObject(level);
+                SetArrayProperty(
+                    levelSerialized.FindProperty("_stages"),
+                    stages);
+                levelSerialized
+                    .FindProperty("_stageSettleSeconds")
+                    .floatValue = 0.5f;
+                levelSerialized.ApplyModifiedPropertiesWithoutUndo();
+
+                GameObject prefab = PrefabUtility.SaveAsPrefabAsset(
+                    root,
+                    spec.PrefabPath);
+                if (prefab == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Unity did not save '{spec.PrefabPath}'.");
+                }
+
+                return prefab;
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        private static CleaningStage CreateCleaningStage(
+            LevelSpec spec,
+            CleaningStageSpec stageSpec,
+            int stageIndex,
+            Transform parent,
+            Material[] itemMaterials,
+            Material frameMaterial)
+        {
+            var stageObject = new GameObject(
+                $"Stage {stageIndex + 1:00}");
+            stageObject.transform.SetParent(parent, false);
+            CleaningStage stage =
+                stageObject.AddComponent<CleaningStage>();
+
+            var content = new GameObject("Content");
+            content.transform.SetParent(
+                stageObject.transform,
+                false);
+
+            RenderTextureCleaner cleaner = null;
+            if (stageSpec.HasSurface)
+            {
+                cleaner = CreateStageSurface(
+                    content.transform,
+                    stageSpec,
+                    stageIndex);
+            }
+
+            var debris = new ItemSnapController[
+                stageSpec.DebrisCount];
+            for (var index = 0;
+                 index < stageSpec.DebrisCount;
+                 index++)
+            {
+                debris[index] = CreateDebris(
+                    content.transform,
+                    index,
+                    stageSpec.DebrisCount,
+                    spec.SnapThreshold,
+                    itemMaterials[index % itemMaterials.Length],
+                    frameMaterial);
+            }
+
+            var serialized = new SerializedObject(stage);
+            serialized.FindProperty("_stageRoot")
+                .objectReferenceValue = content;
+            serialized.FindProperty("_cleaner")
+                .objectReferenceValue = cleaner;
+            SetArrayProperty(
+                serialized.FindProperty("_debris"),
+                debris);
+            serialized.FindProperty("_tool").enumValueIndex =
+                (int)stageSpec.Tool;
+            serialized.FindProperty("_brushRadiusUv").floatValue =
+                stageSpec.BrushRadiusUv;
+            serialized.FindProperty("_brushHardness").floatValue =
+                stageSpec.BrushHardness;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+
+            // Only the first pass is authored visible; the rest are revealed
+            // in order. CleaningLevel re-asserts this at runtime.
+            if (stageIndex > 0)
+            {
+                content.SetActive(false);
+            }
+
+            return stage;
+        }
+
+        private static RenderTextureCleaner CreateStageSurface(
+            Transform parent,
+            CleaningStageSpec stageSpec,
+            int stageIndex)
+        {
+            Material surfaceMaterial = CreateOrUpdateCleanMaterial(
+                stageSpec.MaterialPath,
+                $"Cleanable Layer {stageIndex + 1:00}",
+                new Color(0.94f, 0.93f, 0.88f, 1f),
+                stageSpec.DirtColor,
+                stageSpec.DirtStrength);
+
+            GameObject surface = GameObject.CreatePrimitive(
+                PrimitiveType.Plane);
+            surface.name = "Clean Surface";
+            surface.transform.SetParent(parent, false);
+            surface.transform.localPosition = new Vector3(
+                0f,
+                stageSpec.SurfaceHeight,
+                0f);
+            surface.transform.localScale =
+                new Vector3(0.24f, 1f, 0.24f);
+
+            MeshRenderer renderer =
+                surface.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = surfaceMaterial;
+            MeshCollider collider =
+                surface.GetComponent<MeshCollider>();
+
+            RenderTextureCleaner cleaner =
+                parent.gameObject.AddComponent<RenderTextureCleaner>();
+            var serialized = new SerializedObject(cleaner);
+            serialized.FindProperty("cleanSurfaceCollider")
+                .objectReferenceValue = collider;
+            serialized.FindProperty("visibleRenderer")
+                .objectReferenceValue = renderer;
+            serialized.FindProperty("maskBrushShader")
+                .objectReferenceValue =
+                    Shader.Find("Hidden/CalmSpace/MaskBrush");
+            serialized.FindProperty("maskResolution")
+                .vector2IntValue = new Vector2Int(256, 256);
+            serialized.FindProperty("brushRadiusUv").floatValue =
+                stageSpec.BrushRadiusUv;
+            serialized.FindProperty("brushHardness").floatValue =
+                stageSpec.BrushHardness;
+            serialized
+                .FindProperty("progressSampleIntervalSeconds")
+                .floatValue = 0.28f;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            return cleaner;
+        }
+
+        private static ItemSnapController CreateDebris(
+            Transform parent,
+            int index,
+            int count,
+            float snapThreshold,
+            Material material,
+            Material binMaterial)
+        {
+            var target = new GameObject(
+                $"Sill Bin Slot {index + 1:00}");
+            target.transform.SetParent(parent, false);
+            target.transform.localPosition = new Vector3(
+                (index - (count - 1) * 0.5f) * 0.68f,
+                0.50f,
+                -1.74f);
+            AddThemeColorTag(
+                target,
+                DemoThemeColorRole.Socket,
+                index);
+            AddPrimitive(
+                target.transform,
+                PrimitiveType.Cube,
+                "Bin Socket",
+                new Vector3(0f, -0.14f, 0f),
+                new Vector3(0.60f, 0.10f, 0.60f),
+                Quaternion.identity,
+                binMaterial,
+                false);
+
+            var debris = new GameObject($"Debris {index + 1:00}");
+            debris.transform.SetParent(parent, false);
+            debris.transform.localPosition = new Vector3(
+                DebrisOffsets[index % DebrisOffsets.Length].x,
+                0.52f,
+                DebrisOffsets[index % DebrisOffsets.Length].y);
+            debris.transform.localRotation = Quaternion.Euler(
+                0f,
+                index * 34f,
+                0f);
+            AddThemeColorTag(
+                debris,
+                DemoThemeColorRole.Piece,
+                index);
+            AddPrimitive(
+                debris.transform,
+                index % 2 == 0
+                    ? PrimitiveType.Cube
+                    : PrimitiveType.Sphere,
+                "Tactile Piece",
+                Vector3.zero,
+                new Vector3(0.44f, 0.24f, 0.52f),
+                Quaternion.identity,
+                material,
+                true);
+
+            ItemSnapController snap =
+                debris.AddComponent<ItemSnapController>();
+            var serialized = new SerializedObject(snap);
+            serialized.FindProperty("_snapTarget")
+                .objectReferenceValue = target.transform;
+            serialized.FindProperty("_positionSnapThreshold")
+                .floatValue = snapThreshold;
+            serialized
+                .FindProperty("_rotationSnapThresholdDegrees")
+                .floatValue = 180f;
+            serialized.FindProperty("_snapDurationSeconds")
+                .floatValue = 0.16f;
+            serialized.FindProperty("_returnDurationSeconds")
+                .floatValue = 0.15f;
+            serialized.FindProperty("_dragHapticIntensity")
+                .floatValue = 0.46f;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            return snap;
+        }
+
+        private static GameObject CreateOrUpdateScrewPrefab(
+            LevelSpec spec,
+            LevelDefinition definition,
+            Material[] itemMaterials,
+            Material[] targetMaterials)
+        {
+            int[] layers = spec.ScrewLayers;
+            if (layers.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Screw level '{spec.Id}' declares no layers.");
+            }
+
+            var root = new GameObject(spec.DisplayName + " Level");
+            try
+            {
+                ScrewPuzzleLevel level =
+                    root.AddComponent<ScrewPuzzleLevel>();
+                SetObjectReference(level, "_definition", definition);
+                root.AddComponent<ScrewInputController>();
+
+                var targetsRoot = new GameObject("Targets");
+                targetsRoot.transform.SetParent(root.transform, false);
+                var layersRoot = new GameObject("Layers");
+                layersRoot.transform.SetParent(root.transform, false);
+
+                // Build inward. Every panel has to point at the layer it
+                // uncovers, so the deeper one must exist first.
+                GameObject deeperLayer = null;
+                for (int layerIndex = layers.Length - 1;
+                     layerIndex >= 0;
+                     layerIndex--)
+                {
+                    deeperLayer = CreateFastenedLayer(
+                        spec,
+                        layers.Length,
+                        layerIndex,
+                        layers[layerIndex],
+                        layersRoot.transform,
+                        targetsRoot.transform,
+                        itemMaterials,
+                        targetMaterials,
+                        deeperLayer);
+                }
+
+                GameObject prefab = PrefabUtility.SaveAsPrefabAsset(
+                    root,
+                    spec.PrefabPath);
+                if (prefab == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Unity did not save '{spec.PrefabPath}'.");
+                }
+
+                return prefab;
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        private static GameObject CreateFastenedLayer(
+            LevelSpec spec,
+            int layerCount,
+            int layerIndex,
+            int screwCount,
+            Transform layersRoot,
+            Transform targetsRoot,
+            Material[] itemMaterials,
+            Material[] targetMaterials,
+            GameObject deeperLayer)
+        {
+            var layer = new GameObject(
+                $"Layer {layerIndex + 1:00}");
+            layer.transform.SetParent(layersRoot, false);
+
+            Material panelMaterial =
+                itemMaterials[layerIndex % itemMaterials.Length];
+            Material socketMaterial =
+                targetMaterials[layerIndex % targetMaterials.Length];
+
+            var panelScale = new Vector3(
+                1.86f - layerIndex * 0.30f,
+                0.15f,
+                1.10f - layerIndex * 0.18f);
+            var panelPosition = new Vector3(
+                0f,
+                0.58f - layerIndex * 0.10f,
+                0.86f);
+
+            Transform target = CreatePanelTarget(
+                targetsRoot,
+                layerIndex,
+                new Vector3(
+                    (layerIndex - (layerCount - 1) * 0.5f) * 2.0f,
+                    0.52f,
+                    -1.28f),
+                panelScale,
+                socketMaterial);
+
+            var panel = new GameObject(
+                $"Panel {layerIndex + 1:00}");
+            panel.transform.SetParent(layer.transform, false);
+            panel.transform.localPosition = panelPosition;
+            AddThemeColorTag(
+                panel,
+                DemoThemeColorRole.Piece,
+                layerIndex);
+
+            GameObject plate = AddPrimitive(
+                panel.transform,
+                PrimitiveType.Cube,
+                "Panel Plate",
+                Vector3.zero,
+                panelScale,
+                Quaternion.identity,
+                panelMaterial,
+                true);
+
+            ItemSnapController item =
+                panel.AddComponent<ItemSnapController>();
+            var itemSerialized = new SerializedObject(item);
+            itemSerialized.FindProperty("_snapTarget")
+                .objectReferenceValue = target;
+            itemSerialized.FindProperty("_positionSnapThreshold")
+                .floatValue = spec.SnapThreshold;
+            itemSerialized
+                .FindProperty("_rotationSnapThresholdDegrees")
+                .floatValue = 180f;
+            itemSerialized.FindProperty("_snapDurationSeconds")
+                .floatValue = 0.18f;
+            itemSerialized.FindProperty("_returnDurationSeconds")
+                .floatValue = 0.15f;
+            itemSerialized.FindProperty("_dragHapticIntensity")
+                .floatValue = 0.52f;
+            itemSerialized.ApplyModifiedPropertiesWithoutUndo();
+
+            FastenerPanel fastener =
+                panel.AddComponent<FastenerPanel>();
+
+            var screwsRoot = new GameObject("Screws");
+            screwsRoot.transform.SetParent(layer.transform, false);
+            var screws = new ScrewController[screwCount];
+            for (var index = 0; index < screwCount; index++)
+            {
+                screws[index] = CreateScrew(
+                    screwsRoot.transform,
+                    index,
+                    screwCount,
+                    panelPosition,
+                    panelScale,
+                    panelMaterial,
+                    socketMaterial,
+                    fastener);
+            }
+
+            var panelSerialized = new SerializedObject(fastener);
+            SetArrayProperty(
+                panelSerialized.FindProperty("_screws"),
+                screws);
+            SetArrayProperty(
+                panelSerialized.FindProperty("_lockedColliders"),
+                new Object[] { plate.GetComponent<Collider>() });
+            panelSerialized.FindProperty("_item")
+                .objectReferenceValue = item;
+            panelSerialized.FindProperty("_revealsOnRelease")
+                .objectReferenceValue = deeperLayer;
+            panelSerialized.ApplyModifiedPropertiesWithoutUndo();
+
+            if (layerIndex > 0)
+            {
+                layer.SetActive(false);
+            }
+
+            return layer;
+        }
+
+        private static Transform CreatePanelTarget(
+            Transform parent,
+            int index,
+            Vector3 position,
+            Vector3 panelScale,
+            Material material)
+        {
+            var targetRoot = new GameObject(
+                $"Panel Target {index + 1:00}");
+            targetRoot.transform.SetParent(parent, false);
+            targetRoot.transform.localPosition = position;
+            AddThemeColorTag(
+                targetRoot,
+                DemoThemeColorRole.Socket,
+                index);
+
+            AddPrimitive(
+                targetRoot.transform,
+                PrimitiveType.Cube,
+                "Panel Socket",
+                new Vector3(0f, -0.11f, 0f),
+                new Vector3(
+                    panelScale.x * 1.08f,
+                    0.08f,
+                    panelScale.z * 1.08f),
+                Quaternion.identity,
+                material,
+                false);
+
+            return targetRoot.transform;
+        }
+
+        private static ScrewController CreateScrew(
+            Transform parent,
+            int index,
+            int count,
+            Vector3 panelPosition,
+            Vector3 panelScale,
+            Material bodyMaterial,
+            Material slotMaterial,
+            FastenerPanel panel)
+        {
+            // An eighth-turn offset puts four screws exactly on the corners
+            // and spreads any other count evenly around the plate.
+            float angle = Mathf.PI * 2f * index / count +
+                Mathf.PI * 0.25f;
+            var screw = new GameObject($"Screw {index + 1:00}");
+            screw.transform.SetParent(parent, false);
+            screw.transform.localPosition = new Vector3(
+                panelPosition.x +
+                    Mathf.Cos(angle) * panelScale.x * 0.33f,
+                panelPosition.y + panelScale.y * 0.5f + 0.03f,
+                panelPosition.z +
+                    Mathf.Sin(angle) * panelScale.z * 0.33f);
+
+            var body = new GameObject("Body");
+            body.transform.SetParent(screw.transform, false);
+            AddThemeColorTag(
+                body,
+                DemoThemeColorRole.Board,
+                0);
+            AddPrimitive(
+                body.transform,
+                PrimitiveType.Cylinder,
+                "Screw Shaft",
+                Vector3.zero,
+                new Vector3(0.11f, 0.10f, 0.11f),
+                Quaternion.identity,
+                bodyMaterial,
+                false);
+            AddPrimitive(
+                body.transform,
+                PrimitiveType.Cylinder,
+                "Screw Head",
+                new Vector3(0f, 0.10f, 0f),
+                new Vector3(0.34f, 0.035f, 0.34f),
+                Quaternion.identity,
+                bodyMaterial,
+                true);
+
+            // The drive slot is the only asymmetric feature, so it is what
+            // makes the turning readable. It stays untagged to keep its
+            // contrast against the themed body.
+            AddPrimitive(
+                screw.transform,
+                PrimitiveType.Cube,
+                "Screw Slot",
+                new Vector3(0f, 0.15f, 0f),
+                new Vector3(0.30f, 0.02f, 0.07f),
+                Quaternion.identity,
+                slotMaterial,
+                false);
+
+            ScrewController controller =
+                screw.AddComponent<ScrewController>();
+            var serialized = new SerializedObject(controller);
+            serialized.FindProperty("_panel").objectReferenceValue =
+                panel;
+            serialized.FindProperty("_turnsRequired").intValue =
+                3 + index % 2;
+            serialized.FindProperty("_secondsPerTurn").floatValue =
+                0.40f;
+            serialized.FindProperty("_riseHeight").floatValue = 0.34f;
+            serialized.FindProperty("_tickIntensity").floatValue =
+                0.55f;
+            serialized.FindProperty("_settleDurationSeconds")
+                .floatValue = 0.22f;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            return controller;
+        }
+
         private static LevelBase AddLevelComponent(
             GameObject root,
             LevelType type)
@@ -358,8 +1021,6 @@ namespace CalmSpace.Editor
             {
                 case LevelType.Sorting:
                     return root.AddComponent<SortingLevel>();
-                case LevelType.ScrewPuzzle:
-                    return root.AddComponent<ScrewPuzzleLevel>();
                 case LevelType.Fitting:
                     return root.AddComponent<FittingLevel>();
                 default:
@@ -367,6 +1028,23 @@ namespace CalmSpace.Editor
                         nameof(type),
                         type,
                         "This builder only creates snap-driven levels here.");
+            }
+        }
+
+        private static void SetArrayProperty(
+            SerializedProperty property,
+            Object[] values)
+        {
+            if (property == null)
+            {
+                throw new ArgumentNullException(nameof(property));
+            }
+
+            property.arraySize = values.Length;
+            for (var index = 0; index < values.Length; index++)
+            {
+                property.GetArrayElementAtIndex(index)
+                    .objectReferenceValue = values[index];
             }
         }
 
@@ -388,31 +1066,15 @@ namespace CalmSpace.Editor
                 DemoThemeColorRole.Socket,
                 paletteIndex);
 
-            if (levelIndex == 4)
-            {
-                AddPrimitive(
-                    targetRoot.transform,
-                    PrimitiveType.Cube,
-                    "Fastener Socket",
-                    new Vector3(0f, -0.18f, 0f),
-                    new Vector3(0.92f, 0.10f, 0.58f),
-                    Quaternion.identity,
-                    material,
-                    false);
-            }
-            else
-            {
-                Vector3 scale = GetShapeScale(shape, target: true);
-                AddPrimitive(
-                    targetRoot.transform,
-                    ToPrimitiveType(shape),
-                    "Socket",
-                    new Vector3(0f, -0.22f, 0f),
-                    scale,
-                    GetShapeRotation(shape),
-                    material,
-                    false);
-            }
+            AddPrimitive(
+                targetRoot.transform,
+                ToPrimitiveType(shape),
+                "Socket",
+                new Vector3(0f, -0.22f, 0f),
+                GetShapeScale(shape, target: true),
+                GetShapeRotation(shape),
+                material,
+                false);
 
             return targetRoot.transform;
         }
@@ -474,10 +1136,6 @@ namespace CalmSpace.Editor
             if (levelIndex == 2)
             {
                 CreateTeaObject(item.transform, index, material);
-            }
-            else if (levelIndex == 4)
-            {
-                CreateFastener(item.transform, index, material);
             }
             else
             {
@@ -591,32 +1249,6 @@ namespace CalmSpace.Editor
                         true);
                     break;
             }
-        }
-
-        private static void CreateFastener(
-            Transform parent,
-            int index,
-            Material material)
-        {
-            float length = 0.72f + index * 0.08f;
-            AddPrimitive(
-                parent,
-                PrimitiveType.Cylinder,
-                "Fastener Shaft",
-                new Vector3(0f, 0f, 0.12f),
-                new Vector3(0.18f, length * 0.5f, 0.18f),
-                Quaternion.Euler(90f, 0f, 0f),
-                material,
-                true);
-            AddPrimitive(
-                parent,
-                PrimitiveType.Cylinder,
-                "Fastener Head",
-                new Vector3(0f, 0f, -length * 0.48f),
-                new Vector3(0.40f, 0.12f, 0.40f),
-                Quaternion.Euler(90f, 0f, 0f),
-                material,
-                true);
         }
 
         private static GameObject AddPrimitive(
@@ -798,6 +1430,21 @@ namespace CalmSpace.Editor
 
         private static Material CreateOrUpdateCleanMaterial()
         {
+            return CreateOrUpdateCleanMaterial(
+                CleanMaterialPath,
+                "Clean Tray",
+                new Color(0.94f, 0.88f, 0.74f, 1f),
+                new Color(0.28f, 0.20f, 0.14f, 1f),
+                0.82f);
+        }
+
+        private static Material CreateOrUpdateCleanMaterial(
+            string materialPath,
+            string materialName,
+            Color baseColor,
+            Color dirtColor,
+            float dirtStrength)
+        {
             Shader shader = Shader.Find("CalmSpace/CleanableSurface");
             if (shader == null)
             {
@@ -807,26 +1454,22 @@ namespace CalmSpace.Editor
 
             Material material =
                 AssetDatabase.LoadAssetAtPath<Material>(
-                    CleanMaterialPath);
+                    materialPath);
             if (material == null)
             {
                 material = new Material(shader);
-                AssetDatabase.CreateAsset(material, CleanMaterialPath);
+                AssetDatabase.CreateAsset(material, materialPath);
             }
             else
             {
                 material.shader = shader;
             }
 
-            material.name = "Clean Tray";
+            material.name = materialName;
             material.enableInstancing = true;
-            material.SetColor(
-                "_BaseColor",
-                new Color(0.94f, 0.88f, 0.74f, 1f));
-            material.SetColor(
-                "_DirtColor",
-                new Color(0.28f, 0.20f, 0.14f, 1f));
-            material.SetFloat("_DirtStrength", 0.82f);
+            material.SetColor("_BaseColor", baseColor);
+            material.SetColor("_DirtColor", dirtColor);
+            material.SetFloat("_DirtStrength", dirtStrength);
             EditorUtility.SetDirty(material);
             return material;
         }
@@ -954,8 +1597,57 @@ namespace CalmSpace.Editor
             Cylinder = 3
         }
 
+        /// <summary>
+        /// One pass of a staged cleaning level. A stage with no material path
+        /// has no surface to wipe — it is a debris pass, cleared by dragging.
+        /// </summary>
+        private readonly struct CleaningStageSpec
+        {
+            public CleaningStageSpec(
+                CleaningToolKind tool,
+                int debrisCount,
+                float brushRadiusUv,
+                float brushHardness,
+                float surfaceHeight,
+                string materialPath,
+                Color dirtColor,
+                float dirtStrength)
+            {
+                Tool = tool;
+                DebrisCount = debrisCount;
+                BrushRadiusUv = brushRadiusUv;
+                BrushHardness = brushHardness;
+                SurfaceHeight = surfaceHeight;
+                MaterialPath = materialPath;
+                DirtColor = dirtColor;
+                DirtStrength = dirtStrength;
+            }
+
+            public CleaningToolKind Tool { get; }
+
+            public int DebrisCount { get; }
+
+            public float BrushRadiusUv { get; }
+
+            public float BrushHardness { get; }
+
+            public float SurfaceHeight { get; }
+
+            public string MaterialPath { get; }
+
+            public Color DirtColor { get; }
+
+            public float DirtStrength { get; }
+
+            public bool HasSurface =>
+                !string.IsNullOrEmpty(MaterialPath);
+        }
+
         private readonly struct LevelSpec
         {
+            private readonly int[] _screwLayers;
+            private readonly CleaningStageSpec[] _stages;
+
             public LevelSpec(
                 string id,
                 string displayName,
@@ -964,7 +1656,9 @@ namespace CalmSpace.Editor
                 string prefabPath,
                 string address,
                 int itemCount,
-                float snapThreshold)
+                float snapThreshold,
+                int[] screwLayers = null,
+                CleaningStageSpec[] stages = null)
             {
                 Id = id;
                 DisplayName = displayName;
@@ -974,7 +1668,17 @@ namespace CalmSpace.Editor
                 Address = address;
                 ItemCount = itemCount;
                 SnapThreshold = snapThreshold;
+                _screwLayers = screwLayers ?? Array.Empty<int>();
+                _stages = stages ??
+                    Array.Empty<CleaningStageSpec>();
             }
+
+            /// <summary>
+            /// Screws per fastened layer, outermost first.
+            /// </summary>
+            public int[] ScrewLayers => _screwLayers;
+
+            public CleaningStageSpec[] Stages => _stages;
 
             public string Id { get; }
 
