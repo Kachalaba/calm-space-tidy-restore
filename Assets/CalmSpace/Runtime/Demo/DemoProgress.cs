@@ -42,7 +42,7 @@ namespace CalmSpace.Demo
             CompletedLevelMask = completedLevelMask;
             SelectedThemeId = selectedThemeId ?? string.Empty;
             MusicEnabled = musicEnabled;
-            CalmPoints = calmPoints;
+            CozyTokens = calmPoints;
             RewardedLevelMask = rewardedLevelMask;
             OwnedDecorationMask = ownedDecorationMask;
             SelectedDecorationIndex = selectedDecorationIndex;
@@ -56,7 +56,12 @@ namespace CalmSpace.Demo
 
         public bool MusicEnabled { get; }
 
-        public int CalmPoints { get; }
+        public int CozyTokens { get; }
+
+        /// <summary>
+        /// v2 save migration alias. New product code should use CozyTokens.
+        /// </summary>
+        public int CalmPoints => CozyTokens;
 
         public int RewardedLevelMask { get; }
 

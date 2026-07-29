@@ -39,7 +39,8 @@ namespace CalmSpace.Demo
         HomeDecorLabel = 23,
         DecorationBuy = 24,
         DecorationOwned = 25,
-        DecorationSelected = 26
+        DecorationSelected = 26,
+        Undo = 27
     }
 
     public interface IDemoLocalizationService
@@ -246,6 +247,8 @@ namespace CalmSpace.Demo
                     return "OWNED";
                 case DemoTextKey.DecorationSelected:
                     return "SELECTED";
+                case DemoTextKey.Undo:
+                    return "Undo";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -312,6 +315,8 @@ namespace CalmSpace.Demo
                     return "ПРИДБАНО";
                 case DemoTextKey.DecorationSelected:
                     return "ОБРАНО";
+                case DemoTextKey.Undo:
+                    return "Скасувати";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -470,8 +475,8 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? "ЖЕТОНИ СПОКОЮ · " + normalized
-                : "CALM TOKENS · " + normalized;
+                ? "ЖЕТОНИ ЗАТИШКУ · " + normalized
+                : "COZY TOKENS · " + normalized;
         }
 
         public string FormatDecorationCost(int cost)
@@ -479,7 +484,7 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, cost);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? normalized + " ЖЕТОНІВ"
+                ? normalized + " ЖЕТОНІВ ЗАТИШКУ"
                 : normalized + " TOKENS";
         }
 
@@ -488,8 +493,8 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? "+" + normalized + " ЖЕТОНІВ СПОКОЮ"
-                : "+" + normalized + " CALM TOKENS";
+                ? "+" + normalized + " ЖЕТОНІВ ЗАТИШКУ"
+                : "+" + normalized + " COZY TOKENS";
         }
 
         public string FormatCompletionBody(

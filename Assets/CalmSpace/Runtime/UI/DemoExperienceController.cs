@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using CalmSpace.Audio;
 using CalmSpace.Cleaning;
+using CalmSpace.Core;
 using CalmSpace.Demo;
 using CalmSpace.Levels;
 using Cysharp.Threading.Tasks;
@@ -48,6 +49,9 @@ namespace CalmSpace.UI
         [SerializeField]
         private CanvasGroup _loadingOverlay;
 
+        [SerializeField]
+        private LevelTransitionCurtain _levelTransitionCurtain;
+
         [Header("Primary navigation")]
         [SerializeField]
         private Button _playButton;
@@ -62,7 +66,13 @@ namespace CalmSpace.UI
         private Button _hudHomeButton;
 
         [SerializeField]
+        private Button _hudUndoButton;
+
+        [SerializeField]
         private Button _completionHomeButton;
+
+        [SerializeField]
+        private Button _completionUndoButton;
 
         [SerializeField]
         private Button _nextButton;
@@ -155,6 +165,7 @@ namespace CalmSpace.UI
         private IDemoThemeService _themeService;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _musicService;
+        private IUndoHistory _undoHistory;
 
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
@@ -188,7 +199,8 @@ namespace CalmSpace.UI
             IDemoProgressStore progressStore,
             IDemoThemeService themeService,
             IDemoLocalizationService localization,
-            IBackgroundMusicService musicService)
+            IBackgroundMusicService musicService,
+            IUndoHistory undoHistory)
         {
             _levelFlow = levelFlow ??
                 throw new ArgumentNullException(nameof(levelFlow));
@@ -205,6 +217,8 @@ namespace CalmSpace.UI
                 throw new ArgumentNullException(nameof(localization));
             _musicService = musicService ??
                 throw new ArgumentNullException(nameof(musicService));
+            _undoHistory = undoHistory ??
+                throw new ArgumentNullException(nameof(undoHistory));
         }
 
         private void Awake()
@@ -314,6 +328,8 @@ namespace CalmSpace.UI
             BeginNavigation(true);
             try
             {
+                await _levelTransitionCurtain.FadeToOpaqueAsync(
+                    cancellationToken);
                 return await LoadLevelCoreAsync(
                     entry.Definition.LevelId,
                     levelIndex,
@@ -331,6 +347,7 @@ namespace CalmSpace.UI
             }
             finally
             {
+                await RevealAfterLevelTransitionAsync();
                 EndNavigation();
             }
         }
@@ -346,10 +363,14 @@ namespace CalmSpace.UI
             BeginNavigation(true);
             try
             {
+                await _levelTransitionCurtain.FadeToOpaqueAsync(
+                    cancellationToken);
                 var nextIndex = _currentLevelIndex + 1;
                 if (nextIndex >= _levelCatalog.Count)
                 {
-                    await ReturnHomeCoreAsync(cancellationToken);
+                    await ReturnHomeCoreAsync(
+                        cancellationToken,
+                        true);
                     return true;
                 }
 
@@ -378,6 +399,7 @@ namespace CalmSpace.UI
             }
             finally
             {
+                await RevealAfterLevelTransitionAsync();
                 EndNavigation();
             }
         }
@@ -393,7 +415,11 @@ namespace CalmSpace.UI
             BeginNavigation(true);
             try
             {
-                await ReturnHomeCoreAsync(cancellationToken);
+                await _levelTransitionCurtain.FadeToOpaqueAsync(
+                    cancellationToken);
+                await ReturnHomeCoreAsync(
+                    cancellationToken,
+                    true);
             }
             catch (OperationCanceledException)
             {
@@ -405,6 +431,7 @@ namespace CalmSpace.UI
             }
             finally
             {
+                await RevealAfterLevelTransitionAsync();
                 EndNavigation();
             }
         }
@@ -412,20 +439,19 @@ namespace CalmSpace.UI
         private async UniTask<bool> LoadLevelCoreAsync(
             string levelId,
             int requestedIndex,
-            bool tryInterstitial,
+            bool loadSequentially,
             CancellationToken cancellationToken)
         {
             UnbindLevel();
 
             bool loaded;
-            if (tryInterstitial &&
+            if (loadSequentially &&
                 _levelFlow.CurrentLevel != null &&
                 requestedIndex ==
                     _levelFlow.CurrentLevelIndex + 1)
             {
                 loaded =
                     await _levelFlow.LoadNextLevelAsync(
-                        true,
                         cancellationToken);
             }
             else
@@ -440,9 +466,7 @@ namespace CalmSpace.UI
             {
                 _currentLevelIndex = -1;
                 _levelThemeApplicator?.ClearCurrentLevel();
-                await ShowScreenAsync(
-                    _homeScreen,
-                    cancellationToken);
+                SetActiveScreenBehindCurtain(_homeScreen);
                 return false;
             }
 
@@ -457,14 +481,13 @@ namespace CalmSpace.UI
                 RefreshCleaningProgress(
                     _boundCleaner.CleanedFraction);
             }
-            await ShowScreenAsync(
-                _hudScreen,
-                cancellationToken);
+            SetActiveScreenBehindCurtain(_hudScreen);
             return true;
         }
 
         private async UniTask ReturnHomeCoreAsync(
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool screenBehindCurtain = false)
         {
             UnbindLevel();
             if (_levelFlow.CurrentLevel != null)
@@ -478,9 +501,16 @@ namespace CalmSpace.UI
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshDecorationUi();
-            await ShowScreenAsync(
-                _homeScreen,
-                cancellationToken);
+            if (screenBehindCurtain)
+            {
+                SetActiveScreenBehindCurtain(_homeScreen);
+            }
+            else
+            {
+                await ShowScreenAsync(
+                    _homeScreen,
+                    cancellationToken);
+            }
         }
 
         private async UniTask ShowLevelSelectAsync(
@@ -609,6 +639,7 @@ namespace CalmSpace.UI
 
             _boundLevel.LevelCompleted += HandleLevelCompleted;
             _boundLevel.ProgressChanged += HandleLevelProgressChanged;
+            _boundLevel.StateChanged += HandleLevelStateChanged;
             _boundCleaningLevel = _boundLevel as CleaningLevel;
 
             if (_boundCleaningLevel != null)
@@ -642,6 +673,7 @@ namespace CalmSpace.UI
                 _boundLevel.LevelCompleted -= HandleLevelCompleted;
                 _boundLevel.ProgressChanged -=
                     HandleLevelProgressChanged;
+                _boundLevel.StateChanged -= HandleLevelStateChanged;
             }
 
             _boundLevel = null;
@@ -687,6 +719,41 @@ namespace CalmSpace.UI
             int total)
         {
             RefreshHud(placed, total);
+        }
+
+        private void HandleLevelStateChanged(LevelState state)
+        {
+            RefreshNavigationAvailability();
+            if (state == LevelState.Active &&
+                _activeScreen == _completionScreen)
+            {
+                ReturnToHudAfterUndoAsync(
+                    _lifetimeCancellation.Token).Forget();
+            }
+        }
+
+        private async UniTask ReturnToHudAfterUndoAsync(
+            CancellationToken cancellationToken)
+        {
+            if (!CanNavigate() ||
+                _activeScreen != _completionScreen)
+            {
+                return;
+            }
+
+            BeginNavigation(false);
+            try
+            {
+                await ShowScreenAsync(_hudScreen, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected while the scene is closing.
+            }
+            finally
+            {
+                EndNavigation();
+            }
         }
 
         private void HandleCleanProgressChanged(float fraction)
@@ -869,7 +936,7 @@ namespace CalmSpace.UI
             {
                 _roomCurrencyText.text =
                     _localization.FormatRoomCurrency(
-                        _progressStore.Current.CalmPoints);
+                        _progressStore.Current.CozyTokens);
             }
         }
 
@@ -919,7 +986,7 @@ namespace CalmSpace.UI
                 bool selected =
                     progress.SelectedDecorationIndex == index;
                 bool canAfford =
-                    progress.CalmPoints >= decoration.Cost;
+                    progress.CozyTokens >= decoration.Cost;
                 string state = selected
                     ? _localization.Get(
                         DemoTextKey.DecorationSelected)
@@ -1207,9 +1274,17 @@ namespace CalmSpace.UI
                 _levelSelectBackButton,
                 enabled);
             SetButtonInteractable(_hudHomeButton, enabled);
+            bool undoEnabled =
+                enabled &&
+                _undoHistory != null &&
+                _undoHistory.CanUndo;
+            SetButtonInteractable(_hudUndoButton, undoEnabled);
             SetButtonInteractable(
                 _completionHomeButton,
                 enabled);
+            SetButtonInteractable(
+                _completionUndoButton,
+                undoEnabled);
             SetButtonInteractable(_nextButton, enabled);
             SetButtonInteractable(_musicButton, enabled);
             SetButtonInteractable(_languageButton, enabled);
@@ -1222,10 +1297,6 @@ namespace CalmSpace.UI
         {
             _isNavigating = true;
             _roomPresenter?.SetVisible(false);
-            if (showLoading)
-            {
-                SetScreenImmediate(_loadingOverlay, true);
-            }
 
             RefreshNavigationAvailability();
         }
@@ -1233,9 +1304,45 @@ namespace CalmSpace.UI
         private void EndNavigation()
         {
             _isNavigating = false;
-            SetScreenImmediate(_loadingOverlay, false);
             RefreshNavigationAvailability();
             RefreshRoomVisibility();
+        }
+
+        private async UniTask RevealAfterLevelTransitionAsync()
+        {
+            if (_levelTransitionCurtain == null ||
+                _destroying)
+            {
+                return;
+            }
+
+            try
+            {
+                await _levelTransitionCurtain.FadeToClearAsync(
+                    _lifetimeCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected while the scene is closing.
+            }
+        }
+
+        private void SetActiveScreenBehindCurtain(
+            CanvasGroup target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            if (_activeScreen != null &&
+                _activeScreen != target)
+            {
+                SetScreenImmediate(_activeScreen, false);
+            }
+
+            SetScreenImmediate(target, true);
+            _activeScreen = target;
         }
 
         private bool CanNavigate()
@@ -1261,8 +1368,12 @@ namespace CalmSpace.UI
                 HandleLevelSelectBackPressed);
             _hudHomeButton.onClick.AddListener(
                 HandleHomePressed);
+            _hudUndoButton.onClick.AddListener(
+                HandleUndoPressed);
             _completionHomeButton.onClick.AddListener(
                 HandleHomePressed);
+            _completionUndoButton.onClick.AddListener(
+                HandleUndoPressed);
             _nextButton.onClick.AddListener(
                 HandleNextPressed);
             _musicButton.onClick.AddListener(
@@ -1319,6 +1430,10 @@ namespace CalmSpace.UI
                 HandleMusicEnabledChanged;
             _localization.LocaleChanged +=
                 HandleLocaleChanged;
+            _roomPresenter.DecorationPlacementRequested +=
+                HandleRoomDecorationPlacementRequested;
+            _undoHistory.AvailabilityChanged +=
+                HandleUndoAvailabilityChanged;
             _eventsBound = true;
         }
 
@@ -1337,8 +1452,12 @@ namespace CalmSpace.UI
                 HandleLevelSelectBackPressed);
             _hudHomeButton?.onClick.RemoveListener(
                 HandleHomePressed);
+            _hudUndoButton?.onClick.RemoveListener(
+                HandleUndoPressed);
             _completionHomeButton?.onClick.RemoveListener(
                 HandleHomePressed);
+            _completionUndoButton?.onClick.RemoveListener(
+                HandleUndoPressed);
             _nextButton?.onClick.RemoveListener(
                 HandleNextPressed);
             _musicButton?.onClick.RemoveListener(
@@ -1424,6 +1543,18 @@ namespace CalmSpace.UI
                     HandleLocaleChanged;
             }
 
+            if (_roomPresenter != null)
+            {
+                _roomPresenter.DecorationPlacementRequested -=
+                    HandleRoomDecorationPlacementRequested;
+            }
+
+            if (_undoHistory != null)
+            {
+                _undoHistory.AvailabilityChanged -=
+                    HandleUndoAvailabilityChanged;
+            }
+
             _eventsBound = false;
         }
 
@@ -1455,6 +1586,19 @@ namespace CalmSpace.UI
         {
             LoadNextLevelAsync(
                 _lifetimeCancellation.Token).Forget();
+        }
+
+        private void HandleUndoPressed()
+        {
+            if (CanNavigate() && _undoHistory.Undo())
+            {
+                RefreshNavigationAvailability();
+            }
+        }
+
+        private void HandleUndoAvailabilityChanged(bool canUndo)
+        {
+            RefreshNavigationAvailability();
         }
 
         private void HandleMusicPressed()
@@ -1495,6 +1639,16 @@ namespace CalmSpace.UI
 
         private void HandleDecorationPressed(int decorationIndex)
         {
+            if (CanNavigate())
+            {
+                _roomPresenter.RequestDecorationPlacement(
+                    decorationIndex);
+            }
+        }
+
+        private void HandleRoomDecorationPlacementRequested(
+            int decorationIndex)
+        {
             if (!CanNavigate() ||
                 !_decorationCatalog.TryGetDefinition(
                     decorationIndex,
@@ -1528,7 +1682,8 @@ namespace CalmSpace.UI
                 _progressStore == null ||
                 _themeService == null ||
                 _localization == null ||
-                _musicService == null)
+                _musicService == null ||
+                _undoHistory == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController was not injected.");
@@ -1542,11 +1697,14 @@ namespace CalmSpace.UI
                 _hudScreen == null ||
                 _completionScreen == null ||
                 _loadingOverlay == null ||
+                _levelTransitionCurtain == null ||
                 _playButton == null ||
                 _levelsButton == null ||
                 _levelSelectBackButton == null ||
                 _hudHomeButton == null ||
+                _hudUndoButton == null ||
                 _completionHomeButton == null ||
+                _completionUndoButton == null ||
                 _nextButton == null ||
                 _musicButton == null ||
                 _languageButton == null ||

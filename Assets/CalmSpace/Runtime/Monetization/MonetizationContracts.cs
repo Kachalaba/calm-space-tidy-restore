@@ -5,10 +5,10 @@ using Cysharp.Threading.Tasks;
 
 namespace CalmSpace.Monetization
 {
-    public enum AdFormat
+    public enum RewardedBenefitKind
     {
-        Interstitial = 0,
-        Rewarded = 1
+        InstantSolutionHint = 0,
+        ExtraRoomDecor = 1
     }
 
     public enum ProviderInitializationStatus
@@ -40,10 +40,7 @@ namespace CalmSpace.Monetization
     {
         Unavailable = 0,
         VerifiedEntitled = 1,
-        VerifiedNotEntitled = 2,
-        Owned = VerifiedEntitled,
-        NotOwned = VerifiedNotEntitled,
-        Unknown = Unavailable
+        VerifiedNotEntitled = 2
     }
 
     public enum ProviderPurchaseStatus
@@ -91,29 +88,17 @@ namespace CalmSpace.Monetization
         Cancelled = 2
     }
 
-    public sealed class InterstitialAdRequest
-    {
-        public InterstitialAdRequest(string placementId)
-        {
-            if (string.IsNullOrWhiteSpace(placementId))
-            {
-                throw new ArgumentException(
-                    "A placement identifier is required.",
-                    nameof(placementId));
-            }
-
-            PlacementId = placementId;
-        }
-
-        public string PlacementId { get; }
-    }
-
+    /// <summary>
+    /// A rewarded placement can only request one of the two calm, explicit
+    /// player benefits supported by the product. Provider input cannot invent
+    /// arbitrary currency identifiers or amounts.
+    /// </summary>
     public sealed class RewardedAdRequest
     {
         public RewardedAdRequest(
             string placementId,
-            string rewardId,
-            int amount)
+            RewardedBenefitKind benefit,
+            int amount = 1)
         {
             if (string.IsNullOrWhiteSpace(placementId))
             {
@@ -122,40 +107,31 @@ namespace CalmSpace.Monetization
                     nameof(placementId));
             }
 
-            if (string.IsNullOrWhiteSpace(rewardId))
+            if (!Enum.IsDefined(typeof(RewardedBenefitKind), benefit))
             {
-                throw new ArgumentException(
-                    "A reward identifier is required.",
-                    nameof(rewardId));
+                throw new ArgumentOutOfRangeException(nameof(benefit));
             }
 
             if (amount <= 0)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(amount),
-                    amount,
-                    "A reward amount must be positive.");
+                throw new ArgumentOutOfRangeException(nameof(amount));
             }
 
             PlacementId = placementId;
-            RewardId = rewardId;
+            Benefit = benefit;
             Amount = amount;
         }
 
         public string PlacementId { get; }
 
-        public string RewardId { get; }
+        public RewardedBenefitKind Benefit { get; }
 
         public int Amount { get; }
     }
 
-    public sealed class ProviderAdRequest
+    public sealed class ProviderRewardedAdRequest
     {
-        public ProviderAdRequest(
-            AdFormat format,
-            string placementId,
-            string rewardId = null,
-            int rewardAmount = 0)
+        public ProviderRewardedAdRequest(string placementId)
         {
             if (string.IsNullOrWhiteSpace(placementId))
             {
@@ -164,37 +140,10 @@ namespace CalmSpace.Monetization
                     nameof(placementId));
             }
 
-            if (format == AdFormat.Rewarded)
-            {
-                if (string.IsNullOrWhiteSpace(rewardId))
-                {
-                    throw new ArgumentException(
-                        "A rewarded request requires a reward identifier.",
-                        nameof(rewardId));
-                }
-
-                if (rewardAmount <= 0)
-                {
-                    throw new ArgumentOutOfRangeException(
-                        nameof(rewardAmount),
-                        rewardAmount,
-                        "A reward amount must be positive.");
-                }
-            }
-
-            Format = format;
             PlacementId = placementId;
-            RewardId = rewardId;
-            RewardAmount = rewardAmount;
         }
 
-        public AdFormat Format { get; }
-
         public string PlacementId { get; }
-
-        public string RewardId { get; }
-
-        public int RewardAmount { get; }
     }
 
     public readonly struct ProviderAdResult
@@ -212,34 +161,17 @@ namespace CalmSpace.Monetization
         public string ProviderMessage { get; }
     }
 
-    public readonly struct InterstitialAdResult
-    {
-        public InterstitialAdResult(
-            AdShowOutcome outcome,
-            AdBlockReason blockReason,
-            string providerMessage)
-        {
-            Outcome = outcome;
-            BlockReason = blockReason;
-            ProviderMessage = providerMessage;
-        }
-
-        public AdShowOutcome Outcome { get; }
-
-        public AdBlockReason BlockReason { get; }
-
-        public string ProviderMessage { get; }
-    }
-
     public readonly struct RewardGrant
     {
-        public RewardGrant(string rewardId, int amount)
+        public RewardGrant(
+            RewardedBenefitKind benefit,
+            int amount)
         {
-            RewardId = rewardId;
+            Benefit = benefit;
             Amount = amount;
         }
 
-        public string RewardId { get; }
+        public RewardedBenefitKind Benefit { get; }
 
         public int Amount { get; }
     }
@@ -262,6 +194,10 @@ namespace CalmSpace.Monetization
 
         public AdBlockReason BlockReason { get; }
 
+        /// <summary>
+        /// True only when the provider signalled a reward and the domain
+        /// callback persisted it successfully.
+        /// </summary>
         public bool RewardEarned { get; }
 
         public string ProviderMessage { get; }
@@ -282,9 +218,9 @@ namespace CalmSpace.Monetization
         public string ProviderMessage { get; }
     }
 
-    public readonly struct ProviderNoAdsPurchaseResult
+    public readonly struct ProviderRelaxPassPurchaseResult
     {
-        public ProviderNoAdsPurchaseResult(
+        public ProviderRelaxPassPurchaseResult(
             ProviderPurchaseStatus status,
             string providerMessage)
         {
@@ -297,50 +233,46 @@ namespace CalmSpace.Monetization
         public string ProviderMessage { get; }
     }
 
-    public interface IProviderAdSessionObserver
+    public interface IProviderRewardedAdSessionObserver
     {
         void OnOpened();
 
         void OnRewardEarned();
     }
 
-    public interface IAdProvider
+    /// <summary>
+    /// Deliberately rewarded-only. There is no forced or interstitial format
+    /// in the provider contract, so an SDK adapter cannot interrupt play.
+    /// </summary>
+    public interface IRewardedAdProvider
     {
         event Action AvailabilityChanged;
 
         UniTask<ProviderInitializationStatus> InitializeAsync(
             CancellationToken cancellationToken);
 
-        bool IsReady(AdFormat format, string placementId);
+        bool IsReady(string placementId);
 
-        /// <summary>
-        /// Owns the complete fullscreen session. Implementations must invoke
-        /// OnOpened only after the SDK confirms presentation, deliver any
-        /// reward signal before completion, and complete this UniTask only
-        /// after the fullscreen view has closed and no further observer calls
-        /// can occur. This invariant keeps the manager's atomic ad lease valid
-        /// for the entire visible presentation.
-        /// </summary>
         UniTask<ProviderAdResult> ShowAsync(
-            ProviderAdRequest request,
-            IProviderAdSessionObserver observer,
+            ProviderRewardedAdRequest request,
+            IProviderRewardedAdSessionObserver observer,
             CancellationToken cancellationToken);
     }
 
-    public interface INoAdsEntitlementProvider
+    public interface IRelaxPassEntitlementProvider
     {
         UniTask<ProviderEntitlementRestoreResult>
-            RestoreLifetimeNoAdsAsync(
+            RestoreRelaxPassAsync(
                 CancellationToken cancellationToken);
 
-        UniTask<ProviderNoAdsPurchaseResult>
-            PurchaseLifetimeNoAdsAsync(
+        UniTask<ProviderRelaxPassPurchaseResult>
+            PurchaseRelaxPassAsync(
                 CancellationToken cancellationToken);
     }
 
     public interface IRewardedAdCallbacks
     {
-        void OnRewardEarned(RewardGrant reward);
+        bool TryApplyReward(RewardGrant reward);
 
         void OnCompleted(RewardedAdResult result);
     }
@@ -355,29 +287,32 @@ namespace CalmSpace.Monetization
             out byte[] plaintext);
     }
 
+    /// <summary>
+    /// Local receipt cache. The binary layout is intentionally unchanged from
+    /// the original lifetime-no-ads v1 payload so existing installs migrate
+    /// without changing the keystore alias or associated data.
+    /// </summary>
     public sealed class PersistentMonetizationState
     {
         public PersistentMonetizationState(
             int schemaVersion,
-            bool lifetimeNoAds,
+            bool relaxPassOwned,
             long verifiedAtUnixSeconds)
         {
             if (schemaVersion <= 0)
             {
                 throw new ArgumentOutOfRangeException(
-                    nameof(schemaVersion),
-                    schemaVersion,
-                    "A positive schema version is required.");
+                    nameof(schemaVersion));
             }
 
             SchemaVersion = schemaVersion;
-            LifetimeNoAds = lifetimeNoAds;
+            RelaxPassOwned = relaxPassOwned;
             VerifiedAtUnixSeconds = verifiedAtUnixSeconds;
         }
 
         public int SchemaVersion { get; }
 
-        public bool LifetimeNoAds { get; }
+        public bool RelaxPassOwned { get; }
 
         public long VerifiedAtUnixSeconds { get; }
     }
@@ -409,10 +344,9 @@ namespace CalmSpace.Monetization
         public static PersistentStateLoadResult Found(
             PersistentMonetizationState state)
         {
-            return new PersistentStateLoadResult(
+            return CreateWithState(
                 PersistentStateLoadStatus.Found,
-                state ?? throw new ArgumentNullException(nameof(state)),
-                null);
+                state);
         }
 
         public static PersistentStateLoadResult Missing()
@@ -426,19 +360,17 @@ namespace CalmSpace.Monetization
         public static PersistentStateLoadResult RecoveredFromTemporary(
             PersistentMonetizationState state)
         {
-            return new PersistentStateLoadResult(
+            return CreateWithState(
                 PersistentStateLoadStatus.RecoveredFromTemporary,
-                state ?? throw new ArgumentNullException(nameof(state)),
-                null);
+                state);
         }
 
         public static PersistentStateLoadResult RecoveredFromBackup(
             PersistentMonetizationState state)
         {
-            return new PersistentStateLoadResult(
+            return CreateWithState(
                 PersistentStateLoadStatus.RecoveredFromBackup,
-                state ?? throw new ArgumentNullException(nameof(state)),
-                null);
+                state);
         }
 
         public static PersistentStateLoadResult Failed(
@@ -448,8 +380,9 @@ namespace CalmSpace.Monetization
             if (status == PersistentStateLoadStatus.Found ||
                 status == PersistentStateLoadStatus.Missing ||
                 status ==
-                PersistentStateLoadStatus.RecoveredFromTemporary ||
-                status == PersistentStateLoadStatus.RecoveredFromBackup)
+                    PersistentStateLoadStatus.RecoveredFromTemporary ||
+                status ==
+                    PersistentStateLoadStatus.RecoveredFromBackup)
             {
                 throw new ArgumentOutOfRangeException(nameof(status));
             }
@@ -458,6 +391,16 @@ namespace CalmSpace.Monetization
                 status,
                 null,
                 errorMessage);
+        }
+
+        private static PersistentStateLoadResult CreateWithState(
+            PersistentStateLoadStatus status,
+            PersistentMonetizationState state)
+        {
+            return new PersistentStateLoadResult(
+                status,
+                state ?? throw new ArgumentNullException(nameof(state)),
+                null);
         }
     }
 
@@ -513,29 +456,14 @@ namespace CalmSpace.Monetization
 
     public sealed class MonetizationOptions
     {
-        public static readonly TimeSpan MinimumInterstitialCooldown =
-            TimeSpan.FromSeconds(180d);
-
         public MonetizationOptions(
-            TimeSpan interstitialCooldown,
-            bool allowRewardedForNoAdsOwners)
+            bool allowRewardedForRelaxPassOwners)
         {
-            if (interstitialCooldown < MinimumInterstitialCooldown)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(interstitialCooldown),
-                    interstitialCooldown,
-                    "Interstitial cooldown must be at least 180 seconds.");
-            }
-
-            InterstitialCooldown = interstitialCooldown;
-            AllowRewardedForNoAdsOwners =
-                allowRewardedForNoAdsOwners;
+            AllowRewardedForRelaxPassOwners =
+                allowRewardedForRelaxPassOwners;
         }
 
-        public TimeSpan InterstitialCooldown { get; }
-
-        public bool AllowRewardedForNoAdsOwners { get; }
+        public bool AllowRewardedForRelaxPassOwners { get; }
     }
 
     public readonly struct MonetizationSnapshot
@@ -543,26 +471,22 @@ namespace CalmSpace.Monetization
         public MonetizationSnapshot(
             bool isInitialized,
             ProviderInitializationStatus adProviderStatus,
-            bool cachedLifetimeNoAds,
-            EntitlementVerification entitlementVerification,
-            bool suppressInterruptiveAds)
+            bool relaxPassOwned,
+            EntitlementVerification entitlementVerification)
         {
             IsInitialized = isInitialized;
             AdProviderStatus = adProviderStatus;
-            CachedLifetimeNoAds = cachedLifetimeNoAds;
+            RelaxPassOwned = relaxPassOwned;
             EntitlementVerification = entitlementVerification;
-            SuppressInterruptiveAds = suppressInterruptiveAds;
         }
 
         public bool IsInitialized { get; }
 
         public ProviderInitializationStatus AdProviderStatus { get; }
 
-        public bool CachedLifetimeNoAds { get; }
+        public bool RelaxPassOwned { get; }
 
         public EntitlementVerification EntitlementVerification { get; }
-
-        public bool SuppressInterruptiveAds { get; }
     }
 
     public interface IMonetizationManager : IDisposable
@@ -571,42 +495,22 @@ namespace CalmSpace.Monetization
 
         MonetizationSnapshot Snapshot { get; }
 
-        bool IsNoAds { get; }
+        bool HasRelaxPass { get; }
 
         UniTask InitializeAsync(
             CancellationToken cancellationToken = default);
-
-        UniTask<InterstitialAdResult> TryShowInterstitialAsync(
-            InterstitialAdRequest request,
-            CancellationToken cancellationToken = default);
-
-        UniTask<InterstitialAdResult>
-            TryShowInterstitialBetweenLevelsAsync(
-                string placementId,
-                CancellationToken cancellationToken = default);
 
         UniTask<RewardedAdResult> ShowRewardedAsync(
             RewardedAdRequest request,
             IRewardedAdCallbacks callbacks,
             CancellationToken cancellationToken = default);
 
-        UniTask<RewardedAdResult> TryShowRewardedAsync(
-            RewardedAdRequest request,
-            IRewardedAdCallbacks callbacks,
-            CancellationToken cancellationToken = default);
-
-        UniTask<ProviderNoAdsPurchaseResult>
-            PurchaseLifetimeNoAdsAsync(
+        UniTask<ProviderRelaxPassPurchaseResult>
+            PurchaseRelaxPassAsync(
                 CancellationToken cancellationToken = default);
-
-        UniTask<ProviderNoAdsPurchaseResult> PurchaseNoAdsAsync(
-            CancellationToken cancellationToken = default);
 
         UniTask<ProviderEntitlementRestoreResult>
-            RestoreLifetimeNoAdsAsync(
+            RestoreRelaxPassAsync(
                 CancellationToken cancellationToken = default);
-
-        UniTask<ProviderEntitlementRestoreResult> RestoreNoAdsAsync(
-            CancellationToken cancellationToken = default);
     }
 }

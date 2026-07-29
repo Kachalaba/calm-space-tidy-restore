@@ -27,20 +27,22 @@ In Unity, configure the upload keystore and use:
 The release command fails closed when signing, ARM64, IL2CPP, or version
 settings are incomplete.
 
-## 3. Configure lifetime No Ads
+## 3. Configure lifetime Relax Pass
 
 Recommended first product:
 
-- Product ID: `no_ads_lifetime`
+- Product ID: `relax_pass_lifetime`
 - Type: non-consumable
-- Entitlement: suppress interstitial ads permanently.
-- Rewarded ads remain optional when the owner explicitly requests a reward.
+- Entitlement: suppress every rewarded-video entry point for the owner.
+- Hint and room-decor UI should grant the equivalent optional benefit directly
+  when Relax Pass is active.
 
 Use Unity IAP and test purchases through a Google Play Internal Testing build.
 The Pixel owner's Google account must be added to both Internal Testing and
 License Testing.
 
-Do not treat a store/network error as proof that the user does not own No Ads.
+Do not treat a store/network error as proof that the user does not own Relax
+Pass.
 Production entitlement verification should validate the purchase token on a
 trusted backend; never ship a Play service-account key inside the application.
 
@@ -50,8 +52,11 @@ Recommended first integration: direct AdMob without mediation.
 
 Required placements:
 
-- Interstitial: `between-levels`
-- Rewarded: `rewarded-hint`
+- Rewarded hint: `rewarded-hint`
+- Rewarded room decor: `rewarded-room-decor`
+
+Do not create interstitial, app-open, banner, or automatic placements. Calm
+Space exposes no forced-ad API by design.
 
 Development builds must use Google's official test ad units. Production ad
 unit IDs belong in environment-specific configuration, not source code.
@@ -62,8 +67,8 @@ Before requesting ads:
 - Show the consent form when required.
 - Request ads only when UMP reports that ads can be requested.
 - Apply the final age-audience and child-directed-treatment settings.
-- Keep interstitials behind the existing 180-second cooldown and gameplay/drag
-  gates.
+- Keep rewarded video behind an explicit player tap and the existing
+  gameplay/drag activity gates.
 
 ## 5. Complete Play Console setup
 
@@ -76,7 +81,7 @@ Before requesting ads:
 - Add store icon, feature graphic, phone screenshots, short description, and
   full description.
 - Upload the signed AAB to Internal Testing first.
-- Test install, update, purchase, restore, rewarded, interstitial, consent,
+- Test install, update, purchase, restore, both rewarded placements, consent,
   offline startup, pause/resume, and process restart.
 - Promote to a closed track only after the internal checklist passes.
 

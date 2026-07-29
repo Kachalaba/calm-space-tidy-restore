@@ -148,6 +148,126 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator UndoPlacementRestoresExactPoseFreesSlotAndReopensLevel()
+        {
+            var root = new GameObject("Undo Sorting Level");
+            root.SetActive(false);
+
+            var level = root.AddComponent<SortingLevel>();
+            var targetGroupObject = new GameObject("Target Group");
+            targetGroupObject.transform.SetParent(root.transform, false);
+            var targetGroup =
+                targetGroupObject.AddComponent<SnapTargetGroup>();
+
+            var slotObject = new GameObject("Slot");
+            slotObject.transform.SetParent(root.transform, false);
+            slotObject.transform.SetPositionAndRotation(
+                new Vector3(0.25f, 0f, 0.15f),
+                Quaternion.Euler(0f, 90f, 0f));
+            var slot = slotObject.AddComponent<SnapSlot>();
+
+            SetPrivateField(
+                slot,
+                "_category",
+                SnapCategory.Pebble);
+            SetPrivateField(
+                targetGroup,
+                "_slots",
+                new[] { slot });
+
+            var itemObject = new GameObject("Undo Item");
+            itemObject.transform.SetParent(root.transform, false);
+            itemObject.transform.SetPositionAndRotation(
+                new Vector3(-1f, 0.2f, 0.3f),
+                Quaternion.Euler(13f, 27f, 41f));
+            var item =
+                itemObject.AddComponent<ItemSnapController>();
+            SetPrivateField(
+                item,
+                "_snapTargetGroup",
+                targetGroup);
+            SetPrivateField(
+                item,
+                "_snapCategory",
+                SnapCategory.Pebble);
+            SetPrivateField(
+                item,
+                "_positionSnapThreshold",
+                0.5f);
+            SetPrivateField(item, "_snapDurationSeconds", 0f);
+            SetPrivateField(item, "_returnDurationSeconds", 0f);
+
+            var activity =
+                new PresentationActivityCoordinator();
+            var history = new LevelSessionUndoHistory();
+            item.Construct(
+                new RecordingHaptics(),
+                new RecordingAudio(),
+                activity,
+                history);
+
+            var definition =
+                ScriptableObject.CreateInstance<LevelDefinition>();
+            SetPrivateField(definition, "_levelId", "undo-placement");
+            SetPrivateField(
+                definition,
+                "_levelType",
+                LevelType.Sorting);
+
+            root.SetActive(true);
+            level.Construct(activity);
+            Assert.That(level.InitLevel(definition), Is.True);
+
+            var initialPose = new SnapPose(
+                item.transform.position,
+                item.transform.rotation);
+            var startRay = new Ray(
+                initialPose.Position + (Vector3.up * 5f),
+                Vector3.down);
+            var targetRay = new Ray(
+                slotObject.transform.position + (Vector3.up * 5f),
+                Vector3.down);
+
+            Assert.That(item.TryBeginDrag(startRay), Is.True);
+            Assert.That(item.Drag(targetRay), Is.True);
+            UniTask<bool> placement = item.EndDragAsync(targetRay);
+            while (placement.Status == UniTaskStatus.Pending)
+            {
+                yield return null;
+            }
+
+            Assert.That(
+                placement.GetAwaiter().GetResult(),
+                Is.True);
+            Assert.That(item.IsPlaced, Is.True);
+            Assert.That(slot.IsOccupied, Is.True);
+            Assert.That(level.PlacedItemCount, Is.EqualTo(1));
+            Assert.That(level.State, Is.EqualTo(LevelState.Completed));
+            Assert.That(activity.ActiveGameplayCount, Is.Zero);
+            Assert.That(history.Count, Is.EqualTo(1));
+
+            Assert.That(history.Undo(), Is.True);
+
+            Assert.That(item.IsPlaced, Is.False);
+            Assert.That(slot.IsOccupied, Is.False);
+            Assert.That(
+                item.transform.position,
+                Is.EqualTo(initialPose.Position));
+            Assert.That(
+                item.transform.rotation,
+                Is.EqualTo(initialPose.Rotation));
+            Assert.That(level.PlacedItemCount, Is.Zero);
+            Assert.That(level.CheckWinCondition(), Is.False);
+            Assert.That(level.State, Is.EqualTo(LevelState.Active));
+            Assert.That(activity.ActiveGameplayCount, Is.EqualTo(1));
+            Assert.That(history.Count, Is.Zero);
+
+            Object.Destroy(root);
+            Object.Destroy(definition);
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator ZeroItemFittingLevelCompletesWithoutGameplayLeaseLeak()
         {
             var levelObject = new GameObject("FittingLevel");

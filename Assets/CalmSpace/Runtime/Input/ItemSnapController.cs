@@ -56,6 +56,7 @@ namespace CalmSpace.Input
         private IHapticService _hapticService;
         private IAsmrAudioService _audioService;
         private IPresentationActivityCoordinator _activityCoordinator;
+        private IUndoHistory _undoHistory;
         private IDisposable _dragLease;
         private Plane _dragPlane;
         private Vector3 _pointerOffset;
@@ -68,6 +69,8 @@ namespace CalmSpace.Input
         private bool _isPlaced;
 
         public event Action<ItemSnapController> Placed;
+
+        public event Action<ItemSnapController> Unplaced;
 
         public int ItemInstanceId
         {
@@ -112,7 +115,8 @@ namespace CalmSpace.Input
         public void Construct(
             IHapticService hapticService,
             IAsmrAudioService audioService,
-            IPresentationActivityCoordinator activityCoordinator)
+            IPresentationActivityCoordinator activityCoordinator,
+            IUndoHistory undoHistory)
         {
             _hapticService = hapticService ??
                 throw new ArgumentNullException(nameof(hapticService));
@@ -121,6 +125,20 @@ namespace CalmSpace.Input
             _activityCoordinator = activityCoordinator ??
                 throw new ArgumentNullException(
                     nameof(activityCoordinator));
+            _undoHistory = undoHistory ??
+                throw new ArgumentNullException(nameof(undoHistory));
+        }
+
+        public void Construct(
+            IHapticService hapticService,
+            IAsmrAudioService audioService,
+            IPresentationActivityCoordinator activityCoordinator)
+        {
+            Construct(
+                hapticService,
+                audioService,
+                activityCoordinator,
+                new LevelSessionUndoHistory());
         }
 
         public bool TryBeginDrag(Ray pointerRay)
@@ -236,6 +254,10 @@ namespace CalmSpace.Input
                 _isPlaced = true;
                 placementSucceeded = true;
                 ReleaseDragLease(endingLease);
+                _undoHistory?.Push(
+                    new ItemPlacementUndoCommand(
+                        this,
+                        _dragStartPose));
                 PlayPlacementFeedback();
                 InvokePlaced();
                 return true;
@@ -293,6 +315,26 @@ namespace CalmSpace.Input
 
             _hapticService?.Cancel();
             ReleaseDragLease();
+        }
+
+        public bool UndoPlacement(SnapPose restorePose)
+        {
+            if (!_isPlaced)
+            {
+                return false;
+            }
+
+            _operationGeneration++;
+            _isDragging = false;
+            _isAnimating = false;
+            _isPlaced = false;
+            ReleaseDragLease();
+            ReleaseActiveSnapReservation();
+            transform.SetPositionAndRotation(
+                restorePose.Position,
+                restorePose.Rotation);
+            InvokeUnplaced();
+            return true;
         }
 
         private void OnDisable()
@@ -493,6 +535,53 @@ namespace CalmSpace.Input
                 {
                     Debug.LogException(exception, this);
                 }
+            }
+        }
+
+        private void InvokeUnplaced()
+        {
+            var handler = Unplaced;
+            if (handler == null)
+            {
+                return;
+            }
+
+            foreach (Action<ItemSnapController> subscriber in
+                     handler.GetInvocationList())
+            {
+                try
+                {
+                    subscriber(this);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        private sealed class ItemPlacementUndoCommand :
+            IUndoCommand
+        {
+            private readonly ItemSnapController _item;
+            private readonly SnapPose _restorePose;
+
+            public ItemPlacementUndoCommand(
+                ItemSnapController item,
+                SnapPose restorePose)
+            {
+                _item = item;
+                _restorePose = restorePose;
+            }
+
+            public bool CanUndo =>
+                _item != null && _item.IsPlaced;
+
+            public bool TryUndo()
+            {
+                return
+                    _item != null &&
+                    _item.UndoPlacement(_restorePose);
             }
         }
 

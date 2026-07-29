@@ -8,6 +8,74 @@ namespace CalmSpace.Tests.EditMode
     public sealed class CleanCoverageTests
     {
         [Test]
+        public void CoverageGateRequiresBothFrameAndTimeIntervals()
+        {
+            var gate = new CoverageSampleGate(10, 0.25d);
+
+            Assert.That(gate.TryReserve(100L, 5d), Is.True);
+            Assert.That(gate.TryReserve(109L, 5.25d), Is.False);
+            Assert.That(gate.TryReserve(110L, 5.249d), Is.False);
+            Assert.That(gate.TryReserve(110L, 5.25d), Is.True);
+        }
+
+        [Test]
+        public void RejectedCoverageReservationDoesNotMoveWindow()
+        {
+            var gate = new CoverageSampleGate(10, 0.5d);
+
+            Assert.That(gate.TryReserve(10L, 1d), Is.True);
+            Assert.That(gate.TryReserve(15L, 2d), Is.False);
+            Assert.That(gate.TryReserve(20L, 1.5d), Is.True);
+        }
+
+        [Test]
+        public void CoverageGateResetRearmsFromEarlierFrameAndTime()
+        {
+            var gate = new CoverageSampleGate(10, 0.25d);
+
+            Assert.That(gate.TryReserve(100L, 10d), Is.True);
+
+            gate.Reset();
+
+            Assert.That(gate.TryReserve(0L, 0d), Is.True);
+        }
+
+        [Test]
+        public void InvalidCoverageSampleDoesNotConsumeWindow()
+        {
+            var gate = new CoverageSampleGate(10, 0.25d);
+
+            Assert.That(gate.TryReserve(-1L, 0d), Is.False);
+            Assert.That(gate.TryReserve(0L, double.NaN), Is.False);
+            Assert.That(
+                gate.TryReserve(0L, double.PositiveInfinity),
+                Is.False);
+            Assert.That(
+                gate.TryReserve(0L, double.NegativeInfinity),
+                Is.False);
+            Assert.That(gate.TryReserve(0L, 0d), Is.True);
+        }
+
+        [Test]
+        public void CoverageGateRejectsInvalidConfiguration()
+        {
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(0, 0.25d));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(-1, 0.25d));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(10, 0d));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(10, -0.25d));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(10, double.NaN));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => new CoverageSampleGate(
+                    10,
+                    double.PositiveInfinity));
+        }
+
+        [Test]
         public void SumMaskJobSumsR8Pixels()
         {
             var pixels = new NativeArray<byte>(

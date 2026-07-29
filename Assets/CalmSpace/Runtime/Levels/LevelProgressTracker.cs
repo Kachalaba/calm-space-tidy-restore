@@ -13,6 +13,10 @@ namespace CalmSpace.Levels
         private readonly HashSet<int> _registeredItems;
         private readonly HashSet<int> _placedItems;
 
+        public event Action<int, bool, int, int> PlacementChanged;
+
+        public event Action<bool> CompletionChanged;
+
         public LevelProgressTracker(int expectedItemCount)
         {
             if (expectedItemCount < 0)
@@ -49,7 +53,46 @@ namespace CalmSpace.Levels
                 return false;
             }
 
-            return _placedItems.Add(itemInstanceId);
+            bool wasComplete = IsComplete;
+            if (!_placedItems.Add(itemInstanceId))
+            {
+                return false;
+            }
+
+            PlacementChanged?.Invoke(
+                itemInstanceId,
+                true,
+                _placedItems.Count,
+                _expectedItemCount);
+            bool isComplete = IsComplete;
+            if (wasComplete != isComplete)
+            {
+                CompletionChanged?.Invoke(isComplete);
+            }
+
+            return true;
+        }
+
+        public bool TryUnmarkPlaced(int itemInstanceId)
+        {
+            bool wasComplete = IsComplete;
+            if (!_placedItems.Remove(itemInstanceId))
+            {
+                return false;
+            }
+
+            PlacementChanged?.Invoke(
+                itemInstanceId,
+                false,
+                _placedItems.Count,
+                _expectedItemCount);
+            bool isComplete = IsComplete;
+            if (wasComplete != isComplete)
+            {
+                CompletionChanged?.Invoke(isComplete);
+            }
+
+            return true;
         }
     }
 }

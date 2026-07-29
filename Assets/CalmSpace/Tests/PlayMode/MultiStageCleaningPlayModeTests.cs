@@ -169,22 +169,120 @@ namespace CalmSpace.Tests.PlayMode
             yield return null;
         }
 
+        [UnityTest]
+        public IEnumerator UndoingDebrisRestoresProgressAndLocksTheSurface()
+        {
+            MixedStageFixture fixture =
+                MixedStageFixture.Create("Debris Undo", 3);
+            yield return null;
+
+            Assert.That(fixture.PlaceDebris(0), Is.True);
+            yield return null;
+            Assert.That(
+                fixture.Level.ActiveStageFraction,
+                Is.EqualTo(1f / 6f).Within(1e-4f));
+
+            Assert.That(fixture.Undo(), Is.True);
+            yield return null;
+
+            Assert.That(fixture.IsDebrisPlaced(0), Is.False);
+            Assert.That(fixture.Stage.ClearedDebrisCount, Is.Zero);
+            Assert.That(
+                fixture.Level.ActiveStageFraction,
+                Is.EqualTo(0f).Within(1e-4f));
+            Assert.That(fixture.Cleaner.gameObject.activeSelf, Is.False);
+            Assert.That(fixture.Input.Cleaner, Is.Null);
+
+            fixture.Destroy();
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator UndoKeepsAStageRootCleanerAndDebrisVisible()
+        {
+            MixedStageFixture fixture =
+                MixedStageFixture.Create(
+                    "Shared Root Undo",
+                    1,
+                    cleanerOnStageRoot: true);
+            yield return null;
+
+            Assert.That(fixture.PlaceDebris(0), Is.True);
+            yield return null;
+            fixture.CompleteSurface();
+            yield return null;
+            Assert.That(fixture.Stage.IsComplete, Is.True);
+
+            Assert.That(fixture.Undo(), Is.True);
+            yield return null;
+
+            Assert.That(fixture.StageRoot.activeSelf, Is.True);
+            Assert.That(fixture.IsDebrisVisible(0), Is.True);
+            Assert.That(fixture.IsDebrisPlaced(0), Is.False);
+            Assert.That(fixture.Input.Cleaner, Is.Null);
+            Assert.That(fixture.Level.ActiveStageFraction, Is.Zero);
+
+            fixture.Destroy();
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator UndoAcrossPassesRestoresTheExactEarlierPass()
+        {
+            StageFixture fixture = StageFixture.Create("Stage Undo");
+            yield return null;
+
+            Assert.That(fixture.PlaceDebris(0), Is.True);
+            yield return null;
+            Assert.That(fixture.PlaceDebris(1), Is.True);
+            yield return null;
+            Assert.That(fixture.Level.State, Is.EqualTo(
+                LevelState.Completed));
+
+            Assert.That(fixture.Undo(), Is.True);
+            yield return null;
+            Assert.That(fixture.Level.State, Is.EqualTo(LevelState.Active));
+            Assert.That(fixture.Level.CompletedStageCount, Is.EqualTo(1));
+            Assert.That(fixture.Level.ActiveStageIndex, Is.EqualTo(1));
+            Assert.That(fixture.Contents[1].activeSelf, Is.True);
+
+            Assert.That(fixture.Undo(), Is.True);
+            yield return null;
+            Assert.That(fixture.Level.CompletedStageCount, Is.Zero);
+            Assert.That(fixture.Level.ActiveStageIndex, Is.Zero);
+            Assert.That(fixture.Contents[0].activeSelf, Is.True);
+            Assert.That(fixture.Contents[1].activeSelf, Is.False);
+
+            Assert.That(fixture.PlaceDebris(0), Is.True);
+            yield return null;
+            Assert.That(fixture.PlaceDebris(1), Is.True);
+            yield return null;
+            Assert.That(fixture.Level.State, Is.EqualTo(
+                LevelState.Completed));
+
+            fixture.Destroy();
+            yield return null;
+        }
+
         private sealed class StageFixture
         {
             private readonly GameObject _root;
+            private readonly IUndoHistory _undoHistory;
 
             private StageFixture(
                 GameObject root,
                 CleaningLevel level,
                 GameObject[] contents,
                 ItemSnapController[] debris,
-                Transform[] targets)
+                Transform[] targets,
+                IUndoHistory undoHistory)
             {
                 _root = root;
                 Level = level;
                 Contents = contents;
                 Debris = debris;
                 Targets = targets;
+                _undoHistory = undoHistory;
             }
 
             public CleaningLevel Level { get; }
@@ -213,6 +311,9 @@ namespace CalmSpace.Tests.PlayMode
                 var debris = new ItemSnapController[2];
                 var targets = new Transform[2];
                 var stages = new CleaningStage[2];
+                var coordinator =
+                    new PresentationActivityCoordinator();
+                var undoHistory = new LevelSessionUndoHistory();
 
                 for (var index = 0; index < stages.Length; index++)
                 {
@@ -268,7 +369,8 @@ namespace CalmSpace.Tests.PlayMode
                     item.Construct(
                         new SilentHaptics(),
                         new SilentAudio(),
-                        new PresentationActivityCoordinator());
+                        coordinator,
+                        undoHistory);
                     debris[index] = item;
 
                     SetPrivateField(stage, "_stageRoot", content);
@@ -306,7 +408,8 @@ namespace CalmSpace.Tests.PlayMode
                     level,
                     contents,
                     debris,
-                    targets);
+                    targets,
+                    undoHistory);
             }
 
             public bool PlaceDebris(int index)
@@ -323,6 +426,11 @@ namespace CalmSpace.Tests.PlayMode
                     task.Status,
                     Is.Not.EqualTo(UniTaskStatus.Pending));
                 return task.GetAwaiter().GetResult();
+            }
+
+            public bool Undo()
+            {
+                return _undoHistory.Undo();
             }
 
             public void Destroy()
@@ -343,28 +451,35 @@ namespace CalmSpace.Tests.PlayMode
             private readonly GameObject _root;
             private readonly ItemSnapController[] _debris;
             private readonly Transform[] _targets;
+            private readonly IUndoHistory _undoHistory;
 
             private MixedStageFixture(
                 GameObject root,
                 CleaningLevel level,
                 CleaningStage stage,
+                GameObject stageRoot,
                 CleaningInputController input,
                 RenderTextureCleaner cleaner,
                 ItemSnapController[] debris,
-                Transform[] targets)
+                Transform[] targets,
+                IUndoHistory undoHistory)
             {
                 _root = root;
                 Level = level;
                 Stage = stage;
+                StageRoot = stageRoot;
                 Input = input;
                 Cleaner = cleaner;
                 _debris = debris;
                 _targets = targets;
+                _undoHistory = undoHistory;
             }
 
             public CleaningLevel Level { get; }
 
             public CleaningStage Stage { get; }
+
+            public GameObject StageRoot { get; }
 
             public CleaningInputController Input { get; }
 
@@ -372,7 +487,8 @@ namespace CalmSpace.Tests.PlayMode
 
             public static MixedStageFixture Create(
                 string prefix,
-                int debrisCount)
+                int debrisCount,
+                bool cleanerOnStageRoot = false)
             {
                 var root = new GameObject(prefix + " Level");
                 root.SetActive(false);
@@ -397,10 +513,19 @@ namespace CalmSpace.Tests.PlayMode
                     stageObject.transform,
                     false);
 
-                var cleanerObject = new GameObject("Surface");
-                cleanerObject.transform.SetParent(
-                    content.transform,
-                    false);
+                GameObject cleanerObject;
+                if (cleanerOnStageRoot)
+                {
+                    cleanerObject = content;
+                }
+                else
+                {
+                    cleanerObject = new GameObject("Surface");
+                    cleanerObject.transform.SetParent(
+                        content.transform,
+                        false);
+                }
+
                 RenderTextureCleaner cleaner =
                     cleanerObject.AddComponent<RenderTextureCleaner>();
                 cleaner.enabled = false;
@@ -408,6 +533,7 @@ namespace CalmSpace.Tests.PlayMode
                 var debris = new ItemSnapController[debrisCount];
                 var targets = new Transform[debrisCount];
                 var coordinator = new PresentationActivityCoordinator();
+                var undoHistory = new LevelSessionUndoHistory();
 
                 for (var index = 0; index < debrisCount; index++)
                 {
@@ -449,7 +575,8 @@ namespace CalmSpace.Tests.PlayMode
                     item.Construct(
                         new SilentHaptics(),
                         new SilentAudio(),
-                        coordinator);
+                        coordinator,
+                        undoHistory);
                     debris[index] = item;
                 }
 
@@ -485,10 +612,12 @@ namespace CalmSpace.Tests.PlayMode
                     root,
                     level,
                     stage,
+                    content,
                     input,
                     cleaner,
                     debris,
-                    targets);
+                    targets,
+                    undoHistory);
             }
 
             public bool PlaceDebris(int index)
@@ -504,6 +633,30 @@ namespace CalmSpace.Tests.PlayMode
                     task.Status,
                     Is.Not.EqualTo(UniTaskStatus.Pending));
                 return task.GetAwaiter().GetResult();
+            }
+
+            public bool Undo()
+            {
+                return _undoHistory.Undo();
+            }
+
+            public bool IsDebrisPlaced(int index)
+            {
+                return _debris[index].IsPlaced;
+            }
+
+            public bool IsDebrisVisible(int index)
+            {
+                return _debris[index].gameObject.activeInHierarchy;
+            }
+
+            public void CompleteSurface()
+            {
+                MethodInfo method = typeof(CleaningStage).GetMethod(
+                    "HandleSurfaceCleaned",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(method, Is.Not.Null);
+                method.Invoke(Stage, null);
             }
 
             public void Destroy()

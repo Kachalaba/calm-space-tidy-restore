@@ -4,6 +4,67 @@ using Unity.Jobs;
 
 namespace CalmSpace.Cleaning
 {
+    /// <summary>
+    /// Allocation-free dual clock gate for expensive coverage evaluations.
+    /// Both the frame and real-time intervals must elapse, keeping sampling
+    /// bounded on high-refresh devices without becoming too eager at 30 FPS.
+    /// </summary>
+    public sealed class CoverageSampleGate
+    {
+        private readonly int _minimumFrameInterval;
+        private readonly double _minimumTimeIntervalSeconds;
+        private long _nextFrame = long.MinValue;
+        private double _nextTimeSeconds = double.NegativeInfinity;
+
+        public CoverageSampleGate(
+            int minimumFrameInterval,
+            double minimumTimeIntervalSeconds)
+        {
+            if (minimumFrameInterval < 1)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(minimumFrameInterval));
+            }
+
+            if (double.IsNaN(minimumTimeIntervalSeconds) ||
+                double.IsInfinity(minimumTimeIntervalSeconds) ||
+                minimumTimeIntervalSeconds <= 0d)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(minimumTimeIntervalSeconds));
+            }
+
+            _minimumFrameInterval = minimumFrameInterval;
+            _minimumTimeIntervalSeconds =
+                minimumTimeIntervalSeconds;
+        }
+
+        public bool TryReserve(
+            long frame,
+            double timeSeconds)
+        {
+            if (frame < 0L ||
+                double.IsNaN(timeSeconds) ||
+                double.IsInfinity(timeSeconds) ||
+                frame < _nextFrame ||
+                timeSeconds < _nextTimeSeconds)
+            {
+                return false;
+            }
+
+            _nextFrame = frame + _minimumFrameInterval;
+            _nextTimeSeconds =
+                timeSeconds + _minimumTimeIntervalSeconds;
+            return true;
+        }
+
+        public void Reset()
+        {
+            _nextFrame = long.MinValue;
+            _nextTimeSeconds = double.NegativeInfinity;
+        }
+    }
+
     public struct SumMaskJob : IJob
     {
         [ReadOnly]

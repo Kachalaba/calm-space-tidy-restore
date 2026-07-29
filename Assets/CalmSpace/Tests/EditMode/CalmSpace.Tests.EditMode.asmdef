@@ -1,8 +1,9 @@
 {
   "name": "CalmSpace.Tests.EditMode",
   "rootNamespace": "CalmSpace.Tests",
-    "references": [
+  "references": [
     "CalmSpace.Runtime",
+    "CalmSpace.Editor",
     "UniTask",
     "Unity.Addressables"
   ],

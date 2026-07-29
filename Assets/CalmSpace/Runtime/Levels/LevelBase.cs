@@ -30,6 +30,7 @@ namespace CalmSpace.Levels
         private IDisposable _gameplayLease;
         private ItemSnapController[] _items;
         private LevelProgressTracker _progress;
+        private int _completionGeneration;
         private bool _destroying;
 
         public event Action<LevelBase> LevelCompleted;
@@ -116,6 +117,7 @@ namespace CalmSpace.Levels
                     }
 
                     item.Placed += HandleItemPlaced;
+                    item.Unplaced += HandleItemUnplaced;
                     if (item.IsPlaced)
                     {
                         _progress.TryMarkPlaced(item.ItemInstanceId);
@@ -178,6 +180,20 @@ namespace CalmSpace.Levels
             return true;
         }
 
+        public bool OnItemUnplaced(ItemSnapController item)
+        {
+            if (item == null ||
+                _progress == null ||
+                !_progress.TryUnmarkPlaced(item.ItemInstanceId))
+            {
+                return false;
+            }
+
+            ReopenAfterUndo();
+            InvokeProgressChanged();
+            return true;
+        }
+
         public virtual bool CheckWinCondition()
         {
             return _progress != null && _progress.IsComplete;
@@ -193,7 +209,10 @@ namespace CalmSpace.Levels
 
             SetState(LevelState.Completing);
             ReleaseGameplayLease();
-            return CompleteLevelCoreAsync(cancellationToken);
+            int generation = ++_completionGeneration;
+            return CompleteLevelCoreAsync(
+                generation,
+                cancellationToken);
         }
 
         protected virtual void OnLevelInitialized()
@@ -222,6 +241,19 @@ namespace CalmSpace.Levels
         protected void RaiseProgressChanged()
         {
             InvokeProgressChanged();
+        }
+
+        protected void ReopenAfterUndo()
+        {
+            if (State != LevelState.Completing &&
+                State != LevelState.Completed)
+            {
+                return;
+            }
+
+            _completionGeneration++;
+            SetState(LevelState.Active);
+            TryAcquireGameplayLease();
         }
 
         protected virtual void OnUniqueItemPlaced(int itemInstanceId)
@@ -261,11 +293,13 @@ namespace CalmSpace.Levels
         protected virtual void OnDestroy()
         {
             _destroying = true;
+            _completionGeneration++;
             ReleaseGameplayLease();
             UnsubscribeItems();
         }
 
         private async UniTask CompleteLevelCoreAsync(
+            int generation,
             CancellationToken cancellationToken)
         {
             try
@@ -288,7 +322,10 @@ namespace CalmSpace.Levels
                 Debug.LogException(exception, this);
             }
 
-            if (_destroying || this == null)
+            if (_destroying ||
+                this == null ||
+                generation != _completionGeneration ||
+                State != LevelState.Completing)
             {
                 return;
             }
@@ -309,6 +346,11 @@ namespace CalmSpace.Levels
         private void HandleItemPlaced(ItemSnapController item)
         {
             OnItemPlaced(item);
+        }
+
+        private void HandleItemUnplaced(ItemSnapController item)
+        {
+            OnItemUnplaced(item);
         }
 
         private bool TryAcquireGameplayLease()
@@ -355,6 +397,7 @@ namespace CalmSpace.Levels
                 if (_items[index] != null)
                 {
                     _items[index].Placed -= HandleItemPlaced;
+                    _items[index].Unplaced -= HandleItemUnplaced;
                 }
             }
         }

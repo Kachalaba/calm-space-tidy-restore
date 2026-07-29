@@ -413,8 +413,15 @@ namespace CalmSpace.Editor
                 cleanerSerialized.FindProperty("maskBrushShader")
                     .objectReferenceValue =
                         Shader.Find("Hidden/CalmSpace/MaskBrush");
+                cleanerSerialized
+                    .FindProperty("coverageDownsampleShader")
+                    .objectReferenceValue =
+                        Shader.Find(
+                            "Hidden/CalmSpace/CoverageDownsample");
                 cleanerSerialized.FindProperty("maskResolution")
                     .vector2IntValue = new Vector2Int(256, 256);
+                cleanerSerialized.FindProperty("coverageResolution")
+                    .vector2IntValue = new Vector2Int(64, 64);
                 cleanerSerialized.FindProperty("brushRadiusUv")
                     .floatValue = 0.095f;
                 cleanerSerialized.FindProperty("brushHardness")
@@ -422,6 +429,9 @@ namespace CalmSpace.Editor
                 cleanerSerialized
                     .FindProperty("progressSampleIntervalSeconds")
                     .floatValue = 0.28f;
+                cleanerSerialized
+                    .FindProperty("progressSampleFrameInterval")
+                    .intValue = 10;
                 cleanerSerialized.ApplyModifiedPropertiesWithoutUndo();
 
                 CleaningInputController input =
@@ -636,8 +646,14 @@ namespace CalmSpace.Editor
             serialized.FindProperty("maskBrushShader")
                 .objectReferenceValue =
                     Shader.Find("Hidden/CalmSpace/MaskBrush");
+            serialized.FindProperty("coverageDownsampleShader")
+                .objectReferenceValue =
+                    Shader.Find(
+                        "Hidden/CalmSpace/CoverageDownsample");
             serialized.FindProperty("maskResolution")
                 .vector2IntValue = new Vector2Int(256, 256);
+            serialized.FindProperty("coverageResolution")
+                .vector2IntValue = new Vector2Int(64, 64);
             serialized.FindProperty("brushRadiusUv").floatValue =
                 stageSpec.BrushRadiusUv;
             serialized.FindProperty("brushHardness").floatValue =
@@ -645,6 +661,9 @@ namespace CalmSpace.Editor
             serialized
                 .FindProperty("progressSampleIntervalSeconds")
                 .floatValue = 0.28f;
+            serialized
+                .FindProperty("progressSampleFrameInterval")
+                .intValue = 10;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             return cleaner;
         }

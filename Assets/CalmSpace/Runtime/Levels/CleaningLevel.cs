@@ -35,6 +35,7 @@ namespace CalmSpace.Levels
 
         private int _activeStageIndex = -1;
         private int _completedStageCount;
+        private int _stageTransitionGeneration;
         private bool _isCleaned;
 
         /// <summary>
@@ -142,6 +143,7 @@ namespace CalmSpace.Levels
                     if (stage != null)
                     {
                         stage.Completed -= HandleStageCompleted;
+                        stage.Reopened -= HandleStageReopened;
                         stage.ProgressChanged -=
                             HandleStageProgressChanged;
                     }
@@ -163,6 +165,7 @@ namespace CalmSpace.Levels
                 }
 
                 stage.Completed += HandleStageCompleted;
+                stage.Reopened += HandleStageReopened;
                 stage.ProgressChanged += HandleStageProgressChanged;
                 stage.PrepareHidden();
             }
@@ -215,10 +218,7 @@ namespace CalmSpace.Levels
                 TryGetStage(_activeStageIndex, out CleaningStage active) &&
                 active == stage)
             {
-                if (stage.ActiveCleaner != null)
-                {
-                    BindActiveCleaner(stage.ActiveCleaner);
-                }
+                BindActiveCleaner(stage.ActiveCleaner);
 
                 RaiseProgressChanged();
             }
@@ -235,14 +235,17 @@ namespace CalmSpace.Levels
 
             _completedStageCount++;
             RaiseProgressChanged();
+            int generation = ++_stageTransitionGeneration;
             AdvanceStageAsync(
                     _activeStageIndex + 1,
+                    generation,
                     this.GetCancellationTokenOnDestroy())
                 .Forget();
         }
 
         private async UniTaskVoid AdvanceStageAsync(
             int nextIndex,
+            int generation,
             CancellationToken cancellationToken)
         {
             // The player just finished a pass. Let it read before the next
@@ -261,7 +264,8 @@ namespace CalmSpace.Levels
                 }
             }
 
-            if (this == null)
+            if (this == null ||
+                generation != _stageTransitionGeneration)
             {
                 return;
             }
@@ -277,6 +281,45 @@ namespace CalmSpace.Levels
             {
                 CompleteLevel().Forget();
             }
+        }
+
+        private void HandleStageReopened(CleaningStage stage)
+        {
+            if (stage == null)
+            {
+                return;
+            }
+
+            int reopenedIndex = Array.IndexOf(_stages, stage);
+            if (reopenedIndex < 0)
+            {
+                return;
+            }
+
+            _stageTransitionGeneration++;
+            _isCleaned = false;
+            _completedStageCount = Mathf.Min(
+                _completedStageCount,
+                reopenedIndex);
+            _activeStageIndex = reopenedIndex;
+
+            for (var index = reopenedIndex + 1;
+                 index < _stages.Length;
+                 index++)
+            {
+                CleaningStage laterStage = _stages[index];
+                if (laterStage == null)
+                {
+                    continue;
+                }
+
+                laterStage.SetPresented(false);
+                laterStage.RearmCompletion();
+            }
+
+            stage.SetPresented(true);
+            BindActiveCleaner(stage.ActiveCleaner);
+            RaiseProgressChanged();
         }
 
         private bool TryGetStage(int index, out CleaningStage stage)

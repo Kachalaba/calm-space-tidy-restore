@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Threading;
 using CalmSpace.Core;
 using CalmSpace.Monetization;
@@ -10,175 +11,162 @@ namespace CalmSpace.Tests.EditMode
     public sealed class MonetizationManagerTests
     {
         [Test]
-        public void CooldownBelowThreeMinutesIsRejected()
+        public void PublicMonetizationContractIsRewardedOnly()
         {
-            Assert.Throws<ArgumentOutOfRangeException>(
-                () => new MonetizationOptions(
-                    TimeSpan.FromSeconds(179.999d),
-                    allowRewardedForNoAdsOwners: true));
+            Assembly runtimeAssembly =
+                typeof(IMonetizationManager).Assembly;
+
+            Assert.That(
+                runtimeAssembly.GetType(
+                    "CalmSpace.Monetization.InterstitialAdRequest"),
+                Is.Null);
+            Assert.That(
+                runtimeAssembly.GetType(
+                    "CalmSpace.Monetization.InterstitialAdResult"),
+                Is.Null);
+            Assert.That(
+                runtimeAssembly.GetType(
+                    "CalmSpace.Monetization.AdFormat"),
+                Is.Null);
+
+            MethodInfo[] managerMethods =
+                typeof(IMonetizationManager).GetMethods();
+            for (var index = 0;
+                 index < managerMethods.Length;
+                 index++)
+            {
+                Assert.That(
+                    managerMethods[index].Name,
+                    Does.Not.Contain("Interstitial"));
+            }
+
+            MethodInfo[] providerMethods =
+                typeof(IRewardedAdProvider).GetMethods();
+            for (var index = 0;
+                 index < providerMethods.Length;
+                 index++)
+            {
+                Assert.That(
+                    providerMethods[index].Name,
+                    Does.Not.Contain("Interstitial"));
+            }
         }
 
         [Test]
-        public void UnavailableEntitlementFailsClosed()
+        public void UnavailableRestorePreservesCachedRelaxPass()
         {
-            var harness = CreateHarness(
+            var cached = new PersistentMonetizationState(
+                schemaVersion: 1,
+                relaxPassOwned: true,
+                verifiedAtUnixSeconds: 123);
+            Harness harness = CreateHarness(
                 ProviderEntitlementStatus.Unavailable,
-                PersistentStateLoadResult.Missing());
+                PersistentStateLoadResult.Found(cached));
 
             harness.Manager.InitializeAsync().GetAwaiter().GetResult();
 
+            Assert.That(harness.Manager.HasRelaxPass, Is.True);
             Assert.That(
-                harness.Manager.Snapshot.SuppressInterruptiveAds,
+                harness.Manager.Snapshot.RelaxPassOwned,
                 Is.True);
             Assert.That(
                 harness.Manager.Snapshot.EntitlementVerification,
                 Is.EqualTo(EntitlementVerification.Unavailable));
-        }
-
-        [Test]
-        public void UnavailableRestoreNeverClearsCachedOwnership()
-        {
-            var state = new PersistentMonetizationState(
-                schemaVersion: 1,
-                lifetimeNoAds: true,
-                verifiedAtUnixSeconds: 123);
-            var harness = CreateHarness(
-                ProviderEntitlementStatus.Unavailable,
-                PersistentStateLoadResult.Found(state));
-
-            harness.Manager.InitializeAsync().GetAwaiter().GetResult();
-
-            Assert.That(harness.Manager.Snapshot.CachedLifetimeNoAds, Is.True);
-            Assert.That(
-                harness.Manager.Snapshot.SuppressInterruptiveAds,
-                Is.True);
             Assert.That(harness.Store.SaveCalls, Is.Zero);
         }
 
         [Test]
-        public void InterstitialUsesInclusiveThreeMinuteCooldown()
+        public void AuthoritativeRestoreCanClearCachedRelaxPass()
         {
-            var harness = CreateHarness(
+            var cached = new PersistentMonetizationState(
+                schemaVersion: 1,
+                relaxPassOwned: true,
+                verifiedAtUnixSeconds: 123);
+            Harness harness = CreateHarness(
                 ProviderEntitlementStatus.VerifiedNotEntitled,
-                PersistentStateLoadResult.Missing());
-            harness.Clock.NowSeconds = 10d;
+                PersistentStateLoadResult.Found(cached));
+
             harness.Manager.InitializeAsync().GetAwaiter().GetResult();
 
-            harness.Clock.NowSeconds = 189.999d;
-            var early = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
-            Assert.That(early.Outcome, Is.EqualTo(AdShowOutcome.Blocked));
-            Assert.That(early.BlockReason, Is.EqualTo(AdBlockReason.Cooldown));
-            Assert.That(harness.Ads.ShowCalls, Is.Zero);
-
-            harness.Clock.NowSeconds = 190d;
-            var first = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
-            Assert.That(first.Outcome, Is.EqualTo(AdShowOutcome.Completed));
-            Assert.That(harness.Ads.ShowCalls, Is.EqualTo(1));
-
-            harness.Clock.NowSeconds = 369.999d;
-            var secondEarly = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
+            Assert.That(harness.Manager.HasRelaxPass, Is.False);
             Assert.That(
-                secondEarly.BlockReason,
-                Is.EqualTo(AdBlockReason.Cooldown));
-
-            harness.Clock.NowSeconds = 370d;
-            var second = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
-            Assert.That(second.Outcome, Is.EqualTo(AdShowOutcome.Completed));
-            Assert.That(harness.Ads.ShowCalls, Is.EqualTo(2));
+                harness.Manager.Snapshot.EntitlementVerification,
+                Is.EqualTo(
+                    EntitlementVerification.VerifiedNotEntitled));
+            Assert.That(harness.Store.SaveCalls, Is.EqualTo(1));
+            Assert.That(
+                harness.Store.LastSavedState.RelaxPassOwned,
+                Is.False);
         }
 
         [Test]
-        public void GameplayAndDragLeasesBlockProviderCalls()
+        public void RewardedPresentationIsBlockedUntilInitialized()
         {
-            var harness = CreateHarness(
+            Harness harness = CreateHarness(
+                ProviderEntitlementStatus.VerifiedNotEntitled,
+                PersistentStateLoadResult.Missing());
+            var callbacks = new RecordingRewardCallbacks();
+
+            RewardedAdResult result = harness.Manager
+                .ShowRewardedAsync(CreateHintRequest(), callbacks)
+                .GetAwaiter()
+                .GetResult();
+
+            Assert.That(result.Outcome, Is.EqualTo(AdShowOutcome.Blocked));
+            Assert.That(
+                result.BlockReason,
+                Is.EqualTo(AdBlockReason.NotInitialized));
+            Assert.That(result.RewardEarned, Is.False);
+            Assert.That(callbacks.ApplyCalls, Is.Zero);
+            Assert.That(callbacks.CompletionCalls, Is.EqualTo(1));
+            Assert.That(harness.Ads.ShowCalls, Is.Zero);
+        }
+
+        [Test]
+        public void GameplayAndDragLeasesBlockRewardedProviderCalls()
+        {
+            Harness harness = CreateHarness(
                 ProviderEntitlementStatus.VerifiedNotEntitled,
                 PersistentStateLoadResult.Missing());
             harness.Manager.InitializeAsync().GetAwaiter().GetResult();
-            harness.Clock.NowSeconds = 180d;
+            var callbacks = new RecordingRewardCallbacks();
 
             Assert.That(
-                harness.Activity.TryEnterGameplay(out var gameplay),
+                harness.Activity.TryEnterGameplay(
+                    out IDisposable gameplayLease),
                 Is.True);
-            var duringGameplay = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
+            RewardedAdResult duringGameplay = harness.Manager
+                .ShowRewardedAsync(CreateHintRequest(), callbacks)
                 .GetAwaiter()
                 .GetResult();
+            gameplayLease.Dispose();
+
             Assert.That(
                 duringGameplay.BlockReason,
                 Is.EqualTo(AdBlockReason.GameplayActive));
-            gameplay.Dispose();
 
-            Assert.That(harness.Activity.TryEnterDrag(out var drag), Is.True);
-            var duringDrag = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
+            Assert.That(
+                harness.Activity.TryEnterDrag(
+                    out IDisposable dragLease),
+                Is.True);
+            RewardedAdResult duringDrag = harness.Manager
+                .ShowRewardedAsync(CreateHintRequest(), callbacks)
                 .GetAwaiter()
                 .GetResult();
+            dragLease.Dispose();
+
             Assert.That(
                 duringDrag.BlockReason,
                 Is.EqualTo(AdBlockReason.DragActive));
-            drag.Dispose();
-
             Assert.That(harness.Ads.ShowCalls, Is.Zero);
+            Assert.That(callbacks.ApplyCalls, Is.Zero);
+            Assert.That(callbacks.CompletionCalls, Is.EqualTo(2));
         }
 
         [Test]
-        public void ClockFailureAtOpenPoisonsInterstitialCooldown()
+        public void DuplicateProviderSignalsApplyRewardExactlyOnce()
         {
-            var harness = CreateHarness(
-                ProviderEntitlementStatus.VerifiedNotEntitled,
-                PersistentStateLoadResult.Missing());
-            harness.Manager.InitializeAsync().GetAwaiter().GetResult();
-            harness.Clock.NowSeconds = 180d;
-            harness.Clock.ThrowOnReadNumber =
-                harness.Clock.ReadCount + 3;
-
-            var first = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
-            Assert.That(first.Outcome, Is.EqualTo(AdShowOutcome.Completed));
-
-            harness.Clock.ThrowOnReadNumber = 0;
-            harness.Clock.NowSeconds = 181d;
-            var second = harness.Manager
-                .TryShowInterstitialAsync(
-                    new InterstitialAdRequest("between-levels"))
-                .GetAwaiter()
-                .GetResult();
-
-            Assert.That(second.Outcome, Is.EqualTo(AdShowOutcome.Blocked));
-            Assert.That(second.BlockReason, Is.EqualTo(AdBlockReason.Cooldown));
-            Assert.That(harness.Ads.ShowCalls, Is.EqualTo(1));
-        }
-
-        [Test]
-        public void RewardIsGrantedOnceOnlyAfterProviderSignal()
-        {
-            var harness = CreateHarness(
+            Harness harness = CreateHarness(
                 ProviderEntitlementStatus.VerifiedNotEntitled,
                 PersistentStateLoadResult.Missing());
             harness.Manager.InitializeAsync().GetAwaiter().GetResult();
@@ -186,90 +174,201 @@ namespace CalmSpace.Tests.EditMode
             harness.Ads.EmitDuplicateReward = true;
             var callbacks = new RecordingRewardCallbacks();
 
-            var result = harness.Manager
+            RewardedAdResult result = harness.Manager
                 .ShowRewardedAsync(
-                    new RewardedAdRequest("hint", "hint-token", 1),
+                    new RewardedAdRequest(
+                        "instant-hint",
+                        RewardedBenefitKind.InstantSolutionHint,
+                        2),
                     callbacks)
                 .GetAwaiter()
                 .GetResult();
 
-            Assert.That(result.Outcome, Is.EqualTo(AdShowOutcome.Completed));
+            Assert.That(
+                result.Outcome,
+                Is.EqualTo(AdShowOutcome.Completed));
             Assert.That(result.RewardEarned, Is.True);
-            Assert.That(callbacks.RewardCalls, Is.EqualTo(1));
+            Assert.That(callbacks.ApplyCalls, Is.EqualTo(1));
+            Assert.That(callbacks.CompletionCalls, Is.EqualTo(1));
+            Assert.That(
+                callbacks.LastReward.Benefit,
+                Is.EqualTo(
+                    RewardedBenefitKind.InstantSolutionHint));
+            Assert.That(callbacks.LastReward.Amount, Is.EqualTo(2));
+            Assert.That(harness.Ads.ShowCalls, Is.EqualTo(1));
+            Assert.That(harness.Activity.IsAdActive, Is.False);
+        }
+
+        [Test]
+        public void PersistRejectedRewardIsNotReportedAsEarned()
+        {
+            Harness harness = CreateHarness(
+                ProviderEntitlementStatus.VerifiedNotEntitled,
+                PersistentStateLoadResult.Missing());
+            harness.Manager.InitializeAsync().GetAwaiter().GetResult();
+            harness.Ads.EmitReward = true;
+            var callbacks = new RecordingRewardCallbacks
+            {
+                ApplyResult = false
+            };
+
+            RewardedAdResult result = harness.Manager
+                .ShowRewardedAsync(
+                    new RewardedAdRequest(
+                        "extra-decor",
+                        RewardedBenefitKind.ExtraRoomDecor),
+                    callbacks)
+                .GetAwaiter()
+                .GetResult();
+
+            Assert.That(
+                result.Outcome,
+                Is.EqualTo(AdShowOutcome.Completed));
+            Assert.That(result.RewardEarned, Is.False);
+            Assert.That(callbacks.ApplyCalls, Is.EqualTo(1));
             Assert.That(callbacks.CompletionCalls, Is.EqualTo(1));
         }
 
         [TestCase(ProviderAdOutcome.Failed)]
         [TestCase(ProviderAdOutcome.Closed)]
         [TestCase(ProviderAdOutcome.Cancelled)]
-        public void NonCompletedRewardedOutcomeNeverGrantsReward(
+        [TestCase(ProviderAdOutcome.Unavailable)]
+        public void NonCompletedProviderOutcomeNeverAppliesReward(
             ProviderAdOutcome providerOutcome)
         {
-            var harness = CreateHarness(
+            Harness harness = CreateHarness(
                 ProviderEntitlementStatus.VerifiedNotEntitled,
                 PersistentStateLoadResult.Missing());
             harness.Manager.InitializeAsync().GetAwaiter().GetResult();
             harness.Ads.EmitReward = true;
-            harness.Ads.EmitDuplicateReward = true;
             harness.Ads.Outcome = providerOutcome;
             var callbacks = new RecordingRewardCallbacks();
 
-            var result = harness.Manager
-                .ShowRewardedAsync(
-                    new RewardedAdRequest("hint", "hint-token", 1),
-                    callbacks)
+            RewardedAdResult result = harness.Manager
+                .ShowRewardedAsync(CreateHintRequest(), callbacks)
                 .GetAwaiter()
                 .GetResult();
 
             Assert.That(result.RewardEarned, Is.False);
-            Assert.That(callbacks.RewardCalls, Is.Zero);
+            Assert.That(callbacks.ApplyCalls, Is.Zero);
             Assert.That(callbacks.CompletionCalls, Is.EqualTo(1));
+            Assert.That(harness.Activity.IsAdActive, Is.False);
+        }
+
+        [Test]
+        public void RelaxPassCanSuppressOptionalRewardedPlacements()
+        {
+            Harness harness = CreateHarness(
+                ProviderEntitlementStatus.VerifiedEntitled,
+                PersistentStateLoadResult.Missing(),
+                allowRewardedForRelaxPassOwners: false);
+            harness.Manager.InitializeAsync().GetAwaiter().GetResult();
+            var callbacks = new RecordingRewardCallbacks();
+
+            RewardedAdResult result = harness.Manager
+                .ShowRewardedAsync(CreateHintRequest(), callbacks)
+                .GetAwaiter()
+                .GetResult();
+
+            Assert.That(harness.Manager.HasRelaxPass, Is.True);
+            Assert.That(result.Outcome, Is.EqualTo(AdShowOutcome.Blocked));
+            Assert.That(
+                result.BlockReason,
+                Is.EqualTo(AdBlockReason.EntitlementSuppressed));
+            Assert.That(harness.Ads.ShowCalls, Is.Zero);
+            Assert.That(callbacks.CompletionCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void PurchasedRelaxPassIsCachedAfterAuthoritativeSuccess()
+        {
+            Harness harness = CreateHarness(
+                ProviderEntitlementStatus.VerifiedNotEntitled,
+                PersistentStateLoadResult.Missing());
+            harness.RelaxPass.PurchaseStatus =
+                ProviderPurchaseStatus.Purchased;
+            harness.Manager.InitializeAsync().GetAwaiter().GetResult();
+            int savesBeforePurchase = harness.Store.SaveCalls;
+
+            ProviderRelaxPassPurchaseResult result = harness.Manager
+                .PurchaseRelaxPassAsync()
+                .GetAwaiter()
+                .GetResult();
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(ProviderPurchaseStatus.Purchased));
+            Assert.That(harness.Manager.HasRelaxPass, Is.True);
+            Assert.That(
+                harness.Store.SaveCalls,
+                Is.EqualTo(savesBeforePurchase + 1));
+            Assert.That(
+                harness.Store.LastSavedState.RelaxPassOwned,
+                Is.True);
         }
 
         [Test]
         public void NoOpProvidersNeverAuthorizeOrDisplayAnything()
         {
-            var ads = new NoOpAdProvider();
-            var entitlements = new NoOpNoAdsEntitlementProvider();
+            var ads = new NoOpRewardedAdProvider();
+            var relaxPass = new NoOpRelaxPassEntitlementProvider();
+            var observer = new RecordingProviderObserver();
 
-            Assert.That(ads.IsReady(AdFormat.Rewarded, "hint"), Is.False);
+            Assert.That(ads.IsReady("instant-hint"), Is.False);
             Assert.That(
-                ads.InitializeAsync(default).GetAwaiter().GetResult(),
+                ads.InitializeAsync(default)
+                    .GetAwaiter()
+                    .GetResult(),
                 Is.EqualTo(ProviderInitializationStatus.Unavailable));
             Assert.That(
-                entitlements
-                    .RestoreLifetimeNoAdsAsync(default)
+                ads.ShowAsync(
+                        new ProviderRewardedAdRequest("instant-hint"),
+                        observer,
+                        default)
+                    .GetAwaiter()
+                    .GetResult()
+                    .Outcome,
+                Is.EqualTo(ProviderAdOutcome.Unavailable));
+            Assert.That(observer.OpenCalls, Is.Zero);
+            Assert.That(observer.RewardCalls, Is.Zero);
+            Assert.That(
+                relaxPass.RestoreRelaxPassAsync(default)
                     .GetAwaiter()
                     .GetResult()
                     .Status,
                 Is.EqualTo(ProviderEntitlementStatus.Unavailable));
         }
 
+        private static RewardedAdRequest CreateHintRequest()
+        {
+            return new RewardedAdRequest(
+                "instant-hint",
+                RewardedBenefitKind.InstantSolutionHint);
+        }
+
         private static Harness CreateHarness(
             ProviderEntitlementStatus entitlementStatus,
-            PersistentStateLoadResult loadResult)
+            PersistentStateLoadResult loadResult,
+            bool allowRewardedForRelaxPassOwners = true)
         {
-            var clock = new FakeClock();
             var activity = new PresentationActivityCoordinator();
-            var ads = new FakeAdProvider();
-            var entitlements = new FakeEntitlementProvider(entitlementStatus);
+            var ads = new FakeRewardedAdProvider();
+            var relaxPass =
+                new FakeRelaxPassProvider(entitlementStatus);
             var store = new FakeStateStore(loadResult);
-            var options = new MonetizationOptions(
-                TimeSpan.FromSeconds(180),
-                allowRewardedForNoAdsOwners: true);
             var manager = new MonetizationManager(
                 ads,
-                entitlements,
+                relaxPass,
                 store,
                 activity,
-                clock,
-                options);
+                new MonetizationOptions(
+                    allowRewardedForRelaxPassOwners));
 
             return new Harness(
                 manager,
-                clock,
                 activity,
                 ads,
+                relaxPass,
                 store);
         }
 
@@ -277,80 +376,62 @@ namespace CalmSpace.Tests.EditMode
         {
             public Harness(
                 MonetizationManager manager,
-                FakeClock clock,
                 PresentationActivityCoordinator activity,
-                FakeAdProvider ads,
+                FakeRewardedAdProvider ads,
+                FakeRelaxPassProvider relaxPass,
                 FakeStateStore store)
             {
                 Manager = manager;
-                Clock = clock;
                 Activity = activity;
                 Ads = ads;
+                RelaxPass = relaxPass;
                 Store = store;
             }
 
             public MonetizationManager Manager { get; }
 
-            public FakeClock Clock { get; }
-
             public PresentationActivityCoordinator Activity { get; }
 
-            public FakeAdProvider Ads { get; }
+            public FakeRewardedAdProvider Ads { get; }
+
+            public FakeRelaxPassProvider RelaxPass { get; }
 
             public FakeStateStore Store { get; }
         }
 
-        private sealed class FakeClock : IMonotonicClock
+        private sealed class FakeRelaxPassProvider :
+            IRelaxPassEntitlementProvider
         {
-            private double _nowSeconds;
+            private readonly ProviderEntitlementStatus _restoreStatus;
 
-            public int ReadCount { get; private set; }
-
-            public int ThrowOnReadNumber { get; set; }
-
-            public double NowSeconds
+            public FakeRelaxPassProvider(
+                ProviderEntitlementStatus restoreStatus)
             {
-                get
-                {
-                    ReadCount++;
-                    if (ThrowOnReadNumber == ReadCount)
-                    {
-                        throw new InvalidOperationException(
-                            "Synthetic clock failure.");
-                    }
-
-                    return _nowSeconds;
-                }
-                set => _nowSeconds = value;
+                _restoreStatus = restoreStatus;
             }
-        }
 
-        private sealed class FakeEntitlementProvider :
-            INoAdsEntitlementProvider
-        {
-            private readonly ProviderEntitlementStatus _status;
-
-            public FakeEntitlementProvider(
-                ProviderEntitlementStatus status)
-            {
-                _status = status;
-            }
+            public ProviderPurchaseStatus PurchaseStatus { get; set; } =
+                ProviderPurchaseStatus.Unavailable;
 
             public UniTask<ProviderEntitlementRestoreResult>
-                RestoreLifetimeNoAdsAsync(
+                RestoreRelaxPassAsync(
                     CancellationToken cancellationToken)
             {
                 return UniTask.FromResult(
-                    new ProviderEntitlementRestoreResult(_status, null));
+                    new ProviderEntitlementRestoreResult(
+                        _restoreStatus,
+                        null));
             }
 
-            public UniTask<ProviderNoAdsPurchaseResult>
-                PurchaseLifetimeNoAdsAsync(
+            public UniTask<ProviderRelaxPassPurchaseResult>
+                PurchaseRelaxPassAsync(
                     CancellationToken cancellationToken)
             {
                 return UniTask.FromResult(
-                    new ProviderNoAdsPurchaseResult(
-                        ProviderPurchaseStatus.Unavailable,
+                    new ProviderRelaxPassPurchaseResult(
+                        cancellationToken.IsCancellationRequested
+                            ? ProviderPurchaseStatus.Cancelled
+                            : PurchaseStatus,
                         null));
             }
         }
@@ -359,12 +440,19 @@ namespace CalmSpace.Tests.EditMode
         {
             private readonly PersistentStateLoadResult _loadResult;
 
-            public FakeStateStore(PersistentStateLoadResult loadResult)
+            public FakeStateStore(
+                PersistentStateLoadResult loadResult)
             {
                 _loadResult = loadResult;
             }
 
             public int SaveCalls { get; private set; }
+
+            public PersistentMonetizationState LastSavedState
+            {
+                get;
+                private set;
+            }
 
             public UniTask<PersistentStateLoadResult> LoadAsync(
                 CancellationToken cancellationToken)
@@ -377,14 +465,20 @@ namespace CalmSpace.Tests.EditMode
                 CancellationToken cancellationToken)
             {
                 SaveCalls++;
+                LastSavedState = state;
                 return UniTask.FromResult(
-                    PersistentStateSaveResult.Succeeded());
+                    cancellationToken.IsCancellationRequested
+                        ? PersistentStateSaveResult.Cancelled()
+                        : PersistentStateSaveResult.Succeeded());
             }
         }
 
-        private sealed class FakeAdProvider : IAdProvider
+        private sealed class FakeRewardedAdProvider :
+            IRewardedAdProvider
         {
             public int ShowCalls { get; private set; }
+
+            public bool Ready { get; set; } = true;
 
             public bool EmitReward { get; set; }
 
@@ -399,17 +493,19 @@ namespace CalmSpace.Tests.EditMode
                 CancellationToken cancellationToken)
             {
                 return UniTask.FromResult(
-                    ProviderInitializationStatus.Ready);
+                    Ready
+                        ? ProviderInitializationStatus.Ready
+                        : ProviderInitializationStatus.Unavailable);
             }
 
-            public bool IsReady(AdFormat format, string placementId)
+            public bool IsReady(string placementId)
             {
-                return true;
+                return Ready;
             }
 
             public UniTask<ProviderAdResult> ShowAsync(
-                ProviderAdRequest request,
-                IProviderAdSessionObserver observer,
+                ProviderRewardedAdRequest request,
+                IProviderRewardedAdSessionObserver observer,
                 CancellationToken cancellationToken)
             {
                 ShowCalls++;
@@ -418,7 +514,6 @@ namespace CalmSpace.Tests.EditMode
                 if (EmitReward)
                 {
                     observer.OnRewardEarned();
-
                     if (EmitDuplicateReward)
                     {
                         observer.OnRewardEarned();
@@ -427,7 +522,9 @@ namespace CalmSpace.Tests.EditMode
 
                 return UniTask.FromResult(
                     new ProviderAdResult(
-                        Outcome,
+                        cancellationToken.IsCancellationRequested
+                            ? ProviderAdOutcome.Cancelled
+                            : Outcome,
                         null));
             }
         }
@@ -435,18 +532,42 @@ namespace CalmSpace.Tests.EditMode
         private sealed class RecordingRewardCallbacks :
             IRewardedAdCallbacks
         {
-            public int RewardCalls { get; private set; }
+            public bool ApplyResult { get; set; } = true;
+
+            public int ApplyCalls { get; private set; }
 
             public int CompletionCalls { get; private set; }
 
-            public void OnRewardEarned(RewardGrant reward)
+            public RewardGrant LastReward { get; private set; }
+
+            public bool TryApplyReward(RewardGrant reward)
             {
-                RewardCalls++;
+                ApplyCalls++;
+                LastReward = reward;
+                return ApplyResult;
             }
 
             public void OnCompleted(RewardedAdResult result)
             {
                 CompletionCalls++;
+            }
+        }
+
+        private sealed class RecordingProviderObserver :
+            IProviderRewardedAdSessionObserver
+        {
+            public int OpenCalls { get; private set; }
+
+            public int RewardCalls { get; private set; }
+
+            public void OnOpened()
+            {
+                OpenCalls++;
+            }
+
+            public void OnRewardEarned()
+            {
+                RewardCalls++;
             }
         }
     }

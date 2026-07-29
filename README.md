@@ -41,15 +41,17 @@ settings are invalid. It writes:
 
 ## Verified baseline
 
-- EditMode tests: 71 passed, 0 failed.
-- PlayMode tests: 27 passed, 0 failed. Coverage includes all eight Addressable
+- EditMode tests: 109 passed, 0 failed.
+- PlayMode tests: 35 passed, 0 failed. Coverage includes all eight Addressable
   levels, English/Ukrainian switching, compatible-slot sorting, cancellation,
   slot occupancy, a full touchscreen-to-physics drag through the generated
   level prefab, hold-to-unscrew with panel release, cleaning-stage
-  sequencing, feedback-failure resilience, the localized screw instruction,
-  the final completion-screen state, the contained home collection artwork,
-  exact single-item decoration purchases, and persistence across scene
-  reloads.
+  sequencing and rollback, feedback-failure resilience, platform haptic
+  selection and rate limiting, encrypted profile recovery, rewarded-only
+  monetization gates, transition-curtain cancellation, the localized screw
+  instruction, the final completion-screen state, the contained home
+  collection artwork, exact single-item decoration purchases, and persistence
+  across scene reloads.
 - Android APK and App Bundle: validated, ARM64 + IL2CPP, API 24 minimum and
   target API 36.
 - Android API 35 ARM64 emulator: cold launch, theme persistence, sequential
@@ -59,8 +61,12 @@ settings are invalid. It writes:
   current implementation cycle. Automatic Ukrainian locale, portrait safe
   areas, the home/decor flow, eight-card level select, compatible sorting,
   hold-to-unscrew, layered reveal, and debris → sponge → squeegee sequencing
-  were exercised without Unity or Android runtime crashes. Native
-  `USAGE_TOUCH` haptics were physically verified on the device.
+  were exercised without Unity or Android runtime crashes. The current APK
+  was also cold-started, backgrounded/resumed, and checked through a mixed
+  cleaning placement → Undo flow; the item and 17% progress both returned to
+  their exact prior state. A gameplay memory snapshot measured 294 MB PSS on
+  Android 17 / API 37. Native `USAGE_TOUCH` haptics were physically verified
+  on the device.
 
 See `docs/PLAY_STORE_RELEASE.md` for signing, monetization, privacy, and Play
 Console preparation.
@@ -71,7 +77,7 @@ Console preparation.
   local progression, completion flow, and three persistent color moods.
 - Illustrated home screen with a contained four-item calm collection and
   distinct Fern, Stones, Lantern, and Vase silhouettes. First completion of
-  each level grants 15 calm points exactly once; points can unlock River
+  each level grants 15 Cozy Tokens exactly once; tokens can unlock River
   Stones, Warm Lantern, and Clay Vase, while Soft Fern is included. Existing
   version-1 progress migrates automatically and receives any earned rewards
   only once.
@@ -93,31 +99,43 @@ Console preparation.
   or fail state.
 - Original 32-second procedural ambient loop generated inside the project,
   with no third-party samples, plus an in-game sound toggle.
-- Native Android micro-haptics and snap waveforms with API-level fallbacks.
+- Native Android micro-haptics and snap waveforms plus iOS impact feedback,
+  with shared rate limiting and graceful platform fallbacks.
 - Touch and mouse dragging through the New Input System, including pinch
-  tracking and exclusive pointer ownership.
+  tracking, exclusive pointer ownership, and an unbounded per-level Undo
+  history for placements and screw holds.
 - ScriptableObject level catalog with Addressable level prefabs.
 - Sorting, cleaning, screw-puzzle, and fitting lifecycle components. Levels
   report progress across every kind of work they contain, not just placed
   items.
-- URP RenderTexture cleaning mask with asynchronous GPU readback and a
-  CPU-safe fallback.
+- URP RenderTexture cleaning mask with a 64×64 coverage pass, frame-skipped
+  asynchronous GPU readback, and a CPU-safe fallback.
 - Spatialized pooled ASMR snap audio through an AudioMixer.
 - VContainer composition root and UniTask asynchronous flows.
-- Ad/IAP policy layer with a 180-second interstitial cooldown, atomic gameplay
-  and drag gates, rewarded callbacks, and authenticated local entitlement
-  storage.
+- Rewarded-only ad/IAP policy with no interstitial API, atomic gameplay and
+  drag gates, explicit hint/decor rewards, Relax Pass state, and
+  authenticated local entitlement storage.
+- Authenticated encrypted profile storage for level unlocks, Cozy Tokens,
+  themes, music, and room inventory, including one-time migration and
+  tamper-safe backup recovery.
+- Build-time Anti-Anxiety validation that rejects timers, fail/lose
+  contracts, forced-ad formats, missing Undo integration, and expensive
+  cleaner coverage settings.
 - EditMode unit tests and PlayMode runtime/startup tests.
 
 ## Before a store release
 
-The monetization policy is complete, but the included ad and purchase
-providers are deliberately no-op adapters. A real Google Play Billing provider
-and selected ad SDK still need to be connected and tested on devices.
+The monetization policy is complete, but the included rewarded-ad and Relax
+Pass purchase providers are deliberately no-op adapters. A real Google Play
+Billing provider and selected rewarded-ad SDK still need to be connected and
+tested on devices. The architecture intentionally has no forced or
+interstitial ad path.
 
 Also required for publishing: final icons/screenshots, privacy policy and Data
 Safety declarations, production signing, broader device QA, performance
-profiling, and a closed-track Google Play test.
+profiling, and a closed-track Google Play test. The iOS native bridge is
+implemented behind compile guards, but still requires an Xcode export and
+physical iPhone validation before an iOS release.
 
 ## Review and asset provenance
 

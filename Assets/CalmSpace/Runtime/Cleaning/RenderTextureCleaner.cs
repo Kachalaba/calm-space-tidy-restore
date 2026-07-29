@@ -30,6 +30,8 @@ namespace CalmSpace.Cleaning
             Shader.PropertyToID("_SourceMask");
         private static readonly int BrushUvRadiusHardnessId =
             Shader.PropertyToID("_BrushUvRadiusHardness");
+        private static readonly int CoverageSampleStepUvId =
+            Shader.PropertyToID("_CoverageSampleStepUv");
 
         [Header("Scene references")]
         [SerializeField]
@@ -45,9 +47,17 @@ namespace CalmSpace.Cleaning
         [SerializeField]
         private Shader maskBrushShader;
 
+        [Tooltip("Explicit reference prevents the coverage shader from being stripped.")]
+        [SerializeField]
+        private Shader coverageDownsampleShader;
+
         [Header("Mask")]
         [SerializeField]
         private Vector2Int maskResolution = new Vector2Int(512, 512);
+
+        [Tooltip("Low-resolution mask used only for progress evaluation.")]
+        [SerializeField]
+        private Vector2Int coverageResolution = new Vector2Int(64, 64);
 
         [SerializeField]
         private string maskTextureProperty = DefaultMaskTextureProperty;
@@ -69,6 +79,11 @@ namespace CalmSpace.Cleaning
         [SerializeField]
         private float progressSampleIntervalSeconds = 0.35f;
 
+        [Tooltip("Minimum rendered frames between coverage evaluations.")]
+        [Min(1)]
+        [SerializeField]
+        private int progressSampleFrameInterval = 10;
+
         [Min(0.01f)]
         [SerializeField]
         private float raycastDistance = 1000f;
@@ -78,8 +93,11 @@ namespace CalmSpace.Cleaning
 
         private RenderTexture _frontMask;
         private RenderTexture _backMask;
+        private RenderTexture _coverageMask;
         private Material _brushMaterial;
+        private Material _coverageDownsampleMaterial;
         private MaterialPropertyBlock _brushProperties;
+        private MaterialPropertyBlock _coverageProperties;
         private MaterialPropertyBlock _visibleProperties;
         private MaterialPropertyBlock _originalVisibleProperties;
         private bool _originalVisiblePropertiesWereEmpty;
@@ -89,11 +107,11 @@ namespace CalmSpace.Cleaning
         private GraphicsFormat _maskGraphicsFormat;
         private int _maskChannelStride;
         private int _maskTexturePropertyId;
-        private int _pixelCount;
+        private int _coveragePixelCount;
         private int _generation;
         private long _nextSampleSequence;
         private long _lastAppliedSampleSequence;
-        private double _nextSampleTime;
+        private CoverageSampleGate _sampleGate;
         private bool _gpuReadbackEnabled;
         private bool _initialized;
         private bool _configurationErrorLogged;
@@ -122,6 +140,11 @@ namespace CalmSpace.Cleaning
 
         public bool IsUsingAsyncGpuReadback => _gpuReadbackEnabled;
 
+        public Vector2Int CoverageResolution => coverageResolution;
+
+        public int ProgressSampleFrameInterval =>
+            progressSampleFrameInterval;
+
         private void OnEnable()
         {
             ResolveRaycastCameraIfNeeded();
@@ -143,12 +166,23 @@ namespace CalmSpace.Cleaning
             maskResolution = new Vector2Int(
                 Mathf.Clamp(maskResolution.x, MinimumResolution, MaximumResolution),
                 Mathf.Clamp(maskResolution.y, MinimumResolution, MaximumResolution));
+            coverageResolution = new Vector2Int(
+                Mathf.Clamp(
+                    coverageResolution.x,
+                    MinimumResolution,
+                    maskResolution.x),
+                Mathf.Clamp(
+                    coverageResolution.y,
+                    MinimumResolution,
+                    maskResolution.y));
             brushRadiusUv = Mathf.Clamp(brushRadiusUv, 0.001f, 0.5f);
             brushHardness = Mathf.Clamp01(brushHardness);
             strokeSpacingRadiusFraction =
                 Mathf.Clamp(strokeSpacingRadiusFraction, 0.05f, 1f);
             progressSampleIntervalSeconds =
                 Mathf.Max(0.01f, progressSampleIntervalSeconds);
+            progressSampleFrameInterval =
+                Mathf.Max(1, progressSampleFrameInterval);
             raycastDistance = Mathf.Max(0.01f, raycastDistance);
         }
 
@@ -295,7 +329,7 @@ namespace CalmSpace.Cleaning
             _completionLatch.Reset();
             _nextSampleSequence = 0L;
             _lastAppliedSampleSequence = 0L;
-            _nextSampleTime = 0d;
+            _sampleGate?.Reset();
             EndStroke();
         }
 
@@ -375,7 +409,9 @@ namespace CalmSpace.Cleaning
                         CopyCpuShadowTo(slot);
                     }
 
-                    slot.ScheduleSum(_pixelCount, channelStride);
+                    slot.ScheduleSum(
+                        _coveragePixelCount,
+                        channelStride);
 
                     while (!slot.IsSumCompleted)
                     {
@@ -436,7 +472,18 @@ namespace CalmSpace.Cleaning
                 MinimumResolution,
                 MaximumResolution);
             maskResolution = new Vector2Int(width, height);
-            _pixelCount = checked(width * height);
+            int coverageWidth = Mathf.Clamp(
+                coverageResolution.x,
+                MinimumResolution,
+                width);
+            int coverageHeight = Mathf.Clamp(
+                coverageResolution.y,
+                MinimumResolution,
+                height);
+            coverageResolution =
+                new Vector2Int(coverageWidth, coverageHeight);
+            _coveragePixelCount =
+                checked(coverageWidth * coverageHeight);
 
             if (!TryChooseMaskFormat(
                     out _maskGraphicsFormat,
@@ -456,28 +503,41 @@ namespace CalmSpace.Cleaning
             {
                 _lifetimeCancellation = new CancellationTokenSource();
                 _brushMaterial = CoreUtils.CreateEngineMaterial(maskBrushShader);
+                _coverageDownsampleMaterial =
+                    CoreUtils.CreateEngineMaterial(
+                        coverageDownsampleShader);
                 _brushProperties = new MaterialPropertyBlock();
+                _coverageProperties = new MaterialPropertyBlock();
                 _visibleProperties = new MaterialPropertyBlock();
                 _originalVisibleProperties =
                     new MaterialPropertyBlock();
-                _frontMask = CreateMaskRenderTexture("Clean Mask A");
-                _backMask = CreateMaskRenderTexture("Clean Mask B");
+                _frontMask = CreateMaskRenderTexture(
+                    "Clean Mask A",
+                    maskResolution);
+                _backMask = CreateMaskRenderTexture(
+                    "Clean Mask B",
+                    maskResolution);
+                _coverageMask = CreateMaskRenderTexture(
+                    "Clean Coverage 64",
+                    coverageResolution);
 
                 if (_brushMaterial == null ||
+                    _coverageDownsampleMaterial == null ||
                     _frontMask == null ||
-                    _backMask == null)
+                    _backMask == null ||
+                    _coverageMask == null)
                 {
                     throw new InvalidOperationException(
                         "Failed to create cleaning render resources.");
                 }
 
                 _cpuShadowMask = new NativeArray<byte>(
-                    _pixelCount,
+                    _coveragePixelCount,
                     Allocator.Persistent,
                     NativeArrayOptions.ClearMemory);
 
                 int slotByteCapacity = checked(
-                    _pixelCount * _maskChannelStride);
+                    _coveragePixelCount * _maskChannelStride);
                 _readbackSlots = new ReadbackSlot[ReadbackSlotCount];
 
                 for (int index = 0; index < _readbackSlots.Length; index++)
@@ -497,7 +557,9 @@ namespace CalmSpace.Cleaning
                 _completionLatch.Reset();
                 _nextSampleSequence = 0L;
                 _lastAppliedSampleSequence = 0L;
-                _nextSampleTime = 0d;
+                _sampleGate = new CoverageSampleGate(
+                    progressSampleFrameInterval,
+                    progressSampleIntervalSeconds);
                 EndStroke();
                 ClearRenderTextures();
                 CaptureAndBindVisibleRenderer();
@@ -538,10 +600,24 @@ namespace CalmSpace.Cleaning
                 return false;
             }
 
+            if (coverageDownsampleShader == null)
+            {
+                LogConfigurationError(
+                    "Assign the Hidden/CalmSpace/CoverageDownsample shader reference.");
+                return false;
+            }
+
             if (!maskBrushShader.isSupported)
             {
                 LogConfigurationError(
                     $"The assigned brush shader '{maskBrushShader.name}' is not supported.");
+                return false;
+            }
+
+            if (!coverageDownsampleShader.isSupported)
+            {
+                LogConfigurationError(
+                    $"The assigned coverage shader '{coverageDownsampleShader.name}' is not supported.");
                 return false;
             }
 
@@ -641,11 +717,13 @@ namespace CalmSpace.Cleaning
 #endif
         }
 
-        private RenderTexture CreateMaskRenderTexture(string textureName)
+        private RenderTexture CreateMaskRenderTexture(
+            string textureName,
+            Vector2Int resolution)
         {
             var descriptor = new RenderTextureDescriptor(
-                maskResolution.x,
-                maskResolution.y,
+                resolution.x,
+                resolution.y,
                 _maskGraphicsFormat,
                 0)
             {
@@ -681,7 +759,9 @@ namespace CalmSpace.Cleaning
 
         private void ClearRenderTextures()
         {
-            if (_frontMask == null || _backMask == null)
+            if (_frontMask == null ||
+                _backMask == null ||
+                _coverageMask == null)
             {
                 return;
             }
@@ -694,6 +774,11 @@ namespace CalmSpace.Cleaning
                 CoreUtils.SetRenderTarget(
                     commandBuffer,
                     _frontMask,
+                    ClearFlag.Color,
+                    Color.clear);
+                CoreUtils.SetRenderTarget(
+                    commandBuffer,
+                    _coverageMask,
                     ClearFlag.Color,
                     Color.clear);
                 CoreUtils.SetRenderTarget(
@@ -759,8 +844,8 @@ namespace CalmSpace.Cleaning
         {
             float radius = brushRadiusUv;
             float innerRadius = radius * brushHardness;
-            int width = maskResolution.x;
-            int height = maskResolution.y;
+            int width = coverageResolution.x;
+            int height = coverageResolution.y;
             int minimumX = Mathf.Max(
                 0,
                 Mathf.FloorToInt((uv.x - radius) * width - 0.5f));
@@ -839,12 +924,10 @@ namespace CalmSpace.Cleaning
             while (_initialized && sampleGeneration == _generation)
             {
                 token.ThrowIfCancellationRequested();
-                double now = Time.realtimeSinceStartupAsDouble;
-
-                if (now >= _nextSampleTime)
+                if (_sampleGate.TryReserve(
+                        Time.frameCount,
+                        Time.realtimeSinceStartupAsDouble))
                 {
-                    _nextSampleTime =
-                        now + progressSampleIntervalSeconds;
                     return true;
                 }
 
@@ -885,9 +968,42 @@ namespace CalmSpace.Cleaning
         {
             try
             {
+                _coverageProperties.Clear();
+                _coverageProperties.SetTexture(
+                    SourceMaskId,
+                    _frontMask);
+                _coverageProperties.SetVector(
+                    CoverageSampleStepUvId,
+                    new Vector4(
+                        1f / (4f * coverageResolution.x),
+                        1f / (4f * coverageResolution.y),
+                        0f,
+                        0f));
+
+                CommandBuffer commandBuffer =
+                    CommandBufferPool.Get(
+                        "CalmSpace.DownsampleCleanCoverage");
+                try
+                {
+                    CoreUtils.SetRenderTarget(
+                        commandBuffer,
+                        _coverageMask,
+                        ClearFlag.None);
+                    CoreUtils.DrawFullScreen(
+                        commandBuffer,
+                        _coverageDownsampleMaterial,
+                        _coverageProperties,
+                        0);
+                    Graphics.ExecuteCommandBuffer(commandBuffer);
+                }
+                finally
+                {
+                    CommandBufferPool.Release(commandBuffer);
+                }
+
                 slot.BeginGpuReadback(
                     AsyncGPUReadback.Request(
-                        _frontMask,
+                        _coverageMask,
                         0,
                         _maskGraphicsFormat,
                         null));
@@ -923,7 +1039,7 @@ namespace CalmSpace.Cleaning
                 NativeArray<byte> requestPixels =
                     slot.Request.GetData<byte>();
                 int expectedByteCount = checked(
-                    _pixelCount * _maskChannelStride);
+                    _coveragePixelCount * _maskChannelStride);
 
                 if (requestPixels.Length < expectedByteCount)
                 {
@@ -968,12 +1084,13 @@ namespace CalmSpace.Cleaning
             NativeArray<byte>.Copy(
                 _cpuShadowMask,
                 slot.Pixels,
-                _pixelCount);
+                _coveragePixelCount);
         }
 
         private float CalculateFraction(long sum)
         {
-            double maximumSum = (double)_pixelCount * byte.MaxValue;
+            double maximumSum =
+                (double)_coveragePixelCount * byte.MaxValue;
 
             if (maximumSum <= 0d)
             {
@@ -1058,12 +1175,16 @@ namespace CalmSpace.Cleaning
 
         private bool EnsureRenderTexturesCreated()
         {
-            if (_frontMask == null || _backMask == null)
+            if (_frontMask == null ||
+                _backMask == null ||
+                _coverageMask == null)
             {
                 return false;
             }
 
-            if (_frontMask.IsCreated() && _backMask.IsCreated())
+            if (_frontMask.IsCreated() &&
+                _backMask.IsCreated() &&
+                _coverageMask.IsCreated())
             {
                 return true;
             }
@@ -1083,7 +1204,9 @@ namespace CalmSpace.Cleaning
 
             AdvanceGeneration();
             if ((!_frontMask.IsCreated() && !_frontMask.Create()) ||
-                (!_backMask.IsCreated() && !_backMask.Create()))
+                (!_backMask.IsCreated() && !_backMask.Create()) ||
+                (!_coverageMask.IsCreated() &&
+                 !_coverageMask.Create()))
             {
                 return false;
             }
@@ -1094,8 +1217,8 @@ namespace CalmSpace.Cleaning
             try
             {
                 stagingTexture = new Texture2D(
-                    maskResolution.x,
-                    maskResolution.y,
+                    coverageResolution.x,
+                    coverageResolution.y,
                     _maskGraphicsFormat,
                     TextureCreationFlags.None)
                 {
@@ -1113,11 +1236,13 @@ namespace CalmSpace.Cleaning
                 else
                 {
                     rgbaPixels = new NativeArray<byte>(
-                        checked(_pixelCount * _maskChannelStride),
+                        checked(
+                            _coveragePixelCount *
+                            _maskChannelStride),
                         Allocator.Temp,
                         NativeArrayOptions.ClearMemory);
                     for (var index = 0;
-                         index < _pixelCount;
+                         index < _coveragePixelCount;
                          index++)
                     {
                         rgbaPixels[index * _maskChannelStride] =
@@ -1130,6 +1255,7 @@ namespace CalmSpace.Cleaning
                 stagingTexture.Apply(false, false);
                 Graphics.Blit(stagingTexture, _frontMask);
                 Graphics.Blit(stagingTexture, _backMask);
+                Graphics.Blit(stagingTexture, _coverageMask);
                 BindFrontMaskToVisibleRenderer();
                 return true;
             }
@@ -1181,7 +1307,9 @@ namespace CalmSpace.Cleaning
             if (!_initialized &&
                 _frontMask == null &&
                 _backMask == null &&
+                _coverageMask == null &&
                 _brushMaterial == null &&
+                _coverageDownsampleMaterial == null &&
                 !_cpuShadowMask.IsCreated &&
                 _readbackSlots == null &&
                 _lifetimeCancellation == null)
@@ -1220,6 +1348,7 @@ namespace CalmSpace.Cleaning
 
             ReleaseRenderTexture(ref _frontMask);
             ReleaseRenderTexture(ref _backMask);
+            ReleaseRenderTexture(ref _coverageMask);
 
             if (_brushMaterial != null)
             {
@@ -1227,16 +1356,23 @@ namespace CalmSpace.Cleaning
                 _brushMaterial = null;
             }
 
+            if (_coverageDownsampleMaterial != null)
+            {
+                CoreUtils.Destroy(_coverageDownsampleMaterial);
+                _coverageDownsampleMaterial = null;
+            }
+
             _brushProperties = null;
+            _coverageProperties = null;
             _visibleProperties = null;
             _originalVisibleProperties = null;
             _gpuReadbackEnabled = false;
-            _pixelCount = 0;
+            _coveragePixelCount = 0;
             _maskChannelStride = 0;
             _maskGraphicsFormat = GraphicsFormat.None;
             _nextSampleSequence = 0L;
             _lastAppliedSampleSequence = 0L;
-            _nextSampleTime = 0d;
+            _sampleGate = null;
             CleanedFraction = 0f;
             _completionLatch.Reset();
         }

@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
-using CalmSpace.Monetization;
 using Cysharp.Threading.Tasks;
+using CalmSpace.Core;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -10,6 +10,15 @@ using VContainer.Unity;
 
 namespace CalmSpace.Levels
 {
+    public enum LevelAssetTransitionState
+    {
+        Idle = 0,
+        ReleasingInstance = 1,
+        UnloadingUnusedAssets = 2,
+        LoadingAsset = 3,
+        InstantiatingLevel = 4
+    }
+
     public interface ILevelFlowController
     {
         LevelBase CurrentLevel { get; }
@@ -26,7 +35,6 @@ namespace CalmSpace.Levels
             CancellationToken cancellationToken = default);
 
         UniTask<bool> LoadNextLevelAsync(
-            bool tryInterstitial,
             CancellationToken cancellationToken = default);
 
         UniTask UnloadCurrentLevelAsync(
@@ -41,34 +49,32 @@ namespace CalmSpace.Levels
         ILevelFlowController,
         IDisposable
     {
-        private const string BetweenLevelsPlacement =
-            "between-levels";
-
         private readonly LevelCatalog _catalog;
         private readonly IObjectResolver _resolver;
-        private readonly IMonetizationManager _monetization;
+        private readonly IUndoHistory _undoHistory;
         private readonly Transform _levelRoot;
         private readonly SemaphoreSlim _transitionGate =
             new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
 
-        private AsyncOperationHandle<GameObject> _instanceHandle;
-        private bool _hasInstanceHandle;
+        private AsyncOperationHandle<GameObject> _levelAssetHandle;
+        private GameObject _levelInstance;
+        private bool _hasLevelAssetHandle;
         private bool _disposed;
 
         public AddressableLevelFlowController(
             LevelCatalog catalog,
             IObjectResolver resolver,
-            IMonetizationManager monetization,
+            IUndoHistory undoHistory,
             Transform levelRoot)
         {
             _catalog = catalog ??
                 throw new ArgumentNullException(nameof(catalog));
             _resolver = resolver ??
                 throw new ArgumentNullException(nameof(resolver));
-            _monetization = monetization ??
-                throw new ArgumentNullException(nameof(monetization));
+            _undoHistory = undoHistory ??
+                throw new ArgumentNullException(nameof(undoHistory));
             _levelRoot = levelRoot ??
                 throw new ArgumentNullException(nameof(levelRoot));
         }
@@ -78,6 +84,12 @@ namespace CalmSpace.Levels
         public int CurrentLevelIndex { get; private set; } = -1;
 
         public bool IsLoading { get; private set; }
+
+        public LevelAssetTransitionState TransitionState
+        {
+            get;
+            private set;
+        } = LevelAssetTransitionState.Idle;
 
         public UniTask<bool> LoadFirstLevelAsync(
             CancellationToken cancellationToken = default)
@@ -100,7 +112,6 @@ namespace CalmSpace.Levels
         }
 
         public async UniTask<bool> LoadNextLevelAsync(
-            bool tryInterstitial,
             CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
@@ -108,16 +119,6 @@ namespace CalmSpace.Levels
             if (_catalog.Count <= 0)
             {
                 return false;
-            }
-
-            if (tryInterstitial && CurrentLevel != null)
-            {
-                // The policy layer atomically rejects this call if gameplay,
-                // a drag, or another fullscreen presentation is still active.
-                await _monetization
-                    .TryShowInterstitialBetweenLevelsAsync(
-                        BetweenLevelsPlacement,
-                        cancellationToken);
             }
 
             var nextIndex = CurrentLevelIndex < 0
@@ -130,14 +131,25 @@ namespace CalmSpace.Levels
             CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            await _transitionGate.WaitAsync(cancellationToken);
-            try
+            using (var linkedCancellation =
+                   CancellationTokenSource.CreateLinkedTokenSource(
+                       cancellationToken,
+                       _lifetimeCancellation.Token))
             {
-                ReleaseCurrentLevel();
-            }
-            finally
-            {
-                _transitionGate.Release();
+                var token = linkedCancellation.Token;
+                await _transitionGate.WaitAsync(token);
+                IsLoading = true;
+                try
+                {
+                    await ReleaseAndUnloadUnusedAssetsAsync();
+                    token.ThrowIfCancellationRequested();
+                }
+                finally
+                {
+                    TransitionState = LevelAssetTransitionState.Idle;
+                    IsLoading = false;
+                    _transitionGate.Release();
+                }
             }
         }
 
@@ -150,7 +162,7 @@ namespace CalmSpace.Levels
 
             _disposed = true;
             _lifetimeCancellation.Cancel();
-            ReleaseCurrentLevel();
+            ReleaseCurrentLevelImmediate();
             _lifetimeCancellation.Dispose();
         }
 
@@ -176,30 +188,36 @@ namespace CalmSpace.Levels
                         return false;
                     }
 
-                    ReleaseCurrentLevel();
+                    await ReleaseAndUnloadUnusedAssetsAsync();
                     token.ThrowIfCancellationRequested();
 
-                    var handle = Addressables.InstantiateAsync(
-                        entry.Prefab.RuntimeKey,
-                        _levelRoot,
-                        false,
-                        true);
+                    TransitionState =
+                        LevelAssetTransitionState.LoadingAsset;
+                    var handle =
+                        Addressables.LoadAssetAsync<GameObject>(
+                            entry.Prefab.RuntimeKey);
                     var ownsHandle = true;
+                    GameObject instance = null;
 
                     try
                     {
-                        var instance = await handle.ToUniTask(
+                        var prefab = await handle.ToUniTask(
                             cancellationToken: token);
                         token.ThrowIfCancellationRequested();
 
                         if (handle.Status !=
                                 AsyncOperationStatus.Succeeded ||
-                            instance == null)
+                            prefab == null)
                         {
                             return false;
                         }
 
-                        _resolver.InjectGameObject(instance);
+                        TransitionState =
+                            LevelAssetTransitionState.InstantiatingLevel;
+                        instance = _resolver.Instantiate(
+                            prefab,
+                            _levelRoot,
+                            false);
                         var level =
                             instance.GetComponentInChildren<LevelBase>(
                                 true);
@@ -215,47 +233,96 @@ namespace CalmSpace.Levels
                             return false;
                         }
 
-                        _instanceHandle = handle;
-                        _hasInstanceHandle = true;
+                        _levelAssetHandle = handle;
+                        _hasLevelAssetHandle = true;
+                        _levelInstance = instance;
                         ownsHandle = false;
+                        instance = null;
                         CurrentLevel = level;
                         CurrentLevelIndex = index;
                         return true;
                     }
                     finally
                     {
+                        if (instance != null)
+                        {
+                            UnityEngine.Object.Destroy(instance);
+                        }
+
                         if (ownsHandle && handle.IsValid())
                         {
-                            Addressables.ReleaseInstance(handle);
+                            Addressables.Release(handle);
                         }
                     }
                 }
                 finally
                 {
+                    TransitionState = LevelAssetTransitionState.Idle;
                     IsLoading = false;
                     _transitionGate.Release();
                 }
             }
         }
 
-        private void ReleaseCurrentLevel()
+        private async UniTask ReleaseAndUnloadUnusedAssetsAsync()
         {
-            CurrentLevel = null;
-            CurrentLevelIndex = -1;
-
-            if (!_hasInstanceHandle)
+            bool released = ReleaseCurrentLevelImmediate();
+            if (!released)
             {
                 return;
             }
 
-            var handle = _instanceHandle;
-            _instanceHandle = default;
-            _hasInstanceHandle = false;
+            // Destroy is deferred. Wait until Unity has retired the instance
+            // before sweeping textures, meshes, and clips that lost their last
+            // Addressables reference.
+            await UniTask.Yield(
+                PlayerLoopTiming.LastPostLateUpdate,
+                _lifetimeCancellation.Token);
 
-            if (handle.IsValid())
+            TransitionState =
+                LevelAssetTransitionState.UnloadingUnusedAssets;
+            AsyncOperation unloadOperation =
+                Resources.UnloadUnusedAssets();
+            await unloadOperation.ToUniTask(
+                cancellationToken: _lifetimeCancellation.Token);
+        }
+
+        private bool ReleaseCurrentLevelImmediate()
+        {
+            CurrentLevel = null;
+            CurrentLevelIndex = -1;
+
+            bool released = false;
+            if (_levelInstance != null)
             {
-                Addressables.ReleaseInstance(handle);
+                TransitionState =
+                    LevelAssetTransitionState.ReleasingInstance;
+                _levelInstance.SetActive(false);
+                UnityEngine.Object.Destroy(_levelInstance);
+                _levelInstance = null;
+                released = true;
             }
+
+            if (_hasLevelAssetHandle)
+            {
+                TransitionState =
+                    LevelAssetTransitionState.ReleasingInstance;
+                var handle = _levelAssetHandle;
+                _levelAssetHandle = default;
+                _hasLevelAssetHandle = false;
+                if (handle.IsValid())
+                {
+                    Addressables.Release(handle);
+                }
+
+                released = true;
+            }
+
+            // Deactivating a held screw may finalize its current hold and
+            // enqueue one last undo command. Clear after deactivation so no
+            // command from the retired level can leak into the next level.
+            _undoHistory.Clear();
+            return released;
         }
 
         private void ThrowIfDisposed()

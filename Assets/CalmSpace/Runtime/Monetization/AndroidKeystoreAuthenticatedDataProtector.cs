@@ -82,11 +82,14 @@ namespace CalmSpace.Monetization
                 using (var bridge =
                        new AndroidJavaClass(JavaClassName))
                 {
-                    byte[] protectedData = bridge.CallStatic<byte[]>(
+                    sbyte[] signedProtectedData =
+                        bridge.CallStatic<sbyte[]>(
                         "protect",
                         _keyAlias,
-                        plaintext,
-                        associatedData);
+                        ToSignedBytes(plaintext),
+                        ToSignedBytes(associatedData));
+                    byte[] protectedData =
+                        ToUnsignedBytes(signedProtectedData);
                     if (protectedData == null ||
                         protectedData.Length <
                         MinimumEnvelopeLength ||
@@ -137,11 +140,13 @@ namespace CalmSpace.Monetization
                 using (var bridge =
                        new AndroidJavaClass(JavaClassName))
                 {
-                    plaintext = bridge.CallStatic<byte[]>(
+                    sbyte[] signedPlaintext =
+                        bridge.CallStatic<sbyte[]>(
                         "unprotect",
                         _keyAlias,
-                        protectedData,
-                        associatedData);
+                        ToSignedBytes(protectedData),
+                        ToSignedBytes(associatedData));
+                    plaintext = ToUnsignedBytes(signedPlaintext);
                     return plaintext == null
                         ? DataUnprotectStatus.AuthenticationFailed
                         : DataUnprotectStatus.Success;
@@ -155,6 +160,30 @@ namespace CalmSpace.Monetization
 #else
             return DataUnprotectStatus.AuthenticationFailed;
 #endif
+        }
+
+        private static sbyte[] ToSignedBytes(byte[] source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            var result = new sbyte[source.Length];
+            Buffer.BlockCopy(source, 0, result, 0, source.Length);
+            return result;
+        }
+
+        private static byte[] ToUnsignedBytes(sbyte[] source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            var result = new byte[source.Length];
+            Buffer.BlockCopy(source, 0, result, 0, source.Length);
+            return result;
         }
     }
 }

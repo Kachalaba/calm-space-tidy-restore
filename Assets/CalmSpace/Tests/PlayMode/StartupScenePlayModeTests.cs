@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using System.Reflection;
 using CalmSpace.Cleaning;
 using CalmSpace.Demo;
@@ -19,6 +20,7 @@ namespace CalmSpace.Tests.PlayMode
         [SetUp]
         public void ClearDemoProgress()
         {
+            DeleteSecureDemoProgress();
             PlayerPrefs.DeleteKey(
                 PlayerPrefsDemoProgressStore.DefaultPlayerPrefsKey);
             PlayerPrefs.SetInt(
@@ -30,10 +32,12 @@ namespace CalmSpace.Tests.PlayMode
         [TearDown]
         public void RemoveDemoProgress()
         {
+            DeleteSecureDemoProgress();
             PlayerPrefs.DeleteKey(
                 PlayerPrefsDemoProgressStore.DefaultPlayerPrefsKey);
             PlayerPrefs.DeleteKey(
                 DemoLocalizationService.DefaultPlayerPrefsKey);
+            PlayerPrefs.Save();
         }
 
         [UnityTest]
@@ -685,7 +689,7 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(catalog, Is.Not.Null);
             Assert.That(buttons, Has.Length.EqualTo(4));
             Assert.That(currency, Is.Not.Null);
-            Assert.That(currency.text, Is.EqualTo("CALM TOKENS · 0"));
+            Assert.That(currency.text, Is.EqualTo("COZY TOKENS · 0"));
 
             Assert.That(
                 progress.CompleteLevelAndReward(
@@ -699,12 +703,12 @@ namespace CalmSpace.Tests.PlayMode
                 Is.EqualTo(15));
             yield return null;
 
-            Assert.That(progress.Current.CalmPoints, Is.EqualTo(30));
+            Assert.That(progress.Current.CozyTokens, Is.EqualTo(30));
             Assert.That(buttons[1].Button.interactable, Is.True);
             buttons[1].Button.onClick.Invoke();
             yield return null;
 
-            Assert.That(progress.Current.CalmPoints, Is.EqualTo(10));
+            Assert.That(progress.Current.CozyTokens, Is.EqualTo(10));
             Assert.That(
                 progress.Current.OwnedDecorationMask,
                 Is.EqualTo(0b0011),
@@ -745,7 +749,7 @@ namespace CalmSpace.Tests.PlayMode
                 "_progressStore");
             room = Object.FindFirstObjectByType<DemoRoomPresenter>(
                 FindObjectsInactive.Include);
-            Assert.That(progress.Current.CalmPoints, Is.EqualTo(10));
+            Assert.That(progress.Current.CozyTokens, Is.EqualTo(10));
             Assert.That(
                 progress.Current.SelectedDecorationIndex,
                 Is.EqualTo(1));
@@ -763,6 +767,27 @@ namespace CalmSpace.Tests.PlayMode
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, fieldName);
             return field.GetValue(target) as T;
+        }
+
+        private static void DeleteSecureDemoProgress()
+        {
+            string profilePath = Path.Combine(
+                Application.persistentDataPath,
+                "player-profile-v1.bin");
+            DeleteFileIfPresent(profilePath);
+            DeleteFileIfPresent(profilePath + ".tmp");
+            DeleteFileIfPresent(profilePath + ".bak");
+            PlayerPrefs.DeleteKey(
+                EncryptedFileDemoProgressStore
+                    .DefaultMigrationMarker);
+        }
+
+        private static void DeleteFileIfPresent(string path)
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
         }
     }
 }

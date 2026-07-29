@@ -18,8 +18,8 @@ Do not point a reviewer at `Library`, `Logs`, `Builds`, `UserSettings`, or
 Calm Space is a portrait Android hybrid-casual antistress game. A session
 should feel tactile, forgiving, and quietly satisfying: arrange objects, sort
 compatible shapes, restore small spaces, and clean a surface with soft ASMR
-audio and Android haptics. There are no timers, penalties, or fail states in
-the demo.
+audio and Android/iOS haptics. There are no timers, penalties, fail states, or
+forced ads in the demo.
 
 The repository is a polished vertical slice for device testing and design
 evaluation, not a finished commercial release. Real ad, billing, consent, and
@@ -38,7 +38,7 @@ production-signing providers are deliberately not included.
 The project uses a single persistent scene. Eight gameplay prefabs are
 loaded through Addressables.
 
-The verified baseline is 71 passing EditMode tests and 27 passing PlayMode
+The verified baseline is 109 passing EditMode tests and 35 passing PlayMode
 tests. The Android development build is ARM64/IL2CPP with API 24 minimum and
 target API 36.
 
@@ -52,6 +52,8 @@ target API 36.
   and language switching.
 - `Assets/CalmSpace/Runtime/Demo/DemoProgress.cs` — versioned progression,
   one-time completion rewards, decoration ownership, and save migration.
+- `Assets/CalmSpace/Runtime/Demo/EncryptedFileDemoProgressStore.cs` —
+  authenticated profile persistence, migration, and backup recovery.
 - `Assets/CalmSpace/Runtime/Demo/DemoDecorationCatalog.cs` — completion reward
   and the four-item decoration economy.
 - `Assets/CalmSpace/Runtime/UI/DemoRoomPresenter.cs` — contained home artwork
@@ -66,10 +68,14 @@ target API 36.
   cleaning mechanic and asynchronous progress sampling.
 - `Assets/CalmSpace/Runtime/Haptics/AndroidHapticManager.cs` — direct native
   Android vibration bridge.
+- `Assets/CalmSpace/Runtime/Haptics/IosHapticManager.cs` — iOS haptic bridge
+  selected by the shared platform factory.
 - `Assets/CalmSpace/Runtime/Levels/LevelBase.cs` — shared level lifecycle and
   completion.
 - `Assets/CalmSpace/Runtime/Monetization/MonetizationManager.cs` —
-  anti-disruption ad policy and No Ads state.
+  explicit rewarded-only policy and Relax Pass state.
+- `Assets/CalmSpace/Editor/AntiAnxietyProjectValidator.cs` — build gate for
+  anti-anxiety contracts.
 - `Assets/CalmSpace/Editor/CalmSpaceDemoLevelBuilder.cs` — source of truth for
   the eight generated level prefabs.
 - `Assets/CalmSpace/Editor/CalmSpaceDemoSceneBuilder.cs` — source of truth for

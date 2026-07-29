@@ -1110,8 +1110,13 @@ namespace CalmSpace.Editor
         private static void EnsureCleaningShadersAreIncluded()
         {
             Shader brush = Shader.Find("Hidden/CalmSpace/MaskBrush");
+            Shader coverage =
+                Shader.Find(
+                    "Hidden/CalmSpace/CoverageDownsample");
             Shader surface = Shader.Find("CalmSpace/CleanableSurface");
-            if (brush == null || surface == null)
+            if (brush == null ||
+                coverage == null ||
+                surface == null)
             {
                 throw new InvalidOperationException(
                     "Calm Space cleaning shaders did not import.");
@@ -1142,6 +1147,7 @@ namespace CalmSpace.Editor
             }
 
             AddUniqueObjectReference(shaders, brush);
+            AddUniqueObjectReference(shaders, coverage);
             AddUniqueObjectReference(shaders, surface);
             serialized.ApplyModifiedPropertiesWithoutUndo();
         }

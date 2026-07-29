@@ -137,13 +137,13 @@ namespace CalmSpace.Haptics
 
         public void PlaySnap()
         {
-            if (_disposed)
+            if (_disposed ||
+                !_rateLimiter.TryConsumeSnap(_clock.NowSeconds))
             {
                 return;
             }
 
             Cancel();
-            _rateLimiter.RecordSnap(_clock.NowSeconds);
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             if (_bridgeReady && _hasVibrator)
