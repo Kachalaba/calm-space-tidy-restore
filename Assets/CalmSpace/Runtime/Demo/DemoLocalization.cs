@@ -239,7 +239,7 @@ namespace CalmSpace.Demo
                 case DemoTextKey.ToolSqueegee:
                     return "Squeegee";
                 case DemoTextKey.HomeDecorLabel:
-                    return "MAKE IT YOURS";
+                    return "YOUR CALM COLLECTION";
                 case DemoTextKey.DecorationBuy:
                     return "BUY";
                 case DemoTextKey.DecorationOwned:
@@ -305,7 +305,7 @@ namespace CalmSpace.Demo
                 case DemoTextKey.ToolSqueegee:
                     return "Водозгін";
                 case DemoTextKey.HomeDecorLabel:
-                    return "СТВОРИ СВІЙ ЗАТИШОК";
+                    return "ТВОЯ КОЛЕКЦІЯ СПОКОЮ";
                 case DemoTextKey.DecorationBuy:
                     return "ПРИДБАТИ";
                 case DemoTextKey.DecorationOwned:

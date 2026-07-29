@@ -42,13 +42,14 @@ settings are invalid. It writes:
 ## Verified baseline
 
 - EditMode tests: 71 passed, 0 failed.
-- PlayMode tests: 26 passed, 0 failed. Coverage includes all eight Addressable
+- PlayMode tests: 27 passed, 0 failed. Coverage includes all eight Addressable
   levels, English/Ukrainian switching, compatible-slot sorting, cancellation,
   slot occupancy, a full touchscreen-to-physics drag through the generated
   level prefab, hold-to-unscrew with panel release, cleaning-stage
   sequencing, feedback-failure resilience, the localized screw instruction,
-  the final completion-screen state, the live home room, exact single-item
-  decoration purchases, and persistence across scene reloads.
+  the final completion-screen state, the contained home collection artwork,
+  exact single-item decoration purchases, and persistence across scene
+  reloads.
 - Android APK and App Bundle: validated, ARM64 + IL2CPP, API 24 minimum and
   target API 36.
 - Android API 35 ARM64 emulator: cold launch, theme persistence, sequential
@@ -68,7 +69,8 @@ Console preparation.
 
 - Production-style portrait home screen, level selection, safe-area handling,
   local progression, completion flow, and three persistent color moods.
-- Live themed home room with four selectable decorations. First completion of
+- Illustrated home screen with a contained four-item calm collection and
+  distinct Fern, Stones, Lantern, and Vase silhouettes. First completion of
   each level grants 15 calm points exactly once; points can unlock River
   Stones, Warm Lantern, and Clay Vase, while Soft Fern is included. Existing
   version-1 progress migrates automatically and receives any earned rewards

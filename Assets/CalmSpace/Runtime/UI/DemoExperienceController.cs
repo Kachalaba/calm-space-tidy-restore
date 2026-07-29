@@ -938,8 +938,7 @@ namespace CalmSpace.UI
                     state,
                     selected,
                     navigationEnabled && (owned || canAfford),
-                    palette,
-                    index);
+                    palette);
             }
         }
 
@@ -1933,8 +1932,7 @@ namespace CalmSpace.UI
                 string localizedState,
                 bool selected,
                 bool interactable,
-                ThemePalette palette,
-                int paletteIndex)
+                ThemePalette palette)
             {
                 if (_button != null)
                 {
@@ -1956,12 +1954,6 @@ namespace CalmSpace.UI
                 if (palette == null)
                 {
                     return;
-                }
-
-                if (_preview != null)
-                {
-                    _preview.color =
-                        palette.GetPieceColor(paletteIndex);
                 }
 
                 if (_name != null)

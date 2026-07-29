@@ -80,113 +80,14 @@ namespace CalmSpace.Editor
             return catalog;
         }
 
-        public static DemoRoomPresenter CreateHomeRoom(
-            Material sharedMaterial)
+        public static DemoRoomPresenter CreateHomeRoom()
         {
-            if (sharedMaterial == null)
-            {
-                throw new ArgumentNullException(nameof(sharedMaterial));
-            }
-
             var presenterRoot =
-                new GameObject("Home Room Presenter");
+                new GameObject(
+                    "Home Decoration Presenter",
+                    typeof(RectTransform));
             DemoRoomPresenter presenter =
                 presenterRoot.AddComponent<DemoRoomPresenter>();
-
-            var roomRoot = new GameObject("Home Room");
-            roomRoot.transform.SetParent(
-                presenterRoot.transform,
-                false);
-
-            Transform architecture =
-                new GameObject("Architecture").transform;
-            architecture.SetParent(roomRoot.transform, false);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Soft Rug",
-                new Vector3(0f, 0.015f, 0.05f),
-                new Vector3(4.4f, 0.035f, 2.65f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Socket,
-                0);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Back Wall",
-                new Vector3(0f, 0.92f, 2.48f),
-                new Vector3(5.35f, 1.72f, 0.14f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Board,
-                0);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Low Console",
-                new Vector3(0f, 0.54f, 1.82f),
-                new Vector3(3.65f, 0.16f, 0.62f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Piece,
-                1);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Console Leg Left",
-                new Vector3(-1.42f, 0.27f, 1.82f),
-                new Vector3(0.14f, 0.55f, 0.46f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Board,
-                0);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Console Leg Right",
-                new Vector3(1.42f, 0.27f, 1.82f),
-                new Vector3(0.14f, 0.55f, 0.46f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Board,
-                0);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Cube,
-                "Floating Shelf",
-                new Vector3(0f, 1.34f, 2.28f),
-                new Vector3(2.8f, 0.11f, 0.36f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Piece,
-                2);
-            CreateRoomPrimitive(
-                architecture,
-                PrimitiveType.Sphere,
-                "Floor Pouf",
-                new Vector3(-1.72f, 0.22f, 0.15f),
-                new Vector3(0.88f, 0.34f, 0.88f),
-                Quaternion.identity,
-                sharedMaterial,
-                DemoThemeColorRole.Piece,
-                0);
-
-            var decorationRoots = new[]
-            {
-                CreateFernDecoration(roomRoot.transform, sharedMaterial),
-                CreateStoneDecoration(roomRoot.transform, sharedMaterial),
-                CreateLanternDecoration(roomRoot.transform, sharedMaterial),
-                CreateVaseDecoration(roomRoot.transform, sharedMaterial)
-            };
-
-            SetObjectReference(presenter, "_roomRoot", roomRoot);
-            SetPrivateField(
-                presenter,
-                "_decorationRoots",
-                decorationRoots);
-            presenter.SelectDecoration(0);
-            EditorUtility.SetDirty(presenter);
             return presenter;
         }
 
@@ -273,6 +174,7 @@ namespace CalmSpace.Editor
                 roundedSprite,
                 font,
                 levelCount,
+                roomPresenter,
                 primaryTexts,
                 secondaryTexts,
                 accentImages,
@@ -493,6 +395,7 @@ namespace CalmSpace.Editor
             Sprite rounded,
             Font font,
             int levelCount,
+            DemoRoomPresenter roomPresenter,
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> accentImages,
@@ -517,13 +420,12 @@ namespace CalmSpace.Editor
             Image homeBackground = CreateBackground(
                 screen,
                 background);
-            homeBackground.color =
-                new Color(1f, 1f, 1f, 0.62f);
+            homeBackground.color = Color.white;
             backgroundWash = CreateImage(
                 screen,
                 "Theme Wash",
                 null,
-                new Color(0.035f, 0.06f, 0.055f, 0.18f),
+                new Color(0.024f, 0.075f, 0.065f, 0.10f),
                 false);
             Stretch(backgroundWash.rectTransform);
 
@@ -831,7 +733,7 @@ namespace CalmSpace.Editor
             Text decorLabel = CreateText(
                 card.rectTransform,
                 "Decor Label",
-                "MAKE IT YOURS",
+                "YOUR CALM COLLECTION",
                 font,
                 22,
                 FontStyle.Bold,
@@ -848,6 +750,10 @@ namespace CalmSpace.Editor
                 localizedTexts,
                 decorLabel,
                 DemoTextKey.HomeDecorLabel);
+            WireCanvasDecorationPresenter(
+                card.rectTransform,
+                rounded,
+                roomPresenter);
 
             decorationBindings =
                 new DemoExperienceController
@@ -864,65 +770,95 @@ namespace CalmSpace.Editor
                     font,
                     19,
                     new Color(0.15f, 0.22f, 0.20f, 1f));
-                float x = (index - 1.5f) * 202f;
+                var row = index / 2;
+                var column = index % 2;
+                float x = column == 0 ? -202f : 202f;
+                float y = 472f - row * 120f;
                 SetAnchored(
                     decor.Rect,
                     new Vector2(0.5f, 0f),
                     new Vector2(0.5f, 0f),
-                    new Vector2(x, 448f),
-                    new Vector2(188f, 126f));
+                    new Vector2(x, y),
+                    new Vector2(390f, 104f));
                 panelImages.Add(decor.Background);
                 primaryTexts.Add(decor.Label);
 
-                decor.Label.alignment = TextAnchor.UpperCenter;
+                decor.Label.alignment = TextAnchor.MiddleLeft;
                 decor.Label.rectTransform.offsetMin =
-                    new Vector2(12f, 40f);
+                    new Vector2(66f, 32f);
                 decor.Label.rectTransform.offsetMax =
-                    new Vector2(-12f, -12f);
+                    new Vector2(-12f, -8f);
 
-                Image selected = CreateImage(
-                    decor.Rect,
-                    "Selected",
-                    rounded,
-                    new Color(1f, 1f, 1f, 0.18f),
-                    false);
+                GameObject selected =
+                    CreateUiObject("Selected", decor.Rect);
+                RectTransform selectedRect =
+                    selected.GetComponent<RectTransform>();
                 Stretch(
-                    selected.rectTransform,
+                    selectedRect,
                     new Vector2(-6f, -6f),
                     new Vector2(6f, 6f));
+                Image selectedWash = CreateImage(
+                    selectedRect,
+                    "Wash",
+                    rounded,
+                    new Color(1f, 0.47f, 0.40f, 0.10f),
+                    false);
+                Stretch(selectedWash.rectTransform);
+                Image selectedRail = CreateImage(
+                    selectedRect,
+                    "Rail",
+                    rounded,
+                    Coral,
+                    false);
+                SetAnchored(
+                    selectedRail.rectTransform,
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(8f, 0f),
+                    new Vector2(7f, 72f));
+                selectedRail.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
                 selected.transform.SetAsFirstSibling();
-                selected.gameObject.SetActive(false);
+                selected.SetActive(false);
 
                 Image preview = CreateImage(
                     decor.Rect,
                     "Preview",
                     rounded,
                     index == 0
-                        ? Coral
-                        : new Color(0.47f, 0.78f, 0.65f, 1f),
+                        ? new Color(0.44f, 0.72f, 0.57f, 1f)
+                        : index == 1
+                            ? new Color(0.66f, 0.65f, 0.60f, 1f)
+                            : index == 2
+                                ? new Color(0.96f, 0.71f, 0.30f, 1f)
+                                : new Color(0.85f, 0.47f, 0.40f, 1f),
                     false);
                 SetAnchored(
                     preview.rectTransform,
-                    new Vector2(0.5f, 0f),
-                    new Vector2(0.5f, 0f),
-                    new Vector2(0f, 17f),
-                    new Vector2(52f, 14f));
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(22f, 0f),
+                    new Vector2(28f, 58f));
+                preview.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
 
                 Text state = CreateText(
                     decor.Rect,
                     "State",
                     "OWNED",
                     font,
-                    16,
+                    15,
                     FontStyle.Bold,
-                    TextAnchor.LowerCenter,
+                    TextAnchor.MiddleLeft,
                     SecondaryPaper);
                 SetAnchored(
                     state.rectTransform,
-                    new Vector2(0.5f, 0f),
-                    new Vector2(0.5f, 0f),
-                    new Vector2(0f, 34f),
-                    new Vector2(164f, 32f));
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(66f, -28f),
+                    new Vector2(292f, 24f));
+                state.rectTransform.pivot =
+                    new Vector2(0f, 0.5f);
                 secondaryTexts.Add(state);
 
                 var binding = new DemoExperienceController
@@ -934,7 +870,7 @@ namespace CalmSpace.Editor
                 SetPrivateField(
                     binding,
                     "_selectedRoot",
-                    selected.gameObject);
+                    selected);
                 decorationBindings[index] = binding;
             }
 
@@ -1495,242 +1431,283 @@ namespace CalmSpace.Editor
                 DemoTextKey.Loading);
         }
 
-        private static GameObject CreateFernDecoration(
-            Transform parent,
-            Material material)
+        private static void WireCanvasDecorationPresenter(
+            RectTransform card,
+            Sprite rounded,
+            DemoRoomPresenter presenter)
         {
-            var root = new GameObject("Soft Fern");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition =
-                new Vector3(0.72f, 0f, 0.34f);
-
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Cylinder,
-                "Fern Pot",
-                new Vector3(0f, 0.24f, 0f),
-                new Vector3(0.48f, 0.24f, 0.48f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Socket,
-                0);
-
-            var leafRotations = new[]
+            if (card == null)
             {
-                Quaternion.Euler(0f, 0f, -28f),
-                Quaternion.Euler(18f, 62f, 30f),
-                Quaternion.Euler(-18f, -58f, -34f),
-                Quaternion.Euler(12f, 128f, 24f),
-                Quaternion.Euler(-8f, 205f, -22f)
-            };
-            for (var index = 0;
-                 index < leafRotations.Length;
-                 index++)
-            {
-                CreateRoomPrimitive(
-                    root.transform,
-                    PrimitiveType.Capsule,
-                    "Fern Leaf " + (index + 1),
-                    new Vector3(
-                        (index - 2) * 0.08f,
-                        0.72f + (index % 2) * 0.08f,
-                        0f),
-                    new Vector3(0.18f, 0.54f, 0.12f),
-                    leafRotations[index],
-                    material,
-                    DemoThemeColorRole.Piece,
-                    1);
+                throw new ArgumentNullException(nameof(card));
             }
 
-            return root;
+            if (rounded == null)
+            {
+                throw new ArgumentNullException(nameof(rounded));
+            }
+
+            if (presenter == null)
+            {
+                throw new ArgumentNullException(nameof(presenter));
+            }
+
+            GameObject previewRoot = presenter.gameObject;
+            previewRoot.name = "Active Collection Accent";
+            RectTransform previewRect =
+                previewRoot.GetComponent<RectTransform>();
+            previewRect.SetParent(card, false);
+            SetAnchored(
+                previewRect,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(350f, 552f),
+                new Vector2(120f, 42f));
+
+            var colors = new[]
+            {
+                new Color(0.44f, 0.72f, 0.57f, 1f),
+                new Color(0.66f, 0.65f, 0.60f, 1f),
+                new Color(0.96f, 0.71f, 0.30f, 1f),
+                new Color(0.85f, 0.47f, 0.40f, 1f)
+            };
+            var names = new[]
+            {
+                "Soft Fern Accent",
+                "River Stones Accent",
+                "Warm Lantern Accent",
+                "Clay Vase Accent"
+            };
+
+            var decorationRoots =
+                new GameObject[colors.Length];
+            for (var index = 0; index < colors.Length; index++)
+            {
+                GameObject visual = CreateUiObject(
+                    names[index],
+                    previewRect);
+                RectTransform visualRect =
+                    visual.GetComponent<RectTransform>();
+                Stretch(visualRect);
+
+                switch (index)
+                {
+                    case 0:
+                        CreateFernAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    case 1:
+                        CreateStonesAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    case 2:
+                        CreateLanternAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                    default:
+                        CreateVaseAccent(
+                            visualRect,
+                            rounded,
+                            colors[index]);
+                        break;
+                }
+
+                decorationRoots[index] = visual;
+            }
+
+            SetObjectReference(
+                presenter,
+                "_roomRoot",
+                previewRoot);
+            SetPrivateField(
+                presenter,
+                "_decorationRoots",
+                decorationRoots);
+            presenter.SelectDecoration(0);
+            EditorUtility.SetDirty(presenter);
         }
 
-        private static GameObject CreateStoneDecoration(
-            Transform parent,
-            Material material)
+        private static void CreateFernAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
         {
-            var root = new GameObject("River Stones");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition =
-                new Vector3(0.55f, 0f, 0.30f);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Pot",
+                new Vector2(0f, -10f),
+                new Vector2(24f, 14f),
+                new Color(0.78f, 0.54f, 0.39f, 1f));
 
             var positions = new[]
             {
-                new Vector3(0f, 0.17f, 0f),
-                new Vector3(0.05f, 0.42f, 0f),
-                new Vector3(-0.02f, 0.64f, 0f)
+                new Vector2(-12f, 4f),
+                new Vector2(0f, 7f),
+                new Vector2(12f, 4f)
             };
-            var scales = new[]
+            var rotations = new[] { -34f, 0f, 34f };
+            for (var index = 0; index < positions.Length; index++)
             {
-                new Vector3(0.92f, 0.30f, 0.66f),
-                new Vector3(0.70f, 0.27f, 0.55f),
-                new Vector3(0.50f, 0.23f, 0.42f)
+                Image leaf = CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Leaf " + (index + 1),
+                    positions[index],
+                    new Vector2(9f, 24f),
+                    color);
+                leaf.rectTransform.localRotation =
+                    Quaternion.Euler(0f, 0f, rotations[index]);
+            }
+        }
+
+        private static void CreateStonesAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
+        {
+            var positions = new[]
+            {
+                new Vector2(-24f, -5f),
+                new Vector2(3f, 4f),
+                new Vector2(29f, -6f)
+            };
+            var sizes = new[]
+            {
+                new Vector2(34f, 17f),
+                new Vector2(40f, 20f),
+                new Vector2(28f, 15f)
             };
             for (var index = 0; index < positions.Length; index++)
             {
-                CreateRoomPrimitive(
-                    root.transform,
-                    PrimitiveType.Sphere,
-                    "River Stone " + (index + 1),
+                Color stoneColor = color;
+                stoneColor.a = 0.80f + index * 0.10f;
+                CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Stone " + (index + 1),
                     positions[index],
-                    scales[index],
-                    Quaternion.Euler(
-                        0f,
-                        index * 24f,
-                        index == 1 ? 6f : -3f),
-                    material,
-                    DemoThemeColorRole.Piece,
-                    index);
+                    sizes[index],
+                    stoneColor);
             }
-
-            return root;
         }
 
-        private static GameObject CreateLanternDecoration(
-            Transform parent,
-            Material material)
+        private static void CreateLanternAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
         {
-            var root = new GameObject("Warm Lantern");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition =
-                new Vector3(0.62f, 0f, 0.32f);
-
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Cylinder,
-                "Lantern Base",
-                new Vector3(0f, 0.12f, 0f),
-                new Vector3(0.58f, 0.12f, 0.58f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Socket,
-                0);
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Sphere,
-                "Lantern Glow",
-                new Vector3(0f, 0.56f, 0f),
-                new Vector3(0.58f, 0.72f, 0.58f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Piece,
-                2);
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Cylinder,
-                "Lantern Cap",
-                new Vector3(0f, 0.96f, 0f),
-                new Vector3(0.42f, 0.08f, 0.42f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Socket,
-                0);
-            for (var index = 0; index < 4; index++)
-            {
-                float angle = index * Mathf.PI * 0.5f;
-                CreateRoomPrimitive(
-                    root.transform,
-                    PrimitiveType.Cylinder,
-                    "Lantern Frame " + (index + 1),
-                    new Vector3(
-                        Mathf.Cos(angle) * 0.30f,
-                        0.56f,
-                        Mathf.Sin(angle) * 0.30f),
-                    new Vector3(0.055f, 0.42f, 0.055f),
-                    Quaternion.identity,
-                    material,
-                    DemoThemeColorRole.Piece,
-                    0);
-            }
-
-            return root;
+            Color glow = color;
+            glow.a = 0.72f;
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Glow",
+                Vector2.zero,
+                new Vector2(34f, 28f),
+                glow);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Base",
+                new Vector2(0f, -16f),
+                new Vector2(44f, 6f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Cap",
+                new Vector2(0f, 16f),
+                new Vector2(38f, 6f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Frame Left",
+                new Vector2(-18f, 0f),
+                new Vector2(4f, 30f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
+                "Frame Right",
+                new Vector2(18f, 0f),
+                new Vector2(4f, 30f),
+                color);
         }
 
-        private static GameObject CreateVaseDecoration(
-            Transform parent,
-            Material material)
+        private static void CreateVaseAccent(
+            RectTransform parent,
+            Sprite rounded,
+            Color color)
         {
-            var root = new GameObject("Clay Vase");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition =
-                new Vector3(0.68f, 0f, 0.32f);
-
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Sphere,
+            CreateAccentShape(
+                parent,
+                rounded,
                 "Vase Body",
-                new Vector3(0f, 0.38f, 0f),
-                new Vector3(0.76f, 0.72f, 0.62f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Piece,
-                0);
-            CreateRoomPrimitive(
-                root.transform,
-                PrimitiveType.Cylinder,
+                new Vector2(0f, -7f),
+                new Vector2(34f, 27f),
+                color);
+            CreateAccentShape(
+                parent,
+                rounded,
                 "Vase Neck",
-                new Vector3(0f, 0.77f, 0f),
-                new Vector3(0.28f, 0.25f, 0.28f),
-                Quaternion.identity,
-                material,
-                DemoThemeColorRole.Piece,
-                0);
-            for (var index = 0; index < 3; index++)
+                new Vector2(0f, 8f),
+                new Vector2(14f, 14f),
+                color);
+
+            var stemPositions = new[]
             {
-                CreateRoomPrimitive(
-                    root.transform,
-                    PrimitiveType.Capsule,
-                    "Dried Stem " + (index + 1),
-                    new Vector3(
-                        (index - 1) * 0.13f,
-                        1.30f,
-                        0f),
-                    new Vector3(0.055f, 0.52f, 0.055f),
+                new Vector2(-7f, 16f),
+                new Vector2(0f, 17f),
+                new Vector2(7f, 16f)
+            };
+            var stemRotations = new[] { -18f, 0f, 18f };
+            for (var index = 0;
+                 index < stemPositions.Length;
+                 index++)
+            {
+                Image stem = CreateAccentShape(
+                    parent,
+                    rounded,
+                    "Stem " + (index + 1),
+                    stemPositions[index],
+                    new Vector2(3f, 13f),
+                    new Color(0.72f, 0.65f, 0.43f, 1f));
+                stem.rectTransform.localRotation =
                     Quaternion.Euler(
                         0f,
-                        index * 52f,
-                        (index - 1) * 10f),
-                    material,
-                    DemoThemeColorRole.Piece,
-                    1 + index);
+                        0f,
+                        stemRotations[index]);
             }
-
-            return root;
         }
 
-        private static GameObject CreateRoomPrimitive(
-            Transform parent,
-            PrimitiveType type,
+        private static Image CreateAccentShape(
+            RectTransform parent,
+            Sprite rounded,
             string name,
-            Vector3 localPosition,
-            Vector3 localScale,
-            Quaternion localRotation,
-            Material material,
-            DemoThemeColorRole role,
-            int paletteIndex)
+            Vector2 position,
+            Vector2 size,
+            Color color)
         {
-            GameObject primitive = GameObject.CreatePrimitive(type);
-            primitive.name = name;
-            primitive.transform.SetParent(parent, false);
-            primitive.transform.localPosition = localPosition;
-            primitive.transform.localScale = localScale;
-            primitive.transform.localRotation = localRotation;
-
-            MeshRenderer renderer =
-                primitive.GetComponent<MeshRenderer>();
-            renderer.sharedMaterial = material;
-
-            Collider collider = primitive.GetComponent<Collider>();
-            if (collider != null)
-            {
-                Object.DestroyImmediate(collider);
-            }
-
-            DemoThemeColorTag tag =
-                primitive.AddComponent<DemoThemeColorTag>();
-            SetPrivateField(tag, "_role", role);
-            SetPrivateField(tag, "_paletteIndex", paletteIndex);
-            return primitive;
+            Image image = CreateImage(
+                parent,
+                name,
+                rounded,
+                color,
+                false);
+            SetAnchored(
+                image.rectTransform,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                position,
+                size);
+            return image;
         }
 
         private static Image CreateBackground(

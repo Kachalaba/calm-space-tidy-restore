@@ -82,6 +82,70 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator HomeDecorationPreviewIsContainedCanvasArtwork()
+        {
+            AsyncOperation sceneLoad = SceneManager.LoadSceneAsync(
+                "Main",
+                LoadSceneMode.Single);
+            while (!sceneLoad.isDone)
+            {
+                yield return null;
+            }
+
+            DemoExperienceController experience = null;
+            for (var frame = 0;
+                 frame < 300 &&
+                 (experience == null || !experience.IsInitialized);
+                 frame++)
+            {
+                experience =
+                    Object.FindFirstObjectByType<
+                        DemoExperienceController>(
+                    FindObjectsInactive.Include);
+                yield return null;
+            }
+
+            Assert.That(experience, Is.Not.Null);
+            Assert.That(experience.IsInitialized, Is.True);
+
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            Assert.That(room, Is.Not.Null);
+            Assert.That(room.RoomRoot, Is.Not.Null);
+
+            RectTransform previewRect =
+                room.RoomRoot.GetComponent<RectTransform>();
+            Assert.That(
+                previewRect,
+                Is.Not.Null,
+                "Home cosmetics must be contained UI artwork, not " +
+                "world-space placeholder geometry.");
+            Assert.That(
+                room.RoomRoot.GetComponentInParent<Canvas>(),
+                Is.Not.Null);
+            Assert.That(
+                room.RoomRoot.GetComponentsInChildren<Renderer>(true),
+                Is.Empty,
+                "The home preview must not place 3D primitives over the " +
+                "painted menu background.");
+            Assert.That(
+                room.RoomRoot.GetComponentsInChildren<Collider>(true),
+                Is.Empty,
+                "The home preview must not contain physics primitives.");
+            Assert.That(room.DecorationCount, Is.EqualTo(4));
+            Assert.That(
+                room.RoomRoot.GetComponentsInChildren<
+                    UnityEngine.UI.Graphic>(true).Length,
+                Is.GreaterThanOrEqualTo(12),
+                "Every decoration should have distinct visible UI artwork.");
+            Assert.That(previewRect.rect.width, Is.GreaterThan(0f));
+            Assert.That(previewRect.rect.height, Is.GreaterThan(0f));
+            Assert.That(previewRect.rect.width, Is.LessThanOrEqualTo(220f));
+            Assert.That(previewRect.rect.height, Is.LessThanOrEqualTo(220f));
+        }
+
+        [UnityTest]
         public IEnumerator LanguageButtonSwitchesMenuToUkrainian()
         {
             AsyncOperation sceneLoad = SceneManager.LoadSceneAsync(

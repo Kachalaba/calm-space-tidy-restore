@@ -38,7 +38,7 @@ production-signing providers are deliberately not included.
 The project uses a single persistent scene. Eight gameplay prefabs are
 loaded through Addressables.
 
-The verified baseline is 71 passing EditMode tests and 26 passing PlayMode
+The verified baseline is 71 passing EditMode tests and 27 passing PlayMode
 tests. The Android development build is ARM64/IL2CPP with API 24 minimum and
 target API 36.
 
@@ -48,14 +48,14 @@ target API 36.
 - `docs/PLAY_STORE_RELEASE.md` — store, signing, billing, ads, and privacy
   checklist.
 - `Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs` — menu, level
-  selection, HUD, completion flow, home-room economy, themes, music, and
-  language switching.
+  selection, HUD, completion flow, home collection economy, themes, music,
+  and language switching.
 - `Assets/CalmSpace/Runtime/Demo/DemoProgress.cs` — versioned progression,
   one-time completion rewards, decoration ownership, and save migration.
 - `Assets/CalmSpace/Runtime/Demo/DemoDecorationCatalog.cs` — completion reward
   and the four-item decoration economy.
-- `Assets/CalmSpace/Runtime/UI/DemoRoomPresenter.cs` — live room visibility and
-  exclusive decoration selection.
+- `Assets/CalmSpace/Runtime/UI/DemoRoomPresenter.cs` — contained home artwork
+  visibility and exclusive decoration selection.
 - `Assets/CalmSpace/Runtime/Demo/DemoLocalization.cs` — English/Ukrainian
   player-facing copy and persistent locale selection.
 - `Assets/CalmSpace/Runtime/Input/ItemSnapController.cs` — drag, return, snap,

@@ -780,8 +780,7 @@ namespace CalmSpace.Editor
             Renderer[] boardRenderers =
                 CreateEnvironment(platformMaterial);
             DemoRoomPresenter roomPresenter =
-                CalmSpaceDemoSceneBuilder.CreateHomeRoom(
-                    platformMaterial);
+                CalmSpaceDemoSceneBuilder.CreateHomeRoom();
 
             var levelRootObject = new GameObject("Level Root");
             Transform levelRoot = levelRootObject.transform;
