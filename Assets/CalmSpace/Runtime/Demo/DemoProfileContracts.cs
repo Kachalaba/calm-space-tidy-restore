@@ -12,11 +12,14 @@ namespace CalmSpace.Demo
 
     public readonly struct ProfileMutationResult<TPayload>
     {
+        private readonly bool _isInitialized;
+
         public ProfileMutationResult(
             ProfileMutationStatus status,
             DemoProgressSnapshot snapshot,
             TPayload payload)
         {
+            _isInitialized = true;
             Status = status;
             Snapshot = snapshot;
             Payload = payload;
@@ -29,8 +32,9 @@ namespace CalmSpace.Demo
         public TPayload Payload { get; }
 
         public bool IsSuccess =>
-            Status == ProfileMutationStatus.Applied ||
-            Status == ProfileMutationStatus.AlreadyApplied;
+            _isInitialized &&
+            (Status == ProfileMutationStatus.Applied ||
+             Status == ProfileMutationStatus.AlreadyApplied);
     }
 
     public enum PendingPresentationKind

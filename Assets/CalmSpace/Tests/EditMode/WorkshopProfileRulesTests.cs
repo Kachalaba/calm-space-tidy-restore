@@ -70,6 +70,34 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void CompletionRejectsDuplicateLogicalPresentations()
+        {
+            DemoProgressSnapshot initial =
+                DemoProgressRules.CreateDefault(8, "sage");
+            var command = new CompleteLevelCommand(
+                RoomBeatId,
+                1,
+                15,
+                new[]
+                {
+                    PendingPresentationEntry.Finale(
+                        ChapterId,
+                        requiresExplicitLaunch: false),
+                    PendingPresentationEntry.Finale(
+                        ChapterId,
+                        requiresExplicitLaunch: true)
+                });
+
+            ProfileMutationResult<LevelCompletionMutation> result =
+                DemoProgressRules.CompleteLevel(initial, command, 8);
+
+            AssertInvalidAndUnchanged(
+                result.Status,
+                initial,
+                result.Snapshot);
+        }
+
+        [Test]
         public void PresentationSeenRemovesOnlyMatchingQueueHead()
         {
             DemoProgressSnapshot queued = CompleteWithPresentations();
@@ -114,6 +142,39 @@ namespace CalmSpace.Tests.EditMode
             Assert.That(
                 seenFinale.Snapshot.PendingPresentationCount,
                 Is.Zero);
+        }
+
+        [Test]
+        public void AlreadySeenLogicalQueueHeadIsRemovedDespiteLaunchFlag()
+        {
+            DemoProgressSnapshot initial = CreateSnapshot(
+                0,
+                new[] { "soft-fern" },
+                new DecorationSelection[0],
+                new[]
+                {
+                    PendingPresentationEntry.Finale(
+                        ChapterId,
+                        requiresExplicitLaunch: true),
+                    PendingPresentationEntry.RoomReveal(RoomBeatId)
+                },
+                new[] { ChapterId });
+
+            ProfileMutationResult<PresentationMutation> result =
+                DemoProgressRules.MarkPresentationSeen(
+                    initial,
+                    PendingPresentationEntry.Finale(
+                        ChapterId,
+                        requiresExplicitLaunch: false));
+
+            Assert.That(result.Status, Is.EqualTo(
+                ProfileMutationStatus.Applied));
+            Assert.That(result.Snapshot.PendingPresentationCount, Is.EqualTo(1));
+            AssertPending(
+                result.Snapshot,
+                0,
+                PendingPresentationKind.RoomReveal,
+                RoomBeatId);
         }
 
         [Test]
@@ -227,6 +288,113 @@ namespace CalmSpace.Tests.EditMode
                     out string untouched),
                 Is.True);
             Assert.That(untouched, Is.EqualTo("soft-fern"));
+        }
+
+        [Test]
+        public void PurchaseRejectsPaddedAliasWithoutSecondCharge()
+        {
+            DemoProgressSnapshot initial = CreateSnapshot(
+                50,
+                new[] { "soft-fern" },
+                new DecorationSelection[0]);
+            ProfileMutationResult<DecorationMutation> purchased =
+                DemoProgressRules.PurchaseDecoration(
+                    initial,
+                    "workbench-accent",
+                    "future-lamp",
+                    10);
+
+            ProfileMutationResult<DecorationMutation> paddedReplay =
+                DemoProgressRules.PurchaseDecoration(
+                    purchased.Snapshot,
+                    "workbench-accent",
+                    " future-lamp ",
+                    10);
+
+            Assert.That(purchased.Status, Is.EqualTo(
+                ProfileMutationStatus.Applied));
+            AssertInvalidAndUnchanged(
+                paddedReplay.Status,
+                purchased.Snapshot,
+                paddedReplay.Snapshot);
+            Assert.That(paddedReplay.Snapshot.CozyTokens, Is.EqualTo(40));
+        }
+
+        [Test]
+        public void PaddedStableIdsAreInvalidAcrossMutationRules()
+        {
+            DemoProgressSnapshot initial =
+                DemoProgressRules.CreateDefault(8, "sage");
+            DemoProgressSnapshot paddedPresentation = CreateSnapshot(
+                0,
+                new[] { "soft-fern" },
+                new DecorationSelection[0],
+                new[]
+                {
+                    PendingPresentationEntry.RoomReveal(
+                        " padded-room ")
+                });
+
+            ProfileMutationResult<LevelCompletionMutation> level =
+                DemoProgressRules.CompleteLevel(
+                    initial,
+                    new CompleteLevelCommand(
+                        " padded-level ",
+                        0,
+                        1,
+                        new PendingPresentationEntry[0]),
+                    8);
+            ProfileMutationResult<PresentationMutation> presentation =
+                DemoProgressRules.MarkPresentationSeen(
+                    paddedPresentation,
+                    PendingPresentationEntry.RoomReveal(
+                        " padded-room "));
+            ProfileMutationResult<MemoryMutation> memory =
+                DemoProgressRules.MarkMemoryViewed(
+                    initial,
+                    " padded-memory ");
+            ProfileMutationResult<DecorationMutation> grant =
+                DemoProgressRules.GrantDecoration(
+                    initial,
+                    " padded-slot ",
+                    "padded-decoration",
+                    DecorationGrantSource.Rewarded);
+            ProfileMutationResult<DailyCareMutation> care =
+                DemoProgressRules.CompleteDailyCare(
+                    initial,
+                    " padded-care ",
+                    20664,
+                    5);
+            ProfileMutationResult<PreferenceMutation> preference =
+                DemoProgressRules.SetPreferences(
+                    initial,
+                    " sage ",
+                    true);
+
+            AssertInvalidAndUnchanged(
+                level.Status,
+                initial,
+                level.Snapshot);
+            AssertInvalidAndUnchanged(
+                presentation.Status,
+                paddedPresentation,
+                presentation.Snapshot);
+            AssertInvalidAndUnchanged(
+                memory.Status,
+                initial,
+                memory.Snapshot);
+            AssertInvalidAndUnchanged(
+                grant.Status,
+                initial,
+                grant.Snapshot);
+            AssertInvalidAndUnchanged(
+                care.Status,
+                initial,
+                care.Snapshot);
+            AssertInvalidAndUnchanged(
+                preference.Status,
+                initial,
+                preference.Snapshot);
         }
 
         [Test]
@@ -415,6 +583,52 @@ namespace CalmSpace.Tests.EditMode
                 Is.True);
         }
 
+        [Test]
+        public void NormalizeCanonicalizesPaddedDecorationIdsAndSlots()
+        {
+            DemoProgressSnapshot initial = CreateSnapshot(
+                10,
+                new[]
+                {
+                    " future.unknown-decoration ",
+                    "future.unknown-decoration"
+                },
+                new[]
+                {
+                    new DecorationSelection(
+                        " future-slot ",
+                        " future.unknown-decoration ")
+                });
+
+            DemoProgressSnapshot normalized =
+                DemoProgressRules.Normalize(initial, 8, "sage");
+
+            Assert.That(normalized.OwnedDecorationCount, Is.EqualTo(2));
+            Assert.That(
+                normalized.OwnsDecoration(
+                    "future.unknown-decoration"),
+                Is.True);
+            Assert.That(
+                normalized.TryGetSelectedDecoration(
+                    "future-slot",
+                    out string selected),
+                Is.True);
+            Assert.That(
+                selected,
+                Is.EqualTo("future.unknown-decoration"));
+        }
+
+        [Test]
+        public void DefaultMutationResultIsNotSuccessful()
+        {
+            ProfileMutationResult<PreferenceMutation> result = default;
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(ProfileMutationStatus.Applied));
+            Assert.That(result.IsSuccess, Is.False);
+        }
+
         private static DemoProgressSnapshot CompleteWithPresentations()
         {
             DemoProgressSnapshot initial =
@@ -438,7 +652,8 @@ namespace CalmSpace.Tests.EditMode
             int tokens,
             string[] owned,
             DecorationSelection[] selections,
-            PendingPresentationEntry[] pending = null)
+            PendingPresentationEntry[] pending = null,
+            string[] seenFinaleIds = null)
         {
             return new DemoProgressSnapshot(
                 0,
@@ -451,7 +666,7 @@ namespace CalmSpace.Tests.EditMode
                 selections,
                 new string[0],
                 new string[0],
-                new string[0],
+                seenFinaleIds ?? new string[0],
                 pending ?? new PendingPresentationEntry[0],
                 0,
                 0);

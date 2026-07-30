@@ -101,21 +101,23 @@ namespace CalmSpace.Demo
                         presentation.StableId)
                     : snapshot.HasSeenFinale(
                         presentation.StableId);
-            if (alreadySeen)
-            {
-                return AlreadyApplied(
-                    snapshot,
-                    new PresentationMutation(presentation));
-            }
 
-            if (!snapshot.TryGetPendingPresentation(
+            bool matchesHead =
+                snapshot.TryGetPendingPresentation(
                     0,
-                    out PendingPresentationEntry head) ||
-                head != presentation)
+                    out PendingPresentationEntry head) &&
+                HasSamePresentationIdentity(
+                    head,
+                    presentation);
+            if (!matchesHead)
             {
-                return Invalid(
-                    snapshot,
-                    new PresentationMutation(presentation));
+                return alreadySeen
+                    ? AlreadyApplied(
+                        snapshot,
+                        new PresentationMutation(presentation))
+                    : Invalid(
+                        snapshot,
+                        new PresentationMutation(presentation));
             }
 
             PendingPresentationEntry[] pending =
@@ -123,15 +125,16 @@ namespace CalmSpace.Demo
             string[] roomRevealIds =
                 snapshot.CopySeenRoomRevealIds();
             string[] finaleIds = snapshot.CopySeenFinaleIds();
-            if (presentation.Kind ==
-                PendingPresentationKind.RoomReveal)
+            if (!alreadySeen &&
+                presentation.Kind ==
+                    PendingPresentationKind.RoomReveal)
             {
                 roomRevealIds =
                     AppendId(
                         roomRevealIds,
                         presentation.StableId);
             }
-            else
+            else if (!alreadySeen)
             {
                 finaleIds =
                     AppendId(
@@ -614,6 +617,21 @@ namespace CalmSpace.Demo
                 }
 
                 previousKind = (int)entry.Kind;
+
+                for (var priorIndex = 0;
+                     priorIndex < index;
+                     priorIndex++)
+                {
+                    command.TryGetPresentation(
+                        priorIndex,
+                        out PendingPresentationEntry prior);
+                    if (HasSamePresentationIdentity(
+                            prior,
+                            entry))
+                    {
+                        return false;
+                    }
+                }
             }
 
             return true;
@@ -675,13 +693,27 @@ namespace CalmSpace.Demo
                  index < presentations.Length;
                  index++)
             {
-                if (presentations[index] == candidate)
+                if (HasSamePresentationIdentity(
+                        presentations[index],
+                        candidate))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private static bool HasSamePresentationIdentity(
+            PendingPresentationEntry left,
+            PendingPresentationEntry right)
+        {
+            return
+                left.Kind == right.Kind &&
+                string.Equals(
+                    left.StableId,
+                    right.StableId,
+                    StringComparison.Ordinal);
         }
 
         private static bool HasPendingMemory(
@@ -869,13 +901,17 @@ namespace CalmSpace.Demo
             for (var index = 0; index < source.Length; index++)
             {
                 string decorationId = source[index];
-                if (IsValidStableId(decorationId) &&
-                    !ContainsId(normalized, decorationId))
+                if (TryNormalizeStableId(
+                        decorationId,
+                        out string normalizedDecorationId) &&
+                    !ContainsId(
+                        normalized,
+                        normalizedDecorationId))
                 {
                     normalized =
                         AppendId(
                             normalized,
-                            decorationId.Trim());
+                            normalizedDecorationId);
                 }
             }
 
@@ -901,11 +937,15 @@ namespace CalmSpace.Demo
                 string slotId = source[index].SlotId;
                 string decorationId =
                     source[index].DecorationId;
-                if (!IsValidStableId(slotId) ||
-                    !IsValidStableId(decorationId) ||
+                if (!TryNormalizeStableId(
+                        slotId,
+                        out string normalizedSlotId) ||
+                    !TryNormalizeStableId(
+                        decorationId,
+                        out string normalizedDecorationId) ||
                     !ContainsId(
                         ownedDecorationIds,
-                        decorationId))
+                        normalizedDecorationId))
                 {
                     continue;
                 }
@@ -913,8 +953,8 @@ namespace CalmSpace.Demo
                 normalized =
                     SetSelection(
                         normalized,
-                        slotId.Trim(),
-                        decorationId.Trim());
+                        normalizedSlotId,
+                        normalizedDecorationId);
             }
 
             if (normalized.Length == 0)
@@ -957,7 +997,28 @@ namespace CalmSpace.Demo
 
         private static bool IsValidStableId(string stableId)
         {
-            return !string.IsNullOrWhiteSpace(stableId);
+            return
+                TryNormalizeStableId(
+                    stableId,
+                    out string normalized) &&
+                string.Equals(
+                    stableId,
+                    normalized,
+                    StringComparison.Ordinal);
+        }
+
+        private static bool TryNormalizeStableId(
+            string stableId,
+            out string normalized)
+        {
+            if (string.IsNullOrWhiteSpace(stableId))
+            {
+                normalized = string.Empty;
+                return false;
+            }
+
+            normalized = stableId.Trim();
+            return true;
         }
     }
 
