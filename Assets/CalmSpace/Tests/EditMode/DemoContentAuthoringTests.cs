@@ -4,6 +4,7 @@ using CalmSpace.Demo;
 using CalmSpace.Fasteners;
 using CalmSpace.Input;
 using CalmSpace.Levels;
+using CalmSpace.Workshop;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -15,6 +16,8 @@ namespace CalmSpace.Tests.EditMode
     {
         private const string CatalogPath =
             "Assets/CalmSpace/Config/LevelCatalog.asset";
+        private const string WorkshopCatalogPath =
+            "Assets/CalmSpace/Config/LivingWorkshopCatalog.asset";
 
         private static readonly string[] PrefabPaths =
         {
@@ -89,7 +92,18 @@ namespace CalmSpace.Tests.EditMode
             LevelCatalog catalog =
                 AssetDatabase.LoadAssetAtPath<LevelCatalog>(
                     CatalogPath);
+            LivingWorkshopCatalog workshop =
+                AssetDatabase.LoadAssetAtPath<
+                    LivingWorkshopCatalog>(
+                    WorkshopCatalogPath);
             Assert.That(catalog, Is.Not.Null);
+            Assert.That(workshop, Is.Not.Null);
+            Assert.That(
+                WorkshopCatalogValidator.ValidateChapter(
+                    catalog,
+                    workshop,
+                    "cozy-workshop").IsValid,
+                Is.True);
             Assert.That(
                 catalog.IsRestorationChapterValid(
                     "cozy-workshop"),
@@ -129,6 +143,17 @@ namespace CalmSpace.Tests.EditMode
                     Is.True);
                 Assert.That(levelIndex, Is.EqualTo(index));
                 Assert.That(foundEntry, Is.SameAs(entry));
+                Assert.That(
+                    workshop.TryFindBeat(
+                        "cozy-workshop",
+                        index,
+                        out var beat),
+                    Is.True);
+                Assert.That(beat.StageIndex, Is.EqualTo(index));
+                Assert.That(
+                    beat.ChapterId,
+                    Is.EqualTo(
+                        entry.Definition.RestorationChapterId));
             }
         }
 
