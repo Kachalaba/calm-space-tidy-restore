@@ -253,5 +253,64 @@ namespace CalmSpace.Tests.EditMode
                 Is.False);
             Assert.That(afterSelect, Is.EqualTo(initial));
         }
+
+        [Test]
+        public void LegacyDecorationStateProjectsIntoStableIds()
+        {
+            var legacy = new DemoProgressSnapshot(
+                0,
+                0,
+                "sage",
+                true,
+                0,
+                0,
+                0b0101,
+                2);
+
+            Assert.That(
+                legacy.OwnsDecoration("soft-fern"),
+                Is.True);
+            Assert.That(
+                legacy.OwnsDecoration("warm-lantern"),
+                Is.True);
+            Assert.That(
+                legacy.OwnedDecorationMask,
+                Is.EqualTo(0b0101));
+            Assert.That(
+                legacy.SelectedDecorationIndex,
+                Is.EqualTo(2));
+        }
+
+        [Test]
+        public void LegacySelectedIndexUsesLegacySlotProjection()
+        {
+            var snapshot = new DemoProgressSnapshot(
+                0,
+                0,
+                "sage",
+                true,
+                0,
+                0,
+                new[] { "soft-fern", "warm-lantern" },
+                new[]
+                {
+                    new DecorationSelection(
+                        "workbench-accent",
+                        "soft-fern"),
+                    new DecorationSelection(
+                        "legacy-room",
+                        "warm-lantern")
+                },
+                new string[0],
+                new string[0],
+                new string[0],
+                new PendingPresentationEntry[0],
+                0,
+                0);
+
+            Assert.That(
+                snapshot.SelectedDecorationIndex,
+                Is.EqualTo(2));
+        }
     }
 }
