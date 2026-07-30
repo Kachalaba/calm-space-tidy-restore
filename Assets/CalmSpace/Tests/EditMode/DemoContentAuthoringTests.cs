@@ -40,6 +40,18 @@ namespace CalmSpace.Tests.EditMode
             LevelType.Cleaning
         };
 
+        private static readonly string[] ExpectedLevelIds =
+        {
+            "01-soft-blocks",
+            "02-pebble-pairs",
+            "03-tea-drawer",
+            "04-color-shelf",
+            "05-fastener-tray",
+            "06-fresh-surface",
+            "07-cabinet-hinge",
+            "08-dusty-window"
+        };
+
         [Test]
         public void DemoCatalogContainsEightUniqueValidEntries()
         {
@@ -59,6 +71,9 @@ namespace CalmSpace.Tests.EditMode
                 Assert.That(entry.Definition.Type, Is.EqualTo(
                     ExpectedTypes[index]));
                 Assert.That(
+                    entry.Definition.LevelId,
+                    Is.EqualTo(ExpectedLevelIds[index]));
+                Assert.That(
                     ids.Add(entry.Definition.LevelId),
                     Is.True,
                     "Duplicate id " + entry.Definition.LevelId);
@@ -75,9 +90,20 @@ namespace CalmSpace.Tests.EditMode
                 AssetDatabase.LoadAssetAtPath<LevelCatalog>(
                     CatalogPath);
             Assert.That(catalog, Is.Not.Null);
+            Assert.That(
+                catalog.IsRestorationChapterValid(
+                    "cozy-workshop"),
+                Is.True,
+                "The authored workshop chapter must form one " +
+                "complete sequence.");
+            Assert.That(
+                catalog.TryGetRestorationChapter(
+                    "cozy-workshop",
+                    out var chapter),
+                Is.True);
+            Assert.That(chapter.FirstCatalogIndex, Is.Zero);
+            Assert.That(chapter.StageCount, Is.EqualTo(8));
 
-            var definitions =
-                new LevelDefinition[catalog.Count];
             for (var index = 0;
                  index < catalog.Count;
                  index++)
@@ -85,33 +111,25 @@ namespace CalmSpace.Tests.EditMode
                 Assert.That(
                     catalog.TryGetEntry(index, out var entry),
                     Is.True);
-                definitions[index] = entry.Definition;
+                Assert.That(
+                    entry.Definition.RestorationChapterId,
+                    Is.EqualTo("cozy-workshop"));
+                Assert.That(
+                    entry.Definition.TryGetRestorationStage(
+                        out var stage),
+                    Is.True);
+                Assert.That(stage.StageIndex, Is.EqualTo(index));
+                Assert.That(stage.StageCount, Is.EqualTo(8));
+                Assert.That(
+                    catalog.TryFindRestorationStage(
+                        "cozy-workshop",
+                        index,
+                        out var levelIndex,
+                        out var foundEntry),
+                    Is.True);
+                Assert.That(levelIndex, Is.EqualTo(index));
+                Assert.That(foundEntry, Is.SameAs(entry));
             }
-
-            Assert.That(
-                RestorationProgressRules.IsCatalogSequenceValid(
-                    definitions,
-                    out var invalidIndex),
-                Is.True,
-                "Invalid restoration stage at index " +
-                invalidIndex);
-            Assert.That(
-                catalog.RestorationMetadataValid,
-                Is.True);
-            Assert.That(
-                definitions[0].RestorationChapterId,
-                Is.Empty);
-            Assert.That(
-                definitions[1].RestorationChapterId,
-                Is.Empty);
-            Assert.That(
-                definitions[2].RestorationChapterId,
-                Is.EqualTo("cozy-workshop"));
-            Assert.That(
-                definitions[7].TryGetRestorationStage(
-                    out var finalStage),
-                Is.True);
-            Assert.That(finalStage.IsFinalStage, Is.True);
         }
 
         [Test]

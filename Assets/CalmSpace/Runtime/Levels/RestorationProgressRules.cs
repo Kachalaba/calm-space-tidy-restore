@@ -87,6 +87,28 @@ namespace CalmSpace.Levels
     }
 
     /// <summary>
+    /// Validated catalog location for one complete restoration chapter.
+    /// </summary>
+    public readonly struct RestorationChapterInfo
+    {
+        internal RestorationChapterInfo(
+            string chapterId,
+            int firstCatalogIndex,
+            int stageCount)
+        {
+            ChapterId = chapterId;
+            FirstCatalogIndex = firstCatalogIndex;
+            StageCount = stageCount;
+        }
+
+        public string ChapterId { get; }
+
+        public int FirstCatalogIndex { get; }
+
+        public int StageCount { get; }
+    }
+
+    /// <summary>
     /// Pure rules for grouping independently loaded levels into a coherent
     /// restoration journey. Invalid authoring fails closed and is presented as
     /// an ordinary standalone level.
@@ -134,6 +156,119 @@ namespace CalmSpace.Levels
                 currentStage.StageCount == nextStage.StageCount &&
                 nextStage.StageIndex ==
                     currentStage.StageIndex + 1;
+        }
+
+        /// <summary>
+        /// Validates only the requested chapter. Unrelated malformed chapters
+        /// cannot disable a valid sequence.
+        /// </summary>
+        public static bool TryValidateChapter(
+            IReadOnlyList<LevelDefinition> definitions,
+            string chapterId,
+            out RestorationChapterInfo chapter,
+            out int invalidCatalogIndex)
+        {
+            chapter = default;
+            invalidCatalogIndex = -1;
+            if (definitions == null ||
+                string.IsNullOrWhiteSpace(chapterId))
+            {
+                return false;
+            }
+
+            string normalizedChapterId = chapterId.Trim();
+            int firstCatalogIndex = -1;
+            for (var index = 0;
+                 index < definitions.Count;
+                 index++)
+            {
+                if (HasChapterId(
+                        definitions[index],
+                        normalizedChapterId))
+                {
+                    firstCatalogIndex = index;
+                    break;
+                }
+            }
+
+            if (firstCatalogIndex < 0 ||
+                !TryCreateStage(
+                    definitions[firstCatalogIndex],
+                    out var firstStage) ||
+                firstStage.StageIndex != 0 ||
+                string.IsNullOrWhiteSpace(
+                    definitions[firstCatalogIndex].LevelId))
+            {
+                invalidCatalogIndex = firstCatalogIndex;
+                return false;
+            }
+
+            for (var offset = 0;
+                 offset < firstStage.StageCount;
+                 offset++)
+            {
+                int candidateIndex =
+                    firstCatalogIndex + offset;
+                if (candidateIndex >= definitions.Count)
+                {
+                    invalidCatalogIndex = firstCatalogIndex;
+                    return false;
+                }
+
+                LevelDefinition candidateDefinition =
+                    definitions[candidateIndex];
+                if (!TryCreateStage(
+                        candidateDefinition,
+                        out var candidateStage) ||
+                    !string.Equals(
+                        candidateStage.ChapterId,
+                        normalizedChapterId,
+                        StringComparison.Ordinal) ||
+                    candidateStage.StageIndex != offset ||
+                    candidateStage.StageCount !=
+                        firstStage.StageCount ||
+                    string.IsNullOrWhiteSpace(
+                        candidateDefinition.LevelId))
+                {
+                    invalidCatalogIndex = candidateIndex;
+                    return false;
+                }
+
+                for (var priorIndex = firstCatalogIndex;
+                     priorIndex < candidateIndex;
+                     priorIndex++)
+                {
+                    if (string.Equals(
+                            definitions[priorIndex].LevelId,
+                            candidateDefinition.LevelId,
+                            StringComparison.Ordinal))
+                    {
+                        invalidCatalogIndex = candidateIndex;
+                        return false;
+                    }
+                }
+            }
+
+            int chapterEnd =
+                firstCatalogIndex + firstStage.StageCount;
+            for (var index = chapterEnd;
+                 index < definitions.Count;
+                 index++)
+            {
+                if (HasChapterId(
+                        definitions[index],
+                        normalizedChapterId))
+                {
+                    invalidCatalogIndex = index;
+                    return false;
+                }
+            }
+
+            chapter = new RestorationChapterInfo(
+                normalizedChapterId,
+                firstCatalogIndex,
+                firstStage.StageCount);
+            return true;
         }
 
         /// <summary>
@@ -211,6 +346,20 @@ namespace CalmSpace.Levels
             }
 
             return true;
+        }
+
+        private static bool HasChapterId(
+            LevelDefinition definition,
+            string chapterId)
+        {
+            return
+                definition != null &&
+                !string.IsNullOrWhiteSpace(
+                    definition.RestorationChapterId) &&
+                string.Equals(
+                    definition.RestorationChapterId.Trim(),
+                    chapterId,
+                    StringComparison.Ordinal);
         }
     }
 }

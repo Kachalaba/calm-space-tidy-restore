@@ -44,12 +44,20 @@ namespace CalmSpace.Levels
         [NonSerialized]
         private bool _restorationMetadataValid;
 
+        [NonSerialized]
+        private LevelCatalogEntry[] _restorationCachedLevels;
+
+        [NonSerialized]
+        private RestorationChapterCacheEntry[]
+            _restorationChapterCache =
+                Array.Empty<RestorationChapterCacheEntry>();
+
         public int Count => _levels?.Length ?? 0;
 
         /// <summary>
-        /// Catalog-wide authority for restoration presentation and analytics.
-        /// Invalid metadata fails closed at runtime, leaving every level
-        /// playable as an ordinary standalone space.
+        /// Compatibility and editor diagnostic for callers that require every
+        /// authored chapter to be valid. Runtime presentation uses the
+        /// chapter-scoped APIs below.
         /// </summary>
         public bool RestorationMetadataValid
         {
@@ -58,6 +66,88 @@ namespace CalmSpace.Levels
                 EnsureRestorationMetadataValidity();
                 return _restorationMetadataValid;
             }
+        }
+
+        public bool IsRestorationChapterValid(string chapterId)
+        {
+            return TryGetRestorationChapter(
+                chapterId,
+                out _);
+        }
+
+        public bool TryGetRestorationChapter(
+            string chapterId,
+            out RestorationChapterInfo chapter)
+        {
+            chapter = default;
+            if (string.IsNullOrWhiteSpace(chapterId))
+            {
+                return false;
+            }
+
+            EnsureRestorationMetadataValidity();
+            string normalizedChapterId = chapterId.Trim();
+            for (var index = 0;
+                 index < _restorationChapterCache.Length;
+                 index++)
+            {
+                RestorationChapterCacheEntry candidate =
+                    _restorationChapterCache[index];
+                if (!string.Equals(
+                        candidate.ChapterId,
+                        normalizedChapterId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!candidate.IsValid)
+                {
+                    return false;
+                }
+
+                chapter = candidate.Chapter;
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryFindRestorationStage(
+            string chapterId,
+            int stageIndex,
+            out int levelIndex,
+            out LevelCatalogEntry entry)
+        {
+            levelIndex = -1;
+            entry = null;
+            if (!TryGetRestorationChapter(
+                    chapterId,
+                    out var chapter) ||
+                stageIndex < 0 ||
+                stageIndex >= chapter.StageCount)
+            {
+                return false;
+            }
+
+            int candidateIndex =
+                chapter.FirstCatalogIndex + stageIndex;
+            if (!TryGetEntry(candidateIndex, out var candidate) ||
+                !candidate.Definition.TryGetRestorationStage(
+                    out var stage) ||
+                !string.Equals(
+                    stage.ChapterId,
+                    chapter.ChapterId,
+                    StringComparison.Ordinal) ||
+                stage.StageIndex != stageIndex ||
+                stage.StageCount != chapter.StageCount)
+            {
+                return false;
+            }
+
+            levelIndex = candidateIndex;
+            entry = candidate;
+            return true;
         }
 
         public bool TryGetEntry(
@@ -122,26 +212,30 @@ namespace CalmSpace.Levels
             int levelIndex,
             out RestorationStageInfo stage)
         {
-            if (!RestorationMetadataValid ||
-                !TryGetEntry(levelIndex, out var entry))
+            if (!TryGetEntry(levelIndex, out var entry) ||
+                !entry.Definition.TryGetRestorationStage(
+                    out stage) ||
+                !IsRestorationChapterValid(stage.ChapterId))
             {
                 stage = default;
                 return false;
             }
 
-            return entry.Definition.TryGetRestorationStage(
-                out stage);
+            return true;
         }
 
         public bool IsRestorationContinuation(
             int currentLevelIndex,
             int nextLevelIndex)
         {
-            if (!RestorationMetadataValid ||
-                !TryGetEntry(
+            if (!TryGetEntry(
                     currentLevelIndex,
                     out var current) ||
-                !TryGetEntry(nextLevelIndex, out var next))
+                !TryGetEntry(nextLevelIndex, out var next) ||
+                !current.Definition.TryGetRestorationStage(
+                    out var currentStage) ||
+                !IsRestorationChapterValid(
+                    currentStage.ChapterId))
             {
                 return false;
             }
@@ -158,7 +252,10 @@ namespace CalmSpace.Levels
 
         private void EnsureRestorationMetadataValidity()
         {
-            if (!_restorationMetadataInitialized)
+            if (!_restorationMetadataInitialized ||
+                !ReferenceEquals(
+                    _restorationCachedLevels,
+                    _levels))
             {
                 RefreshRestorationMetadataValidity();
             }
@@ -177,10 +274,79 @@ namespace CalmSpace.Levels
                     _levels[index]?.Definition;
             }
 
+            var chapterCache =
+                new RestorationChapterCacheEntry[levelCount];
+            int chapterCount = 0;
+            for (var definitionIndex = 0;
+                 definitionIndex < definitions.Length;
+                 definitionIndex++)
+            {
+                string authoredChapterId =
+                    definitions[definitionIndex]
+                        ?.RestorationChapterId;
+                if (string.IsNullOrWhiteSpace(
+                        authoredChapterId))
+                {
+                    continue;
+                }
+
+                string chapterId = authoredChapterId.Trim();
+                bool alreadyCached = false;
+                for (var cacheIndex = 0;
+                     cacheIndex < chapterCount;
+                     cacheIndex++)
+                {
+                    if (string.Equals(
+                            chapterCache[cacheIndex].ChapterId,
+                            chapterId,
+                            StringComparison.Ordinal))
+                    {
+                        alreadyCached = true;
+                        break;
+                    }
+                }
+
+                if (alreadyCached)
+                {
+                    continue;
+                }
+
+                bool valid =
+                    RestorationProgressRules.TryValidateChapter(
+                        definitions,
+                        chapterId,
+                        out var chapter,
+                        out _);
+                chapterCache[chapterCount] =
+                    new RestorationChapterCacheEntry(
+                        chapterId,
+                        valid,
+                        chapter);
+                chapterCount++;
+            }
+
+            if (chapterCount == 0)
+            {
+                _restorationChapterCache =
+                    Array.Empty<RestorationChapterCacheEntry>();
+            }
+            else
+            {
+                if (chapterCount < chapterCache.Length)
+                {
+                    Array.Resize(
+                        ref chapterCache,
+                        chapterCount);
+                }
+
+                _restorationChapterCache = chapterCache;
+            }
+
             _restorationMetadataValid =
                 RestorationProgressRules.IsCatalogSequenceValid(
                     definitions,
                     out _);
+            _restorationCachedLevels = _levels;
             _restorationMetadataInitialized = true;
         }
 
@@ -246,5 +412,24 @@ namespace CalmSpace.Levels
             }
         }
 #endif
+
+        private readonly struct RestorationChapterCacheEntry
+        {
+            public RestorationChapterCacheEntry(
+                string chapterId,
+                bool isValid,
+                RestorationChapterInfo chapter)
+            {
+                ChapterId = chapterId;
+                IsValid = isValid;
+                Chapter = chapter;
+            }
+
+            public string ChapterId { get; }
+
+            public bool IsValid { get; }
+
+            public RestorationChapterInfo Chapter { get; }
+        }
     }
 }

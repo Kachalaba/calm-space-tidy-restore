@@ -504,7 +504,8 @@ namespace CalmSpace.UI
                     _boundLevel.Definition,
                     _currentLevelIndex,
                     _progressStore.Current.CozyTokens,
-                    _levelCatalog.RestorationMetadataValid));
+                    HasValidRestorationChapter(
+                        _boundLevel.Definition)));
             ApplyCurrentThemeToLevel();
             RefreshHud(
                 _boundLevel.ProgressCurrent,
@@ -591,7 +592,8 @@ namespace CalmSpace.UI
                     _levelUndoCount,
                     _boundLevel.ProgressCurrent,
                     _boundLevel.ProgressTotal,
-                    _levelCatalog.RestorationMetadataValid));
+                    HasValidRestorationChapter(
+                        _boundLevel.Definition)));
         }
 
         private double GetCurrentLevelDurationSeconds()
@@ -883,7 +885,8 @@ namespace CalmSpace.UI
                     _lastCompletionReward,
                     _progressStore.Current.CozyTokens,
                     _lastCompletionReward > 0,
-                    _levelCatalog.RestorationMetadataValid));
+                    HasValidRestorationChapter(
+                        level.Definition)));
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshDecorationUi();
@@ -913,7 +916,8 @@ namespace CalmSpace.UI
                 _completionBodyText.text =
                     _localization.FormatCompletionBody(
                         level.Definition,
-                        _levelCatalog.RestorationMetadataValid);
+                        HasValidRestorationChapter(
+                            level.Definition));
             }
 
             bool hasNext =
@@ -1200,7 +1204,8 @@ namespace CalmSpace.UI
                 _hudLevelNameText.text =
                     _localization.FormatRestorationStageTitle(
                         _boundLevel?.Definition,
-                        _levelCatalog.RestorationMetadataValid);
+                        HasValidRestorationChapter(
+                            _boundLevel?.Definition));
             }
 
             if (_hudProgressText == null)
@@ -1306,7 +1311,8 @@ namespace CalmSpace.UI
                     index + 1,
                     _localization.FormatRestorationStageTitle(
                         entry.Definition,
-                        _levelCatalog.RestorationMetadataValid));
+                        HasValidRestorationChapter(
+                            entry.Definition)));
                 binding.SetState(
                     unlocked,
                     completed,
@@ -1752,7 +1758,8 @@ namespace CalmSpace.UI
                             _levelUndoCount,
                             _boundLevel.ProgressCurrent,
                             _boundLevel.ProgressTotal,
-                            _levelCatalog.RestorationMetadataValid));
+                            HasValidRestorationChapter(
+                                _boundLevel.Definition)));
                 }
 
                 RefreshNavigationAvailability();
@@ -1762,6 +1769,16 @@ namespace CalmSpace.UI
         private void HandleUndoAvailabilityChanged(bool canUndo)
         {
             RefreshNavigationAvailability();
+        }
+
+        private bool HasValidRestorationChapter(
+            LevelDefinition definition)
+        {
+            return
+                definition != null &&
+                _levelCatalog != null &&
+                _levelCatalog.IsRestorationChapterValid(
+                    definition.RestorationChapterId);
         }
 
         private void HandleMusicPressed()

@@ -79,9 +79,9 @@ namespace CalmSpace.Editor
                 "levels/01-soft-blocks",
                 3,
                 0.78f,
-                string.Empty,
+                "cozy-workshop",
                 0,
-                0),
+                8),
             new LevelSpec(
                 "02-pebble-pairs",
                 "Pebble Pairs",
@@ -91,9 +91,9 @@ namespace CalmSpace.Editor
                 "levels/02-pebble-pairs",
                 4,
                 0.72f,
-                string.Empty,
-                0,
-                0),
+                "cozy-workshop",
+                1,
+                8),
             new LevelSpec(
                 "03-tea-drawer",
                 "Tea Drawer",
@@ -104,8 +104,8 @@ namespace CalmSpace.Editor
                 4,
                 0.68f,
                 "cozy-workshop",
-                0,
-                6),
+                2,
+                8),
             new LevelSpec(
                 "04-color-shelf",
                 "Color Shelf",
@@ -116,8 +116,8 @@ namespace CalmSpace.Editor
                 5,
                 0.64f,
                 "cozy-workshop",
-                1,
-                6),
+                3,
+                8),
             new LevelSpec(
                 "05-fastener-tray",
                 "Fastener Tray",
@@ -128,8 +128,8 @@ namespace CalmSpace.Editor
                 0,
                 0.62f,
                 "cozy-workshop",
-                2,
-                6,
+                4,
+                8,
                 screwLayers: new[] { 4 }),
             new LevelSpec(
                 "06-fresh-surface",
@@ -141,8 +141,8 @@ namespace CalmSpace.Editor
                 0,
                 0f,
                 "cozy-workshop",
-                3,
-                6),
+                5,
+                8),
             new LevelSpec(
                 "07-cabinet-hinge",
                 "Cabinet Hinge",
@@ -153,8 +153,8 @@ namespace CalmSpace.Editor
                 0,
                 0.62f,
                 "cozy-workshop",
-                4,
                 6,
+                8,
                 screwLayers: new[] { 3, 2 }),
             new LevelSpec(
                 "08-dusty-window",
@@ -166,8 +166,8 @@ namespace CalmSpace.Editor
                 0,
                 0.66f,
                 "cozy-workshop",
-                5,
-                6,
+                7,
+                8,
                 stages: DustyWindowStages)
         };
 
