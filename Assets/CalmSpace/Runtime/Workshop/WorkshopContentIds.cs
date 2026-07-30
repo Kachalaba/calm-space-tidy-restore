@@ -2,6 +2,49 @@ using System;
 
 namespace CalmSpace.Workshop
 {
+    public readonly struct WorkshopBeatContract
+    {
+        internal WorkshopBeatContract(
+            string beatId,
+            int stageIndex,
+            string titleTextKey,
+            string resultTextKey,
+            int zoneIndex,
+            string memoryId,
+            string unlockedDecorSlotId,
+            bool unlocksDailyCare,
+            bool isFinale)
+        {
+            BeatId = beatId;
+            StageIndex = stageIndex;
+            TitleTextKey = titleTextKey;
+            ResultTextKey = resultTextKey;
+            ZoneIndex = zoneIndex;
+            MemoryId = memoryId;
+            UnlockedDecorSlotId = unlockedDecorSlotId;
+            UnlocksDailyCare = unlocksDailyCare;
+            IsFinale = isFinale;
+        }
+
+        public string BeatId { get; }
+
+        public int StageIndex { get; }
+
+        public string TitleTextKey { get; }
+
+        public string ResultTextKey { get; }
+
+        public int ZoneIndex { get; }
+
+        public string MemoryId { get; }
+
+        public string UnlockedDecorSlotId { get; }
+
+        public bool UnlocksDailyCare { get; }
+
+        public bool IsFinale { get; }
+    }
+
     /// <summary>
     /// Stable identifiers shared by workshop authoring, persistence, and
     /// presentation. These values are data contracts and must not be localized.
@@ -44,6 +87,109 @@ namespace CalmSpace.Workshop
 
         public const string FamilyTeaDailyCareId =
             "family-tea";
+
+        private static readonly WorkshopBeatContract[]
+            CozyWorkshopBeats =
+            {
+                new WorkshopBeatContract(
+                    ClearPassageBeatId,
+                    0,
+                    "beat.clear-passage.title",
+                    "beat.clear-passage.result",
+                    0,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    PebbleShelfBeatId,
+                    1,
+                    "beat.pebble-shelf.title",
+                    "beat.pebble-shelf.result",
+                    1,
+                    SummerTrailStonesMemoryId,
+                    string.Empty,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    TeaDrawerBeatId,
+                    2,
+                    "beat.tea-drawer.title",
+                    "beat.tea-drawer.result",
+                    2,
+                    string.Empty,
+                    string.Empty,
+                    true,
+                    false),
+                new WorkshopBeatContract(
+                    PaintShelfBeatId,
+                    3,
+                    "beat.paint-shelf.title",
+                    "beat.paint-shelf.result",
+                    3,
+                    string.Empty,
+                    WorkbenchAccentDecorSlotId,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    FastenerTrayBeatId,
+                    4,
+                    "beat.fastener-tray.title",
+                    "beat.fastener-tray.result",
+                    4,
+                    FixEverythingMemoryId,
+                    string.Empty,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    WarmWorkbenchBeatId,
+                    5,
+                    "beat.warm-workbench.title",
+                    "beat.warm-workbench.result",
+                    5,
+                    string.Empty,
+                    WarmLightDecorSlotId,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    CabinetHingeBeatId,
+                    6,
+                    "beat.cabinet-hinge.title",
+                    "beat.cabinet-hinge.result",
+                    6,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false),
+                new WorkshopBeatContract(
+                    OpenWindowBeatId,
+                    7,
+                    "beat.open-window.title",
+                    "beat.open-window.result",
+                    7,
+                    OpenWindowsMemoryId,
+                    string.Empty,
+                    false,
+                    true)
+            };
+
+        public static int CozyWorkshopBeatCount =>
+            CozyWorkshopBeats.Length;
+
+        public static bool TryGetCozyWorkshopBeat(
+            int stageIndex,
+            out WorkshopBeatContract beat)
+        {
+            if (stageIndex < 0 ||
+                stageIndex >= CozyWorkshopBeats.Length)
+            {
+                beat = default;
+                return false;
+            }
+
+            beat = CozyWorkshopBeats[stageIndex];
+            return true;
+        }
 
         internal static bool IsKnownMemoryId(string memoryId)
         {

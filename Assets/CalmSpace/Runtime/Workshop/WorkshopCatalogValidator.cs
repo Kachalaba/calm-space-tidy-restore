@@ -15,7 +15,10 @@ namespace CalmSpace.Workshop
         InvalidMemoryLink = 6,
         MissingFinale = 7,
         MultipleFinales = 8,
-        LevelJoinFailed = 9
+        LevelJoinFailed = 9,
+        InvalidDecorLink = 10,
+        InvalidDailyCareUnlock = 11,
+        ZoneIndexOutOfRange = 12
     }
 
     public readonly struct WorkshopCatalogValidationResult
@@ -25,12 +28,16 @@ namespace CalmSpace.Workshop
             int invalidStageIndex,
             string stableId)
         {
+            _isInitialized = true;
             Code = code;
             InvalidStageIndex = invalidStageIndex;
             StableId = stableId ?? string.Empty;
         }
 
+        private readonly bool _isInitialized;
+
         public bool IsValid =>
+            _isInitialized &&
             Code == WorkshopCatalogValidationCode.Valid;
 
         public WorkshopCatalogValidationCode Code { get; }
@@ -88,8 +95,7 @@ namespace CalmSpace.Workshop
             {
                 if (!workshop.TryGetBeat(
                         catalogIndex,
-                        out var beat) ||
-                    !beat.IsValid)
+                        out var beat))
                 {
                     return Invalid(
                         WorkshopCatalogValidationCode.MissingBeat,
@@ -108,6 +114,42 @@ namespace CalmSpace.Workshop
                 }
 
                 matchingBeatCount++;
+                if (beat.StageIndex < 0 ||
+                    beat.StageIndex >= chapter.StageCount)
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode.StageGap,
+                        beat.StageIndex,
+                        beat.BeatId);
+                }
+
+                if (beat.ZoneIndex < 0 ||
+                    beat.ZoneIndex >= chapter.StageCount)
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode
+                            .ZoneIndexOutOfRange,
+                        beat.StageIndex,
+                        beat.BeatId);
+                }
+
+                if (!beat.IsValid)
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode.MissingBeat,
+                        beat.StageIndex,
+                        beat.BeatId);
+                }
+
+                WorkshopBeatContract canonicalBeat = default;
+                bool hasCanonicalBeat =
+                    string.Equals(
+                        normalizedChapterId,
+                        WorkshopContentIds.CozyWorkshopChapterId,
+                        StringComparison.Ordinal) &&
+                    WorkshopContentIds.TryGetCozyWorkshopBeat(
+                        beat.StageIndex,
+                        out canonicalBeat);
                 if (!beatIds.Add(beat.BeatId))
                 {
                     return Invalid(
@@ -117,15 +159,48 @@ namespace CalmSpace.Workshop
                         beat.BeatId);
                 }
 
-                if (beat.ZoneIndex < 0 ||
-                    beat.ZoneIndex >= chapter.StageCount ||
-                    !zoneIndices.Add(beat.ZoneIndex))
+                if (hasCanonicalBeat &&
+                    (!string.Equals(
+                        beat.BeatId,
+                        canonicalBeat.BeatId,
+                        StringComparison.Ordinal) ||
+                     !string.Equals(
+                        beat.TitleTextKey,
+                        canonicalBeat.TitleTextKey,
+                        StringComparison.Ordinal) ||
+                     !string.Equals(
+                        beat.ResultTextKey,
+                        canonicalBeat.ResultTextKey,
+                        StringComparison.Ordinal)))
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode.MissingBeat,
+                        beat.StageIndex,
+                        canonicalBeat.BeatId);
+                }
+
+                if (!zoneIndices.Add(beat.ZoneIndex))
                 {
                     return Invalid(
                         WorkshopCatalogValidationCode
                             .DuplicateZoneIndex,
                         beat.StageIndex,
                         beat.BeatId);
+                }
+
+                if (hasCanonicalBeat &&
+                    !string.Equals(
+                        beat.MemoryId,
+                        canonicalBeat.MemoryId,
+                        StringComparison.Ordinal))
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode
+                            .InvalidMemoryLink,
+                        beat.StageIndex,
+                        string.IsNullOrEmpty(beat.MemoryId)
+                            ? canonicalBeat.MemoryId
+                            : beat.MemoryId);
                 }
 
                 if (!string.IsNullOrEmpty(beat.MemoryId) &&
@@ -139,9 +214,34 @@ namespace CalmSpace.Workshop
                         beat.MemoryId);
                 }
 
-                if (beat.StageIndex < 0 ||
-                    beat.StageIndex >= chapter.StageCount ||
-                    stageBeats[beat.StageIndex] != null)
+                if (hasCanonicalBeat &&
+                    !string.Equals(
+                        beat.UnlockedDecorSlotId,
+                        canonicalBeat.UnlockedDecorSlotId,
+                        StringComparison.Ordinal))
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode
+                            .InvalidDecorLink,
+                        beat.StageIndex,
+                        string.IsNullOrEmpty(
+                            beat.UnlockedDecorSlotId)
+                            ? canonicalBeat.UnlockedDecorSlotId
+                            : beat.UnlockedDecorSlotId);
+                }
+
+                if (hasCanonicalBeat &&
+                    beat.UnlocksDailyCare !=
+                    canonicalBeat.UnlocksDailyCare)
+                {
+                    return Invalid(
+                        WorkshopCatalogValidationCode
+                            .InvalidDailyCareUnlock,
+                        beat.StageIndex,
+                        WorkshopContentIds.FamilyTeaDailyCareId);
+                }
+
+                if (stageBeats[beat.StageIndex] != null)
                 {
                     return Invalid(
                         WorkshopCatalogValidationCode.StageGap,
@@ -231,6 +331,32 @@ namespace CalmSpace.Workshop
                 WorkshopCatalogValidationCode.Valid,
                 -1,
                 normalizedChapterId);
+        }
+
+        public static bool TryResolveMetaAction(
+            LevelCatalog levels,
+            LivingWorkshopCatalog workshop,
+            string chapterId,
+            int stageIndex,
+            out WorkshopBeatDefinition beat)
+        {
+            beat = null;
+            WorkshopCatalogValidationResult result =
+                ValidateChapter(
+                    levels,
+                    workshop,
+                    chapterId);
+            if (!result.IsValid ||
+                !workshop.TryFindBeat(
+                    chapterId,
+                    stageIndex,
+                    out var resolvedBeat))
+            {
+                return false;
+            }
+
+            beat = resolvedBeat;
+            return true;
         }
 
         private static WorkshopCatalogValidationResult Invalid(

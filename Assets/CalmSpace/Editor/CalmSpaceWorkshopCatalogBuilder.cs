@@ -15,56 +15,6 @@ namespace CalmSpace.Editor
         public const string CatalogPath =
             "Assets/CalmSpace/Config/LivingWorkshopCatalog.asset";
 
-        private static readonly WorkshopBeatDefinition[] Beats =
-        {
-            CreateBeat(
-                WorkshopContentIds.ClearPassageBeatId,
-                0,
-                "clear-passage"),
-            CreateBeat(
-                WorkshopContentIds.PebbleShelfBeatId,
-                1,
-                "pebble-shelf",
-                memoryId:
-                    WorkshopContentIds
-                        .SummerTrailStonesMemoryId),
-            CreateBeat(
-                WorkshopContentIds.TeaDrawerBeatId,
-                2,
-                "tea-drawer",
-                unlocksDailyCare: true),
-            CreateBeat(
-                WorkshopContentIds.PaintShelfBeatId,
-                3,
-                "paint-shelf",
-                decorSlotId:
-                    WorkshopContentIds
-                        .WorkbenchAccentDecorSlotId),
-            CreateBeat(
-                WorkshopContentIds.FastenerTrayBeatId,
-                4,
-                "fastener-tray",
-                memoryId:
-                    WorkshopContentIds.FixEverythingMemoryId),
-            CreateBeat(
-                WorkshopContentIds.WarmWorkbenchBeatId,
-                5,
-                "warm-workbench",
-                decorSlotId:
-                    WorkshopContentIds.WarmLightDecorSlotId),
-            CreateBeat(
-                WorkshopContentIds.CabinetHingeBeatId,
-                6,
-                "cabinet-hinge"),
-            CreateBeat(
-                WorkshopContentIds.OpenWindowBeatId,
-                7,
-                "open-window",
-                memoryId:
-                    WorkshopContentIds.OpenWindowsMemoryId,
-                isFinale: true)
-        };
-
         public static LivingWorkshopCatalog CreateOrUpdate()
         {
             LivingWorkshopCatalog catalog =
@@ -81,54 +31,41 @@ namespace CalmSpace.Editor
             SetPrivateField(
                 catalog,
                 "_beats",
-                CloneBeats());
+                CreateBeats());
             EditorUtility.SetDirty(catalog);
             return catalog;
         }
 
-        private static WorkshopBeatDefinition CreateBeat(
-            string beatId,
-            int stageIndex,
-            string textKeyStem,
-            string memoryId = "",
-            string decorSlotId = "",
-            bool unlocksDailyCare = false,
-            bool isFinale = false)
+        private static WorkshopBeatDefinition[] CreateBeats()
         {
-            return new WorkshopBeatDefinition(
-                WorkshopContentIds.CozyWorkshopChapterId,
-                beatId,
-                stageIndex,
-                $"beat.{textKeyStem}.title",
-                $"beat.{textKeyStem}.result",
-                stageIndex,
-                memoryId,
-                decorSlotId,
-                unlocksDailyCare,
-                isFinale);
-        }
-
-        private static WorkshopBeatDefinition[] CloneBeats()
-        {
-            var copy =
-                new WorkshopBeatDefinition[Beats.Length];
-            for (var index = 0; index < Beats.Length; index++)
+            var beats = new WorkshopBeatDefinition[
+                WorkshopContentIds.CozyWorkshopBeatCount];
+            for (var index = 0; index < beats.Length; index++)
             {
-                WorkshopBeatDefinition beat = Beats[index];
-                copy[index] = new WorkshopBeatDefinition(
-                    beat.ChapterId,
-                    beat.BeatId,
-                    beat.StageIndex,
-                    beat.TitleTextKey,
-                    beat.ResultTextKey,
-                    beat.ZoneIndex,
-                    beat.MemoryId,
-                    beat.UnlockedDecorSlotId,
-                    beat.UnlocksDailyCare,
-                    beat.IsFinale);
+                if (!WorkshopContentIds.TryGetCozyWorkshopBeat(
+                        index,
+                        out var contract))
+                {
+                    throw new InvalidOperationException(
+                        "Canonical workshop stage is missing: " +
+                        index +
+                        ".");
+                }
+
+                beats[index] = new WorkshopBeatDefinition(
+                    WorkshopContentIds.CozyWorkshopChapterId,
+                    contract.BeatId,
+                    contract.StageIndex,
+                    contract.TitleTextKey,
+                    contract.ResultTextKey,
+                    contract.ZoneIndex,
+                    contract.MemoryId,
+                    contract.UnlockedDecorSlotId,
+                    contract.UnlocksDailyCare,
+                    contract.IsFinale);
             }
 
-            return copy;
+            return beats;
         }
 
         private static void SetPrivateField(

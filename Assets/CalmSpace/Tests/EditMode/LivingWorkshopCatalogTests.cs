@@ -386,7 +386,158 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
-        public void FailedJoinDisablesOnlyWorkshopMetaActions()
+        public void ValidatorRejectsReplacedStableBeatId()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                beatId: "cozy-workshop.replaced");
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.MissingBeat,
+                expectedStageIndex: 1);
+        }
+
+        [Test]
+        public void ValidatorRejectsMissingMemoryLink()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                memoryId: string.Empty);
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.InvalidMemoryLink,
+                expectedStageIndex: 1,
+                expectedStableId:
+                    "family.summer-trail-stones");
+        }
+
+        [Test]
+        public void ValidatorRejectsSwappedKnownMemoryLinks()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                memoryId: "family.fix-everything");
+            beats[4] = CreateBeat(
+                4,
+                memoryId: "family.summer-trail-stones");
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.InvalidMemoryLink,
+                expectedStageIndex: 1,
+                expectedStableId: "family.fix-everything");
+        }
+
+        [Test]
+        public void BuildGateRejectsSwappedKnownMemoryLinks()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                memoryId: "family.fix-everything");
+            beats[4] = CreateBeat(
+                4,
+                memoryId: "family.summer-trail-stones");
+
+            BuildFailedException exception = Assert.Throws<
+                BuildFailedException>(
+                () => LivingWorkshopBuildValidator.ValidateOrThrow(
+                    LoadLevelCatalog(),
+                    CreateWorkshop(beats),
+                    "cozy-workshop"));
+
+            Assert.That(
+                exception.Message,
+                Does.Contain(
+                    WorkshopCatalogValidationCode
+                        .InvalidMemoryLink
+                        .ToString()));
+        }
+
+        [Test]
+        public void DefaultValidationResultIsInvalid()
+        {
+            WorkshopCatalogValidationResult result = default;
+
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void ValidatorRejectsMovedDecorUnlock()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[2] = CreateBeat(
+                2,
+                decorSlotId: "workbench-accent");
+            beats[3] = CreateBeat(
+                3,
+                decorSlotId: string.Empty);
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.InvalidDecorLink,
+                expectedStageIndex: 2);
+        }
+
+        [Test]
+        public void ValidatorRejectsUnknownDecorUnlock()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[3] = CreateBeat(
+                3,
+                decorSlotId: "unknown-slot");
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.InvalidDecorLink,
+                expectedStageIndex: 3);
+        }
+
+        [Test]
+        public void ValidatorRejectsMovedDailyCareUnlock()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                unlocksDailyCare: true);
+            beats[2] = CreateBeat(
+                2,
+                unlocksDailyCare: false);
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.InvalidDailyCareUnlock,
+                expectedStageIndex: 1);
+        }
+
+        [Test]
+        public void ValidatorReportsOutOfRangeZonePrecisely()
+        {
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                zoneIndex: 8);
+
+            AssertFailure(
+                LoadLevelCatalog(),
+                CreateWorkshop(beats),
+                WorkshopCatalogValidationCode.ZoneIndexOutOfRange,
+                expectedStageIndex: 1);
+        }
+
+        [Test]
+        public void ValidatorReportsFailedLevelJoin()
         {
             LevelCatalog source = LoadLevelCatalog();
             LevelCatalog brokenJoin =
@@ -409,14 +560,78 @@ namespace CalmSpace.Tests.EditMode
             Assert.That(
                 result.StableId,
                 Is.EqualTo(ExpectedBeatIds[3]));
+        }
+
+        [Test]
+        public void RuntimeMetaResolutionReturnsCanonicalBeat()
+        {
+            Assert.That(
+                WorkshopCatalogValidator.TryResolveMetaAction(
+                    LoadLevelCatalog(),
+                    LoadWorkshopCatalog(),
+                    "cozy-workshop",
+                    4,
+                    out var beat),
+                Is.True);
+            Assert.That(
+                beat.BeatId,
+                Is.EqualTo("cozy-workshop.fastener-tray"));
+            Assert.That(
+                beat.MemoryId,
+                Is.EqualTo("family.fix-everything"));
+        }
+
+        [Test]
+        public void InvalidWorkshopReturnsNoMetaActionAndLevelStaysPlayable()
+        {
+            LevelCatalog levels = LoadLevelCatalog();
+            Assert.That(
+                levels.TryGetEntry(1, out var before),
+                Is.True);
+            Assert.That(
+                levels.TryFindRestorationStage(
+                    "cozy-workshop",
+                    1,
+                    out var levelIndex,
+                    out var joinedBefore),
+                Is.True);
+            Assert.That(levelIndex, Is.EqualTo(1));
+            Assert.That(joinedBefore, Is.SameAs(before));
+
+            WorkshopBeatDefinition[] beats = CreateValidBeats();
+            beats[1] = CreateBeat(
+                1,
+                memoryId: string.Empty);
+            LivingWorkshopCatalog invalidWorkshop =
+                CreateWorkshop(beats);
 
             Assert.That(
-                source.TryGetEntry(3, out var ordinaryLevel),
-                Is.True,
-                "Workshop validation must not mutate level playability.");
+                WorkshopCatalogValidator.TryResolveMetaAction(
+                    levels,
+                    invalidWorkshop,
+                    "cozy-workshop",
+                    1,
+                    out var metaAction),
+                Is.False);
+            Assert.That(metaAction, Is.Null);
+
             Assert.That(
-                ordinaryLevel.Definition.LevelId,
-                Is.EqualTo(ExpectedLevelIds[3]));
+                levels.TryGetEntry(1, out var after),
+                Is.True,
+                "Invalid workshop metadata must not disable the level.");
+            Assert.That(after, Is.SameAs(before));
+            Assert.That(
+                levels.TryFindRestorationStage(
+                    "cozy-workshop",
+                    1,
+                    out levelIndex,
+                    out var joinedAfter),
+                Is.True);
+            Assert.That(levelIndex, Is.EqualTo(1));
+            Assert.That(joinedAfter, Is.SameAs(before));
+            Assert.That(
+                after.Definition.LevelId,
+                Is.EqualTo("02-pebble-pairs"));
         }
 
         [Test]
