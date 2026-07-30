@@ -49,3 +49,4 @@ GoogleService-Info.plist
 Assets/AddressableAssetsData/*/addressables_content_state.bin
 Assets/AddressableAssetsData/*/addressables_content_state.bin.meta
 docs/superpowers/
+.worktrees/
