@@ -36,6 +36,59 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void OwnershipGraphInjectsTheWorkshopProjectorInterface()
+        {
+            LevelCatalog levels = AssetDatabase.LoadAssetAtPath<
+                LevelCatalog>(LevelCatalogPath);
+            LivingWorkshopCatalog workshop =
+                AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
+                    WorkshopCatalogPath);
+            var store = new InMemoryProgressStore(
+                DemoProgressRules.CreateDefault(8, "sage"), 8);
+
+            IWorkshopProgressProjector projector =
+                new WorkshopProgressProjector(levels, workshop);
+            IWorkshopFlowCoordinator coordinator =
+                new WorkshopFlowCoordinator(
+                    levels,
+                    workshop,
+                    store,
+                    projector);
+
+            Assert.That(coordinator.GetRecommendedAction()?.Kind,
+                Is.EqualTo(WorkshopRecommendedActionKind.StartLevel));
+        }
+
+        [Test]
+        public void UninitializedStoreFailsClosedWithoutReadingOrMutatingIt()
+        {
+            var store = new InMemoryProgressStore(
+                DemoProgressRules.CreateDefault(8, "sage"),
+                8,
+                isInitialized: false);
+            var coordinator = CreateCoordinator(store);
+            var start = new WorkshopRecommendedAction(
+                WorkshopRecommendedActionKind.StartLevel,
+                "01-soft-blocks");
+
+            Assert.DoesNotThrow(() =>
+            {
+                Assert.That(coordinator.GetRecommendedAction(), Is.Null);
+                Assert.That(
+                    coordinator.GetExplicitWorkshopAction(),
+                    Is.Null);
+                Assert.That(
+                    coordinator.TryCreateLaunchRequest(start, out _),
+                    Is.False);
+                Assert.That(
+                    coordinator.CompleteLevel("01-soft-blocks", 0, 5)
+                        .Status,
+                    Is.EqualTo(ProfileMutationStatus.Invalid));
+            });
+            Assert.That(store.CompleteCallCount, Is.Zero);
+        }
+
+        [Test]
         public void CompleteLevelQueuesRoomMemoryAndFinaleInOneStoreCall()
         {
             var store = new InMemoryProgressStore(
@@ -97,29 +150,49 @@ namespace CalmSpace.Tests.EditMode
         private static WorkshopFlowCoordinator CreateCoordinator(
             IDemoProgressStore store)
         {
-            return new WorkshopFlowCoordinator(
-                AssetDatabase.LoadAssetAtPath<LevelCatalog>(LevelCatalogPath),
+            LevelCatalog levels = AssetDatabase.LoadAssetAtPath<
+                LevelCatalog>(LevelCatalogPath);
+            LivingWorkshopCatalog workshop =
                 AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
-                    WorkshopCatalogPath),
+                    WorkshopCatalogPath);
+            return new WorkshopFlowCoordinator(
+                levels,
+                workshop,
                 store,
-                ChapterId);
+                new WorkshopProgressProjector(levels, workshop));
         }
 
         private sealed class InMemoryProgressStore : IDemoProgressStore
         {
             public InMemoryProgressStore(
                 DemoProgressSnapshot snapshot,
-                int levelCount)
+                int levelCount,
+                bool isInitialized = true)
             {
-                Current = snapshot;
+                _current = snapshot;
                 LevelCount = levelCount;
-                IsInitialized = true;
+                IsInitialized = isInitialized;
             }
+
+            private DemoProgressSnapshot _current;
 
             public event Action<DemoProgressSnapshot> ProgressChanged;
             public bool IsInitialized { get; }
             public int LevelCount { get; }
-            public DemoProgressSnapshot Current { get; private set; }
+            public DemoProgressSnapshot Current
+            {
+                get
+                {
+                    if (!IsInitialized)
+                    {
+                        throw new InvalidOperationException(
+                            "Current must not be read before initialization.");
+                    }
+
+                    return _current;
+                }
+                private set => _current = value;
+            }
             public int CompleteCallCount { get; private set; }
             public CompleteLevelCommand LastCommand { get; private set; }
 

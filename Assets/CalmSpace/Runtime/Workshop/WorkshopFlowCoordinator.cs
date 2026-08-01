@@ -28,32 +28,29 @@ namespace CalmSpace.Workshop
     {
         private readonly LevelCatalog _levels;
         private readonly IDemoProgressStore _store;
-        private readonly WorkshopProgressProjector _projector;
+        private readonly IWorkshopProgressProjector _projector;
 
         public WorkshopFlowCoordinator(
             LevelCatalog levels,
             LivingWorkshopCatalog workshop,
             IDemoProgressStore store,
-            string chapterId)
+            IWorkshopProgressProjector projector)
         {
             _levels = levels;
             _store = store;
-            _projector = new WorkshopProgressProjector(
-                levels,
-                workshop,
-                chapterId);
+            _projector = projector;
         }
 
         public WorkshopRecommendedAction? GetRecommendedAction()
         {
-            return _store == null
+            return !IsStoreReady() || _projector == null
                 ? (WorkshopRecommendedAction?)null
                 : _projector.GetRecommendedAction(_store.Current);
         }
 
         public WorkshopRecommendedAction? GetExplicitWorkshopAction()
         {
-            return _store == null
+            return !IsStoreReady() || _projector == null
                 ? (WorkshopRecommendedAction?)null
                 : _projector.GetExplicitWorkshopAction(_store.Current);
         }
@@ -63,12 +60,14 @@ namespace CalmSpace.Workshop
             out LevelLaunchRequest request)
         {
             request = default;
-            if (action.Kind != WorkshopRecommendedActionKind.StartLevel)
+            if (!IsStoreReady() ||
+                action.Kind != WorkshopRecommendedActionKind.StartLevel)
             {
                 return false;
             }
 
-            if (_projector.TryResolveStartLevel(
+            if (_projector != null &&
+                _projector.TryResolveStartLevel(
                     action.StableId,
                     out int levelIndex,
                     out LevelCatalogEntry workshopEntry,
@@ -106,7 +105,8 @@ namespace CalmSpace.Workshop
             int levelIndex,
             int rewardAmount)
         {
-            if (_store == null ||
+            if (!IsStoreReady() ||
+                _projector == null ||
                 !_projector.TryResolveCompletion(
                     levelId,
                     levelIndex,
@@ -161,7 +161,7 @@ namespace CalmSpace.Workshop
         private ProfileMutationResult<LevelCompletionMutation>
             InvalidCompletion()
         {
-            DemoProgressSnapshot snapshot = _store == null
+            DemoProgressSnapshot snapshot = !IsStoreReady()
                 ? default
                 : _store.Current;
             return new ProfileMutationResult<LevelCompletionMutation>(
@@ -171,6 +171,11 @@ namespace CalmSpace.Workshop
                     false,
                     0,
                     snapshot.CozyTokens));
+        }
+
+        private bool IsStoreReady()
+        {
+            return _store != null && _store.IsInitialized;
         }
     }
 }

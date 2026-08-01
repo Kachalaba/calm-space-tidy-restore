@@ -4,12 +4,37 @@ using CalmSpace.Levels;
 
 namespace CalmSpace.Workshop
 {
+    public interface IWorkshopProgressProjector
+    {
+        bool TryProject(
+            DemoProgressSnapshot snapshot,
+            out WorkshopProgressProjection projection);
+
+        WorkshopRecommendedAction? GetRecommendedAction(
+            DemoProgressSnapshot snapshot);
+
+        WorkshopRecommendedAction? GetExplicitWorkshopAction(
+            DemoProgressSnapshot snapshot);
+
+        bool TryResolveStartLevel(
+            string beatId,
+            out int levelIndex,
+            out LevelCatalogEntry entry,
+            out WorkshopBeatDefinition beat);
+
+        bool TryResolveCompletion(
+            string levelId,
+            int levelIndex,
+            out WorkshopBeatDefinition beat);
+    }
+
     /// <summary>
     /// Converts the immutable profile into workshop presentation state. This
     /// never retains a projection, so each caller observes the current store
     /// snapshot without mutable UI state between refreshes.
     /// </summary>
-    public sealed class WorkshopProgressProjector
+    public sealed class WorkshopProgressProjector :
+        IWorkshopProgressProjector
     {
         private readonly LevelCatalog _levels;
         private readonly LivingWorkshopCatalog _workshop;
@@ -19,12 +44,11 @@ namespace CalmSpace.Workshop
 
         public WorkshopProgressProjector(
             LevelCatalog levels,
-            LivingWorkshopCatalog workshop,
-            string chapterId)
+            LivingWorkshopCatalog workshop)
         {
             _levels = levels;
             _workshop = workshop;
-            _chapterId = Normalize(chapterId);
+            _chapterId = WorkshopContentIds.CozyWorkshopChapterId;
 
             WorkshopCatalogValidationResult validation =
                 WorkshopCatalogValidator.ValidateChapter(
@@ -195,7 +219,7 @@ namespace CalmSpace.Workshop
             return recommended;
         }
 
-        internal bool TryResolveStartLevel(
+        public bool TryResolveStartLevel(
             string beatId,
             out int levelIndex,
             out LevelCatalogEntry entry,
@@ -222,7 +246,7 @@ namespace CalmSpace.Workshop
             return true;
         }
 
-        internal bool TryResolveCompletion(
+        public bool TryResolveCompletion(
             string levelId,
             int levelIndex,
             out WorkshopBeatDefinition beat)
@@ -302,11 +326,5 @@ namespace CalmSpace.Workshop
                 (snapshot.CompletedLevelMask & (1 << levelIndex)) != 0;
         }
 
-        private static string Normalize(string value)
-        {
-            return string.IsNullOrWhiteSpace(value)
-                ? string.Empty
-                : value.Trim();
-        }
     }
 }

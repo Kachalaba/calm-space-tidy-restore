@@ -179,8 +179,7 @@ namespace CalmSpace.Tests.EditMode
             {
                 var projector = new WorkshopProgressProjector(
                     levels,
-                    invalid,
-                    ChapterId);
+                    invalid);
 
                 Assert.That(
                     projector.TryProject(
@@ -207,8 +206,7 @@ namespace CalmSpace.Tests.EditMode
             return new WorkshopProgressProjector(
                 LoadLevels(),
                 AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
-                    WorkshopCatalogPath),
-                ChapterId);
+                    WorkshopCatalogPath));
         }
 
         private static LevelCatalog LoadLevels()
