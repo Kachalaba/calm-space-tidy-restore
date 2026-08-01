@@ -1,7 +1,10 @@
 using System;
 using System.Globalization;
 using System.Text;
+using CalmSpace.Demo;
 using CalmSpace.Levels;
+using CalmSpace.Monetization;
+using CalmSpace.Workshop;
 using UnityEngine;
 
 namespace CalmSpace.Analytics
@@ -17,7 +20,36 @@ namespace CalmSpace.Analytics
         DecorationSelected = 6,
         ThemeSelected = 7,
         MusicChanged = 8,
-        LocaleChanged = 9
+        LocaleChanged = 9,
+        WorkshopViewed = 10,
+        RestorationTaskSelected = 11,
+        RestorationRevealStarted = 12,
+        RestorationRevealCompleted = 13,
+        MemoryUnlocked = 14,
+        MemoryViewed = 15,
+        AlbumOpened = 16,
+        WorkshopChoiceShown = 17,
+        DecorSlotOpened = 18,
+        DailyCareAvailable = 19,
+        DailyCareCompleted = 20,
+        ChapterCompleted = 21,
+        NextRoomTeaserViewed = 22,
+        RewardedOfferOpened = 23,
+        RewardedOfferOutcome = 24,
+        RelaxPassScreenOpened = 25
+    }
+
+    /// <summary>
+    /// Typed selection causes that can be emitted by the decor surfaces.
+    /// This keeps new workshop events from relying on arbitrary source text.
+    /// </summary>
+    public enum DecorationSelectionSource
+    {
+        Owned = 0,
+        Purchase = 1,
+        Rewarded = 2,
+        RelaxPass = 3,
+        Migration = 4
     }
 
     /// <summary>
@@ -46,6 +78,63 @@ namespace CalmSpace.Analytics
             string locale,
             string appVersion,
             bool flag)
+            : this(
+                kind,
+                levelId,
+                levelType,
+                levelIndex,
+                chapterId,
+                stageIndex,
+                stageCount,
+                durationSeconds,
+                undoCount,
+                progressCurrent,
+                progressTotal,
+                tokenDelta,
+                tokenBalance,
+                itemId,
+                source,
+                locale,
+                appVersion,
+                flag,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false)
+        {
+        }
+
+        private ProductAnalyticsEvent(
+            ProductEventKind kind,
+            string levelId,
+            LevelType levelType,
+            int levelIndex,
+            string chapterId,
+            int stageIndex,
+            int stageCount,
+            double durationSeconds,
+            int undoCount,
+            int progressCurrent,
+            int progressTotal,
+            int tokenDelta,
+            int tokenBalance,
+            string itemId,
+            string source,
+            string locale,
+            string appVersion,
+            bool flag,
+            string beatId,
+            string slotId,
+            string variantId,
+            string careId,
+            LevelLaunchSource? launchSource,
+            AdShowOutcome? outcome,
+            DecorationSelectionSource? decorationSource,
+            bool firstView)
         {
             Kind = kind;
             LevelId = levelId ?? string.Empty;
@@ -65,6 +154,14 @@ namespace CalmSpace.Analytics
             Locale = locale ?? string.Empty;
             AppVersion = appVersion ?? string.Empty;
             Flag = flag;
+            BeatId = beatId ?? string.Empty;
+            SlotId = slotId ?? string.Empty;
+            VariantId = variantId ?? string.Empty;
+            CareId = careId ?? string.Empty;
+            LaunchSource = launchSource;
+            Outcome = outcome;
+            DecorationSource = decorationSource;
+            FirstView = firstView;
         }
 
         public ProductEventKind Kind { get; }
@@ -102,6 +199,22 @@ namespace CalmSpace.Analytics
         public string Locale { get; }
 
         public string AppVersion { get; }
+
+        public string BeatId { get; }
+
+        public string SlotId { get; }
+
+        public string VariantId { get; }
+
+        public string CareId { get; }
+
+        public LevelLaunchSource? LaunchSource { get; }
+
+        public AdShowOutcome? Outcome { get; }
+
+        public DecorationSelectionSource? DecorationSource { get; }
+
+        public bool FirstView { get; }
 
         /// <summary>
         /// Event-specific boolean. On level completion it means that this was
@@ -155,6 +268,28 @@ namespace CalmSpace.Analytics
                 tokenBalance,
                 false,
                 includeRestorationContext);
+        }
+
+        public static ProductAnalyticsEvent LevelStarted(
+            LevelDefinition definition,
+            int levelIndex,
+            int tokenBalance,
+            LevelLaunchSource launchSource,
+            bool includeRestorationContext = true)
+        {
+            return CreateLevelEvent(
+                ProductEventKind.LevelStarted,
+                definition,
+                levelIndex,
+                0d,
+                0,
+                0,
+                0,
+                0,
+                tokenBalance,
+                false,
+                includeRestorationContext,
+                launchSource);
         }
 
         public static ProductAnalyticsEvent LevelCompleted(
@@ -251,6 +386,357 @@ namespace CalmSpace.Analytics
                 source,
                 0,
                 tokenBalance,
+                false);
+        }
+
+        public static ProductAnalyticsEvent DecorationSelected(
+            string slotId,
+            string variantId,
+            DecorationSelectionSource source,
+            int tokenBalance)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.DecorationSelected,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                tokenBalance,
+                string.Empty,
+                slotId,
+                variantId,
+                string.Empty,
+                null,
+                null,
+                source,
+                false);
+        }
+
+        public static ProductAnalyticsEvent DecorationSelected(
+            string slotId,
+            string variantId,
+            DecorationGrantSource source,
+            int tokenBalance)
+        {
+            return DecorationSelected(
+                slotId,
+                variantId,
+                ToDecorationSelectionSource(source),
+                tokenBalance);
+        }
+
+        public static ProductAnalyticsEvent WorkshopViewed(string chapterId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.WorkshopViewed,
+                string.Empty,
+                default,
+                -1,
+                chapterId,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RestorationTaskSelected(
+            LevelLaunchRequest request)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RestorationTaskSelected,
+                request.LevelId,
+                default,
+                request.LevelIndex,
+                request.ChapterId,
+                0,
+                0,
+                request.BeatId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                request.Source,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RestorationRevealStarted(
+            string beatId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RestorationRevealStarted,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                beatId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RestorationRevealCompleted(
+            string beatId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RestorationRevealCompleted,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                beatId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent MemoryUnlocked(
+            string beatId,
+            string memoryId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.MemoryUnlocked,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                beatId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false,
+                memoryId);
+        }
+
+        public static ProductAnalyticsEvent MemoryViewed(
+            string memoryId,
+            bool firstView)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.MemoryViewed,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                firstView,
+                memoryId);
+        }
+
+        public static ProductAnalyticsEvent AlbumOpened()
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.AlbumOpened,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent WorkshopChoiceShown(string slotId)
+        {
+            return CreateSlotEvent(
+                ProductEventKind.WorkshopChoiceShown,
+                slotId);
+        }
+
+        public static ProductAnalyticsEvent DecorSlotOpened(string slotId)
+        {
+            return CreateSlotEvent(
+                ProductEventKind.DecorSlotOpened,
+                slotId);
+        }
+
+        public static ProductAnalyticsEvent DailyCareAvailable(string careId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.DailyCareAvailable,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                careId,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent DailyCareCompleted(
+            string careId,
+            int reward,
+            int tokenBalance)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.DailyCareCompleted,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                Math.Max(0, reward),
+                tokenBalance,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                careId,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent ChapterCompleted(
+            string chapterId,
+            string beatId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.ChapterCompleted,
+                string.Empty,
+                default,
+                -1,
+                chapterId,
+                0,
+                0,
+                beatId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent NextRoomTeaserViewed(
+            string chapterId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.NextRoomTeaserViewed,
+                string.Empty,
+                default,
+                -1,
+                chapterId,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RewardedOfferOpened(
+            string slotId,
+            string variantId)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RewardedOfferOpened,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                slotId,
+                variantId,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RewardedOfferOutcome(
+            string slotId,
+            string variantId,
+            AdShowOutcome outcome)
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RewardedOfferOutcome,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                slotId,
+                variantId,
+                string.Empty,
+                null,
+                outcome,
+                null,
+                false);
+        }
+
+        public static ProductAnalyticsEvent RelaxPassScreenOpened()
+        {
+            return CreateWorkshopEvent(
+                ProductEventKind.RelaxPassScreenOpened,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
                 false);
         }
 
@@ -355,6 +841,28 @@ namespace CalmSpace.Analytics
             Append(builder, "source", Source);
             Append(builder, "locale", Locale);
             Append(builder, "app_version", AppVersion);
+            Append(builder, "beat_id", BeatId);
+            Append(builder, "slot_id", SlotId);
+            Append(builder, "variant_id", VariantId);
+            Append(builder, "care_id", CareId);
+            if (LaunchSource.HasValue)
+            {
+                Append(
+                    builder,
+                    "launch_source",
+                    GetLaunchSourceName(LaunchSource.Value));
+            }
+
+            if (Outcome.HasValue)
+            {
+                Append(builder, "outcome", GetOutcomeName(Outcome.Value));
+            }
+
+            if (Kind == ProductEventKind.MemoryViewed)
+            {
+                Append(builder, "first_view", FirstView ? 1 : 0);
+            }
+
             if (Kind == ProductEventKind.LevelCompleted ||
                 Kind == ProductEventKind.MusicChanged)
             {
@@ -388,6 +896,38 @@ namespace CalmSpace.Analytics
                     return "music_changed";
                 case ProductEventKind.LocaleChanged:
                     return "locale_changed";
+                case ProductEventKind.WorkshopViewed:
+                    return "workshop_viewed";
+                case ProductEventKind.RestorationTaskSelected:
+                    return "restoration_task_selected";
+                case ProductEventKind.RestorationRevealStarted:
+                    return "restoration_reveal_started";
+                case ProductEventKind.RestorationRevealCompleted:
+                    return "restoration_reveal_completed";
+                case ProductEventKind.MemoryUnlocked:
+                    return "memory_unlocked";
+                case ProductEventKind.MemoryViewed:
+                    return "memory_viewed";
+                case ProductEventKind.AlbumOpened:
+                    return "album_opened";
+                case ProductEventKind.WorkshopChoiceShown:
+                    return "workshop_choice_shown";
+                case ProductEventKind.DecorSlotOpened:
+                    return "decor_slot_opened";
+                case ProductEventKind.DailyCareAvailable:
+                    return "daily_care_available";
+                case ProductEventKind.DailyCareCompleted:
+                    return "daily_care_completed";
+                case ProductEventKind.ChapterCompleted:
+                    return "chapter_completed";
+                case ProductEventKind.NextRoomTeaserViewed:
+                    return "next_room_teaser_viewed";
+                case ProductEventKind.RewardedOfferOpened:
+                    return "rewarded_offer_opened";
+                case ProductEventKind.RewardedOfferOutcome:
+                    return "rewarded_offer_outcome";
+                case ProductEventKind.RelaxPassScreenOpened:
+                    return "relax_pass_screen_opened";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(kind),
@@ -407,7 +947,8 @@ namespace CalmSpace.Analytics
             int tokenDelta,
             int tokenBalance,
             bool flag,
-            bool includeRestorationContext)
+            bool includeRestorationContext,
+            LevelLaunchSource? launchSource = null)
         {
             string chapterId = string.Empty;
             int stageIndex = -1;
@@ -421,7 +962,7 @@ namespace CalmSpace.Analytics
                 stageCount = stage.StageCount;
             }
 
-            return new ProductAnalyticsEvent(
+            ProductAnalyticsEvent analyticsEvent = new ProductAnalyticsEvent(
                 kind,
                 definition?.LevelId,
                 definition != null
@@ -442,6 +983,31 @@ namespace CalmSpace.Analytics
                 string.Empty,
                 string.Empty,
                 flag);
+            return launchSource.HasValue
+                ? CreateWorkshopEvent(
+                    kind,
+                    analyticsEvent.LevelId,
+                    analyticsEvent.LevelType,
+                    analyticsEvent.LevelIndex,
+                    analyticsEvent.ChapterId,
+                    analyticsEvent.TokenDelta,
+                    analyticsEvent.TokenBalance,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    launchSource,
+                    null,
+                    null,
+                    analyticsEvent.Flag,
+                    analyticsEvent.ItemId,
+                    analyticsEvent.DurationSeconds,
+                    analyticsEvent.UndoCount,
+                    analyticsEvent.ProgressCurrent,
+                    analyticsEvent.ProgressTotal,
+                    analyticsEvent.StageIndex,
+                    analyticsEvent.StageCount)
+                : analyticsEvent;
         }
 
         private static ProductAnalyticsEvent CreateMetaEvent(
@@ -471,6 +1037,168 @@ namespace CalmSpace.Analytics
                 string.Empty,
                 string.Empty,
                 flag);
+        }
+
+        private static ProductAnalyticsEvent CreateSlotEvent(
+            ProductEventKind kind,
+            string slotId)
+        {
+            return CreateWorkshopEvent(
+                kind,
+                string.Empty,
+                default,
+                -1,
+                string.Empty,
+                0,
+                0,
+                string.Empty,
+                slotId,
+                string.Empty,
+                string.Empty,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        private static ProductAnalyticsEvent CreateWorkshopEvent(
+            ProductEventKind kind,
+            string levelId,
+            LevelType levelType,
+            int levelIndex,
+            string chapterId,
+            int tokenDelta,
+            int tokenBalance,
+            string beatId,
+            string slotId,
+            string variantId,
+            string careId,
+            LevelLaunchSource? launchSource,
+            AdShowOutcome? outcome,
+            DecorationSelectionSource? decorationSource,
+            bool firstView,
+            string itemId = "",
+            double durationSeconds = 0d,
+            int undoCount = 0,
+            int progressCurrent = 0,
+            int progressTotal = 0,
+            int stageIndex = -1,
+            int stageCount = 0)
+        {
+            return new ProductAnalyticsEvent(
+                kind,
+                levelId,
+                levelType,
+                levelIndex,
+                chapterId,
+                stageIndex,
+                stageCount,
+                durationSeconds,
+                undoCount,
+                progressCurrent,
+                progressTotal,
+                tokenDelta,
+                tokenBalance,
+                itemId,
+                decorationSource.HasValue
+                    ? GetDecorationSourceName(decorationSource.Value)
+                    : string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                beatId,
+                slotId,
+                variantId,
+                careId,
+                launchSource,
+                outcome,
+                decorationSource,
+                firstView);
+        }
+
+        private static DecorationSelectionSource ToDecorationSelectionSource(
+            DecorationGrantSource source)
+        {
+            switch (source)
+            {
+                case DecorationGrantSource.Rewarded:
+                    return DecorationSelectionSource.Rewarded;
+                case DecorationGrantSource.RelaxPass:
+                    return DecorationSelectionSource.RelaxPass;
+                case DecorationGrantSource.Migration:
+                    return DecorationSelectionSource.Migration;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(source),
+                        source,
+                        "Unsupported decoration grant source.");
+            }
+        }
+
+        private static string GetDecorationSourceName(
+            DecorationSelectionSource source)
+        {
+            switch (source)
+            {
+                case DecorationSelectionSource.Owned:
+                    return "owned";
+                case DecorationSelectionSource.Purchase:
+                    return "purchase";
+                case DecorationSelectionSource.Rewarded:
+                    return "rewarded";
+                case DecorationSelectionSource.RelaxPass:
+                    return "relax_pass";
+                case DecorationSelectionSource.Migration:
+                    return "migration";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(source),
+                        source,
+                        "Unsupported decoration selection source.");
+            }
+        }
+
+        private static string GetLaunchSourceName(
+            LevelLaunchSource source)
+        {
+            switch (source)
+            {
+                case LevelLaunchSource.Workshop:
+                    return "workshop";
+                case LevelLaunchSource.Catalog:
+                    return "catalog";
+                case LevelLaunchSource.DailyCare:
+                    return "daily_care";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(source),
+                        source,
+                        "Unsupported level launch source.");
+            }
+        }
+
+        private static string GetOutcomeName(AdShowOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case AdShowOutcome.Blocked:
+                    return "blocked";
+                case AdShowOutcome.Completed:
+                    return "completed";
+                case AdShowOutcome.Closed:
+                    return "closed";
+                case AdShowOutcome.Failed:
+                    return "failed";
+                case AdShowOutcome.Unavailable:
+                    return "unavailable";
+                case AdShowOutcome.Cancelled:
+                    return "cancelled";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(outcome),
+                        outcome,
+                        "Unsupported rewarded offer outcome.");
+            }
         }
 
         private static void Append(
