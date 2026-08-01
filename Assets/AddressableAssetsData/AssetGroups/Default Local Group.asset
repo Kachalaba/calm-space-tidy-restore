@@ -57,6 +57,12 @@ MonoBehaviour:
     m_SerializedLabels:
     - calm-space-level
     FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: c4caa204aabee4dfbbd6705bd97b4168
+    m_Address: workshop/cozy-workshop/room
+    m_ReadOnly: 0
+    m_SerializedLabels:
+    - calm-space-workshop-cozy-workshop
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: e722de1c7ca064185ab3d108862e6236
     m_Address: levels/04-color-shelf
     m_ReadOnly: 0

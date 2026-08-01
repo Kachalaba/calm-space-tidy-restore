@@ -105,6 +105,7 @@ MonoBehaviour:
     m_LabelNames:
     - default
     - calm-space-level
+    - calm-space-workshop-cozy-workshop
   m_SchemaTemplates: []
   m_GroupTemplateObjects:
   - {fileID: 11400000, guid: 78195c5435cda4d5586aa8a8f2672e95, type: 2}

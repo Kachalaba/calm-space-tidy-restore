@@ -246,6 +246,7 @@ namespace CalmSpace.Editor
             WorkshopHomeController controller =
                 screen.gameObject.AddComponent<WorkshopHomeController>();
             SetObjectReference(controller, "_view", view);
+            SetObjectReference(controller, "_roomParent", roomRoot);
 
             RectTransform legacy = Rect("Hidden Legacy Home Controls", screen);
             legacy.gameObject.SetActive(false);

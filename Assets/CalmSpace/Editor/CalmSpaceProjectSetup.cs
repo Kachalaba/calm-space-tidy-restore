@@ -71,9 +71,12 @@ namespace CalmSpace.Editor
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopBottomSheet.cs",
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeView.cs",
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopRoomPresenter.cs",
             "Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs",
             "Assets/CalmSpace/Runtime/Composition/CalmSpaceLifetimeScope.cs",
-            "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs"
+            "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs",
+            "Assets/CalmSpace/Runtime/Workshop/AddressableWorkshopRoomLoader.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceWorkshopAssetBuilder.cs"
         };
 
         private static readonly Color BackgroundColor =
@@ -128,6 +131,7 @@ namespace CalmSpace.Editor
                 CalmSpaceWorkshopCatalogBuilder.CreateOrUpdate();
             WorkshopTextCatalog workshopTextCatalog =
                 CalmSpaceWorkshopTextBuilder.CreateOrUpdate();
+            CalmSpaceWorkshopAssetBuilder.CreateOrUpdate();
 
             CreateOrUpdateMainScene(
                 catalog,

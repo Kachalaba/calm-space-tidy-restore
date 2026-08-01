@@ -51,7 +51,13 @@ namespace CalmSpace.UI
         IWorkshopHomeRecovery
     {
         [SerializeField] private WorkshopHomeView _view;
+        [SerializeField] private RectTransform _roomParent;
 
+        private IWorkshopRoomLoader _roomLoader;
+        private WorkshopRoomPresenter _room;
+        private CancellationTokenSource _roomCancellation;
+        private bool _roomUnavailable;
+        private bool _roomLoading;
         private IDemoProgressStore _store;
         private IWorkshopFlowCoordinator _flow;
         private IWorkshopProgressProjector _projector;
@@ -84,8 +90,11 @@ namespace CalmSpace.UI
             IHapticService haptics,
             IDemoLocalizationService localization,
             IBackgroundMusicService music,
-            WorkshopRuntimeAvailability availability)
+            WorkshopRuntimeAvailability availability,
+            IWorkshopRoomLoader roomLoader)
         {
+            _roomLoader = roomLoader ??
+                throw new ArgumentNullException(nameof(roomLoader));
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _flow = flow ?? throw new ArgumentNullException(nameof(flow));
             _projector = projector ??
@@ -113,7 +122,7 @@ namespace CalmSpace.UI
             if (_view == null || _store == null || _flow == null ||
                 _projector == null || _text == null || _analytics == null ||
                 _haptics == null || _localization == null || _music == null ||
-                _availability == null)
+                _availability == null || _roomLoader == null)
             {
                 throw new InvalidOperationException(
                     "WorkshopHomeController is not fully configured.");
@@ -121,6 +130,7 @@ namespace CalmSpace.UI
 
             BindEvents();
             _initialized = true;
+            BeginRoomLoad();
             Refresh();
             return UniTask.CompletedTask;
         }
@@ -130,12 +140,15 @@ namespace CalmSpace.UI
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_initialized)
+            if (!_initialized)
             {
-                Refresh();
-                _view.CloseBottomSheet();
+                return UniTask.CompletedTask;
             }
 
+            BeginRoomLoad();
+            _room?.SetVisible(false);
+            Refresh();
+            _view.CloseBottomSheet();
             return UniTask.CompletedTask;
         }
 
@@ -144,7 +157,13 @@ namespace CalmSpace.UI
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_initialized && !_visible)
+            if (!_initialized)
+            {
+                return UniTask.CompletedTask;
+            }
+
+            _room?.SetVisible(true);
+            if (!_visible)
             {
                 _visible = true;
                 _analytics.Track(ProductAnalyticsEvent.WorkshopViewed(
@@ -159,7 +178,79 @@ namespace CalmSpace.UI
             _visible = false;
             _hasLoadFailure = false;
             _retryLoad = null;
+            _room?.SetVisible(false);
             _view?.CloseBottomSheet();
+        }
+
+        /// <summary>
+        /// Starts loading the illustrated room without gating the first
+        /// screen. The home is fully usable before the room arrives, and a
+        /// missing or broken room visual is never fatal: the Task 8 localized
+        /// card keeps every level reachable.
+        /// </summary>
+        private void BeginRoomLoad()
+        {
+            if (_room != null ||
+                _roomLoading ||
+                _roomUnavailable ||
+                _roomLoader == null ||
+                _roomParent == null ||
+                !_availability.HomeMetaAvailable)
+            {
+                return;
+            }
+
+            _roomLoading = true;
+            _roomCancellation ??= new CancellationTokenSource();
+            LoadRoomAsync(_roomCancellation.Token).Forget();
+        }
+
+        private async UniTaskVoid LoadRoomAsync(
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                WorkshopRoomPresenter room = await _roomLoader.LoadAsync(
+                    WorkshopContentIds.CozyWorkshopChapterId,
+                    _roomParent,
+                    cancellationToken);
+                if (cancellationToken.IsCancellationRequested || this == null)
+                {
+                    return;
+                }
+
+                if (room == null)
+                {
+                    _roomUnavailable = true;
+                    return;
+                }
+
+                _room = room;
+                _room.HotspotPressed += HandleRoomHotspotPressed;
+                _room.SetVisible(_visible);
+                Refresh();
+            }
+            catch (OperationCanceledException)
+            {
+                // The home was torn down while the room was loading.
+            }
+            catch (Exception exception)
+            {
+                _roomUnavailable = true;
+                Debug.LogWarning(
+                    "The illustrated workshop room is unavailable; the " +
+                    "localized task card remains in use. " + exception.Message,
+                    this);
+            }
+            finally
+            {
+                _roomLoading = false;
+            }
+        }
+
+        private void HandleRoomHotspotPressed(string beatId)
+        {
+            HandlePrimaryRequested();
         }
 
         public void ShowLoadFailure(
@@ -326,6 +417,7 @@ namespace CalmSpace.UI
                     _store.Current,
                     out WorkshopProgressProjection projection))
             {
+                _room?.ApplyState(default);
                 _view.Render(new WorkshopHomeViewState(
                     string.Empty,
                     string.Empty,
@@ -347,12 +439,16 @@ namespace CalmSpace.UI
                 : ResolveTaskTitle(action);
             string progress = projection.CompletedBeatCount + " / " +
                 projection.BeatCount;
+            _room?.ApplyState(
+                WorkshopRoomVisualState.FromProjection(projection));
             _view.Render(new WorkshopHomeViewState(
                 taskTitle,
                 _text.Get("home.start"),
                 progress,
                 hasLevel,
-                hasLevel));
+                // The illustrated room owns the real hotspot when it is
+                // present, so exactly one hotspot is ever actionable.
+                hasLevel && _room == null));
         }
 
         private string ResolveTaskTitle(WorkshopRecommendedAction? action)
@@ -439,7 +535,20 @@ namespace CalmSpace.UI
 
         private void OnDestroy()
         {
+            if (_roomCancellation != null)
+            {
+                _roomCancellation.Cancel();
+                _roomCancellation.Dispose();
+                _roomCancellation = null;
+            }
+
             NotifyHidden();
+            if (_room != null)
+            {
+                _room.HotspotPressed -= HandleRoomHotspotPressed;
+                _room = null;
+            }
+
             UnbindEvents();
             _initialized = false;
         }

@@ -195,6 +195,11 @@ namespace CalmSpace.Core
                     Lifetime.Singleton)
                 .As<IWorkshopTextService>();
 
+            builder.Register<AddressableWorkshopRoomLoader>(
+                    _ => new AddressableWorkshopRoomLoader(),
+                    Lifetime.Singleton)
+                .As<IWorkshopRoomLoader>();
+
             builder.Register<WorkshopProgressProjector>(
                     resolver => new WorkshopProgressProjector(
                         _levelCatalog,
