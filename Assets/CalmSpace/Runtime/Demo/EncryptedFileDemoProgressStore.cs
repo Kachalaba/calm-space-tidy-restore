@@ -22,6 +22,7 @@ namespace CalmSpace.Demo
         private readonly string _filePath;
         private readonly string _temporaryPath;
         private readonly string _backupPath;
+        private readonly string _recoveryStagingPath;
         private readonly IAuthenticatedDataProtector _protector;
         private readonly byte[] _associatedData;
         private readonly string _legacyPlayerPrefsKey;
@@ -61,6 +62,7 @@ namespace CalmSpace.Demo
             _filePath = Path.GetFullPath(filePath);
             _temporaryPath = _filePath + ".tmp";
             _backupPath = _filePath + ".bak";
+            _recoveryStagingPath = _filePath + ".recovery";
             _associatedData = (byte[])associatedData.Clone();
             _legacyPlayerPrefsKey =
                 legacyPlayerPrefsKey ?? string.Empty;
@@ -527,11 +529,16 @@ namespace CalmSpace.Demo
                     candidate.Snapshot,
                     LevelCount,
                     _defaultThemeId);
+            string stagingPath =
+                candidate.Source == ProfileLoadSource.Temporary
+                    ? _recoveryStagingPath
+                    : _temporaryPath;
             return PersistAndPublishInitialization(
                 normalized,
                 candidate.Status,
                 candidate.Source,
-                candidate.Status == ProfileLoadStatus.LoadedV1);
+                candidate.Status == ProfileLoadStatus.LoadedV1,
+                stagingPath);
         }
 
         private ProfileInitializationResult
@@ -539,11 +546,19 @@ namespace CalmSpace.Demo
                 DemoProgressSnapshot snapshot,
                 ProfileLoadStatus loadStatus,
                 ProfileLoadSource source,
-                bool wasMigrated)
+                bool wasMigrated,
+                string stagingPath = null)
         {
-            if (!TryPersist(snapshot))
+            if (!TryPersist(
+                    snapshot,
+                    stagingPath ?? _temporaryPath))
             {
                 return Failure(ProfileLoadStatus.IoError, source);
+            }
+
+            if (source == ProfileLoadSource.Temporary)
+            {
+                TryDeleteFile(_temporaryPath);
             }
 
             MarkLegacyImportConsumed();
@@ -596,7 +611,8 @@ namespace CalmSpace.Demo
             byte[] plaintext = null;
             try
             {
-                if (!_fileSystem.FileExists(path))
+                if (_fileSystem.GetFilePresence(path) ==
+                    ProfileFilePresence.Missing)
                 {
                     return CandidateReadResult.Failed(
                         ProfileLoadStatus.Missing,
@@ -679,6 +695,13 @@ namespace CalmSpace.Demo
 
         private bool TryPersist(DemoProgressSnapshot snapshot)
         {
+            return TryPersist(snapshot, _temporaryPath);
+        }
+
+        private bool TryPersist(
+            DemoProgressSnapshot snapshot,
+            string stagingPath)
+        {
             byte[] plaintext = null;
             byte[] protectedData = null;
             try
@@ -702,19 +725,20 @@ namespace CalmSpace.Demo
                 }
 
                 _fileSystem.WriteAllBytesAndFlush(
-                    _temporaryPath,
+                    stagingPath,
                     protectedData);
-                if (_fileSystem.FileExists(_filePath))
+                if (_fileSystem.GetFilePresence(_filePath) ==
+                    ProfileFilePresence.Exists)
                 {
                     _fileSystem.Replace(
-                        _temporaryPath,
+                        stagingPath,
                         _filePath,
                         _backupPath);
                 }
                 else
                 {
                     _fileSystem.Move(
-                        _temporaryPath,
+                        stagingPath,
                         _filePath);
                 }
 
@@ -727,7 +751,7 @@ namespace CalmSpace.Demo
                       exception is NotSupportedException ||
                       exception is CryptographicException)
             {
-                TryDeleteTemporary();
+                TryDeleteFile(stagingPath);
                 Debug.LogWarning(
                     "Calm Space could not persist the encrypted profile: " +
                     exception.GetType().Name);
@@ -807,13 +831,14 @@ namespace CalmSpace.Demo
             }
         }
 
-        private void TryDeleteTemporary()
+        private void TryDeleteFile(string path)
         {
             try
             {
-                if (_fileSystem.FileExists(_temporaryPath))
+                if (_fileSystem.GetFilePresence(path) ==
+                    ProfileFilePresence.Exists)
                 {
-                    _fileSystem.Delete(_temporaryPath);
+                    _fileSystem.Delete(path);
                 }
             }
             catch (Exception exception)
@@ -857,7 +882,10 @@ namespace CalmSpace.Demo
                 case DataUnprotectStatus.AuthenticationFailed:
                     return ProfileLoadStatus.AuthenticationFailed;
                 case DataUnprotectStatus.UnsupportedVersion:
-                    return ProfileLoadStatus.UnsupportedVersion;
+                    // Protector envelope versions are not authenticated.
+                    // Only SecureProfileCodec can return terminal future
+                    // schema status after authenticated unprotection.
+                    return ProfileLoadStatus.InvalidData;
                 default:
                     return ProfileLoadStatus.InvalidData;
             }

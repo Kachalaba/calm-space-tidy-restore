@@ -538,6 +538,62 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void CorruptedPrimaryEnvelopeVersionFallsThroughToTemporary()
+        {
+            using (var fixture = new SecureStoreFixture())
+            {
+                fixture.WriteVersionTwo(
+                    fixture.FilePath,
+                    CreateSnapshot(tokens: 11));
+                CorruptEnvelopeVersionByte(fixture.FilePath);
+                fixture.WriteVersionTwo(
+                    fixture.TemporaryPath,
+                    CreateSnapshot(tokens: 43));
+                fixture.WriteVersionTwo(
+                    fixture.BackupPath,
+                    CreateSnapshot(tokens: 79));
+
+                ProfileInitializationResult result =
+                    fixture.CreateStore().Initialize(8, "sage", 15);
+
+                Assert.That(result.IsReady, Is.True);
+                Assert.That(
+                    result.Source,
+                    Is.EqualTo(ProfileLoadSource.Temporary));
+                Assert.That(result.WasPersisted, Is.True);
+                Assert.That(result.Snapshot.CozyTokens, Is.EqualTo(43));
+            }
+        }
+
+        [Test]
+        public void CorruptedTemporaryEnvelopeVersionFallsThroughToBackup()
+        {
+            using (var fixture = new SecureStoreFixture())
+            {
+                File.WriteAllBytes(
+                    fixture.FilePath,
+                    new byte[] { 1, 2, 3 });
+                fixture.WriteVersionTwo(
+                    fixture.TemporaryPath,
+                    CreateSnapshot(tokens: 43));
+                CorruptEnvelopeVersionByte(fixture.TemporaryPath);
+                fixture.WriteVersionTwo(
+                    fixture.BackupPath,
+                    CreateSnapshot(tokens: 79));
+
+                ProfileInitializationResult result =
+                    fixture.CreateStore().Initialize(8, "sage", 15);
+
+                Assert.That(result.IsReady, Is.True);
+                Assert.That(
+                    result.Source,
+                    Is.EqualTo(ProfileLoadSource.Backup));
+                Assert.That(result.WasPersisted, Is.True);
+                Assert.That(result.Snapshot.CozyTokens, Is.EqualTo(79));
+            }
+        }
+
+        [Test]
         public void SupportedPrimaryWinsStaleTemporaryAndBackup()
         {
             using (var fixture = new SecureStoreFixture())
@@ -647,6 +703,65 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void FailedTemporaryRecoveryPreservesCandidateBytesForRetry()
+        {
+            using (var fixture = new SecureStoreFixture())
+            {
+                File.WriteAllBytes(
+                    fixture.FilePath,
+                    new byte[] { 4, 5, 6 });
+                DemoProgressSnapshot expected =
+                    CreateSnapshot(tokens: 63);
+                fixture.WriteVersionTwo(
+                    fixture.TemporaryPath,
+                    expected);
+                byte[] primaryBefore =
+                    File.ReadAllBytes(fixture.FilePath);
+                byte[] temporaryBefore =
+                    File.ReadAllBytes(fixture.TemporaryPath);
+                var fileSystem = new FaultInjectingProfileFileSystem
+                {
+                    FailReplace = true
+                };
+
+                ProfileInitializationResult failed =
+                    fixture.CreateStore(fileSystem: fileSystem)
+                        .Initialize(8, "sage", 15);
+
+                Assert.That(
+                    failed.LoadStatus,
+                    Is.EqualTo(ProfileLoadStatus.IoError));
+                Assert.That(
+                    failed.Source,
+                    Is.EqualTo(ProfileLoadSource.Temporary));
+                Assert.That(failed.IsReady, Is.False);
+                Assert.That(
+                    File.ReadAllBytes(fixture.FilePath),
+                    Is.EqualTo(primaryBefore));
+                Assert.That(
+                    File.Exists(fixture.TemporaryPath),
+                    Is.True,
+                    "A failed republish must keep the authenticated " +
+                    "temporary recovery candidate.");
+                Assert.That(
+                    File.ReadAllBytes(fixture.TemporaryPath),
+                    Is.EqualTo(temporaryBefore));
+
+                fileSystem.FailReplace = false;
+                ProfileInitializationResult retried =
+                    fixture.CreateStore(fileSystem: fileSystem)
+                        .Initialize(8, "sage", 15);
+
+                Assert.That(retried.IsReady, Is.True);
+                Assert.That(
+                    retried.Source,
+                    Is.EqualTo(ProfileLoadSource.Temporary));
+                Assert.That(retried.WasPersisted, Is.True);
+                Assert.That(retried.Snapshot, Is.EqualTo(expected));
+            }
+        }
+
+        [Test]
         public void UnreadableCandidateReturnsIoErrorWithoutWritingDefault()
         {
             using (var fixture = new SecureStoreFixture())
@@ -672,6 +787,52 @@ namespace CalmSpace.Tests.EditMode
                 Assert.That(
                     File.ReadAllBytes(fixture.FilePath),
                     Is.EqualTo(before));
+            }
+        }
+
+        [Test]
+        public void DirectoryAtProfilePathReturnsIoErrorWithoutFallbackWrite()
+        {
+            using (var fixture = new SecureStoreFixture())
+            {
+                Directory.CreateDirectory(fixture.FilePath);
+                var fileSystem = new TrackingSystemProfileFileSystem();
+
+                ProfileInitializationResult result =
+                    fixture.CreateStore(fileSystem: fileSystem)
+                        .Initialize(8, "sage", 15);
+
+                Assert.That(result.IsReady, Is.False);
+                Assert.That(
+                    result.LoadStatus,
+                    Is.EqualTo(ProfileLoadStatus.IoError));
+                Assert.That(
+                    result.Source,
+                    Is.EqualTo(ProfileLoadSource.Primary));
+                Assert.That(fileSystem.WriteCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void MissingProfilePersistsDefaultThroughSystemFileSystem()
+        {
+            using (var fixture = new SecureStoreFixture())
+            {
+                var fileSystem = new TrackingSystemProfileFileSystem();
+
+                ProfileInitializationResult result =
+                    fixture.CreateStore(fileSystem: fileSystem)
+                        .Initialize(8, "sage", 15);
+
+                Assert.That(result.IsReady, Is.True);
+                Assert.That(
+                    result.LoadStatus,
+                    Is.EqualTo(ProfileLoadStatus.Missing));
+                Assert.That(
+                    result.Source,
+                    Is.EqualTo(ProfileLoadSource.Default));
+                Assert.That(result.WasPersisted, Is.True);
+                Assert.That(fileSystem.WriteCount, Is.EqualTo(1));
             }
         }
 
@@ -829,6 +990,15 @@ namespace CalmSpace.Tests.EditMode
             byte[] bytes = File.ReadAllBytes(path);
             Assert.That(bytes.Length, Is.GreaterThan(8));
             bytes[bytes.Length / 2] ^= 0x5A;
+            File.WriteAllBytes(path, bytes);
+            Array.Clear(bytes, 0, bytes.Length);
+        }
+
+        private static void CorruptEnvelopeVersionByte(string path)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.That(bytes.Length, Is.GreaterThan(0));
+            bytes[0] = unchecked((byte)(bytes[0] + 1));
             File.WriteAllBytes(path, bytes);
             Array.Clear(bytes, 0, bytes.Length);
         }
@@ -997,6 +1167,63 @@ namespace CalmSpace.Tests.EditMode
             }
         }
 
+        private sealed class TrackingSystemProfileFileSystem :
+            IProfileFileSystem
+        {
+            private readonly SystemProfileFileSystem _inner =
+                new SystemProfileFileSystem();
+
+            public int WriteCount { get; private set; }
+
+            public ProfileFilePresence GetFilePresence(string path)
+            {
+                return _inner.GetFilePresence(path);
+            }
+
+            public long GetFileLength(string path)
+            {
+                return _inner.GetFileLength(path);
+            }
+
+            public byte[] ReadAllBytes(string path)
+            {
+                return _inner.ReadAllBytes(path);
+            }
+
+            public void CreateDirectory(string path)
+            {
+                _inner.CreateDirectory(path);
+            }
+
+            public void WriteAllBytesAndFlush(
+                string path,
+                byte[] bytes)
+            {
+                WriteCount++;
+                _inner.WriteAllBytesAndFlush(path, bytes);
+            }
+
+            public void Replace(
+                string sourcePath,
+                string destinationPath,
+                string backupPath)
+            {
+                _inner.Replace(sourcePath, destinationPath, backupPath);
+            }
+
+            public void Move(
+                string sourcePath,
+                string destinationPath)
+            {
+                _inner.Move(sourcePath, destinationPath);
+            }
+
+            public void Delete(string path)
+            {
+                _inner.Delete(path);
+            }
+        }
+
         private sealed class FaultInjectingProfileFileSystem :
             IProfileFileSystem
         {
@@ -1008,9 +1235,11 @@ namespace CalmSpace.Tests.EditMode
 
             public int WriteCount { get; private set; }
 
-            public bool FileExists(string path)
+            public ProfileFilePresence GetFilePresence(string path)
             {
-                return File.Exists(path);
+                return File.Exists(path)
+                    ? ProfileFilePresence.Exists
+                    : ProfileFilePresence.Missing;
             }
 
             public long GetFileLength(string path)

@@ -95,7 +95,8 @@ namespace CalmSpace.Demo
                 fileSystem.WriteAllBytesAndFlush(
                     temporaryPath,
                     protectedData);
-                if (fileSystem.FileExists(filePath))
+                if (fileSystem.GetFilePresence(filePath) ==
+                    ProfileFilePresence.Exists)
                 {
                     fileSystem.Replace(
                         temporaryPath,
@@ -200,7 +201,8 @@ namespace CalmSpace.Demo
         {
             try
             {
-                if (fileSystem.FileExists(path))
+                if (fileSystem.GetFilePresence(path) ==
+                    ProfileFilePresence.Exists)
                 {
                     fileSystem.Delete(path);
                 }

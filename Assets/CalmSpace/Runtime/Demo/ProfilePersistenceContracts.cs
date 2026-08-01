@@ -3,6 +3,12 @@ using System.IO;
 
 namespace CalmSpace.Demo
 {
+    public enum ProfileFilePresence
+    {
+        Missing = 0,
+        Exists = 1
+    }
+
     [Serializable]
     public sealed class SecureProfileV1Dto
     {
@@ -56,7 +62,7 @@ namespace CalmSpace.Demo
 
     public interface IProfileFileSystem
     {
-        bool FileExists(string path);
+        ProfileFilePresence GetFilePresence(string path);
 
         long GetFileLength(string path);
 
@@ -78,9 +84,27 @@ namespace CalmSpace.Demo
 
     public sealed class SystemProfileFileSystem : IProfileFileSystem
     {
-        public bool FileExists(string path)
+        public ProfileFilePresence GetFilePresence(string path)
         {
-            return File.Exists(path);
+            try
+            {
+                FileAttributes attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    throw new IOException(
+                        "The profile path is a directory.");
+                }
+
+                return ProfileFilePresence.Exists;
+            }
+            catch (FileNotFoundException)
+            {
+                return ProfileFilePresence.Missing;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return ProfileFilePresence.Missing;
+            }
         }
 
         public long GetFileLength(string path)
