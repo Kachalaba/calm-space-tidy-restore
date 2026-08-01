@@ -8,7 +8,8 @@ namespace CalmSpace.Demo
     public enum DemoLocale
     {
         English = 0,
-        Ukrainian = 1
+        Ukrainian = 1,
+        Russian = 2
     }
 
     public enum DemoTextKey
@@ -113,6 +114,8 @@ namespace CalmSpace.Demo
             {
                 case DemoLocale.Ukrainian:
                     return GetUkrainian(key);
+                case DemoLocale.Russian:
+                    return GetRussian(key);
                 case DemoLocale.English:
                 default:
                     return GetEnglish(key);
@@ -124,6 +127,22 @@ namespace CalmSpace.Demo
             string levelId,
             string fallback)
         {
+            if (locale == DemoLocale.Russian)
+            {
+                switch (levelId)
+                {
+                    case "01-soft-blocks": return "Мягкие блоки";
+                    case "02-pebble-pairs": return "Пары камней";
+                    case "03-tea-drawer": return "Чайный ящик";
+                    case "04-color-shelf": return "Полка с красками";
+                    case "05-fastener-tray": return "Лоток с крепежом";
+                    case "06-fresh-surface": return "Чистая поверхность";
+                    case "07-cabinet-hinge": return "Петля шкафа";
+                    case "08-dusty-window": return "Пыльное окно";
+                    default: return fallback ?? string.Empty;
+                }
+            }
+
             if (locale != DemoLocale.Ukrainian)
             {
                 return fallback ?? string.Empty;
@@ -157,6 +176,17 @@ namespace CalmSpace.Demo
             string themeId,
             string fallback)
         {
+            if (locale == DemoLocale.Russian)
+            {
+                switch (themeId)
+                {
+                    case "sage": return "Тихий шалфей";
+                    case "ocean": return "Синий час";
+                    case "sunset": return "Нежный закат";
+                    default: return fallback ?? string.Empty;
+                }
+            }
+
             if (locale != DemoLocale.Ukrainian)
             {
                 return fallback ?? string.Empty;
@@ -182,8 +212,13 @@ namespace CalmSpace.Demo
             switch (chapterId)
             {
                 case "cozy-workshop":
-                    return locale == DemoLocale.Ukrainian
-                        ? "Затишна майстерня"
+                    if (locale == DemoLocale.Ukrainian)
+                    {
+                        return "Затишна майстерня";
+                    }
+
+                    return locale == DemoLocale.Russian
+                        ? "Уютная мастерская"
                         : "Cozy Workshop";
                 default:
                     return chapterId ?? string.Empty;
@@ -195,6 +230,18 @@ namespace CalmSpace.Demo
             string decorationId,
             string fallback)
         {
+            if (locale == DemoLocale.Russian)
+            {
+                switch (decorationId)
+                {
+                    case "soft-fern": return "Нежный папоротник";
+                    case "river-stones": return "Речные камни";
+                    case "warm-lantern": return "Тёплый фонарь";
+                    case "clay-vase": return "Глиняная ваза";
+                    default: return fallback ?? string.Empty;
+                }
+            }
+
             if (locale != DemoLocale.Ukrainian)
             {
                 return fallback ?? string.Empty;
@@ -362,6 +409,47 @@ namespace CalmSpace.Demo
                         "Unsupported demo localization key.");
             }
         }
+
+        private static string GetRussian(DemoTextKey key)
+        {
+            switch (key)
+            {
+                case DemoTextKey.HomeEyebrow: return "ПРИБЕРИ  ·  ВОССТАНОВИ  ·  ВЫДОХНИ";
+                case DemoTextKey.HomeSubtitle: return "Маленькие ритуалы. Приятный порядок.";
+                case DemoTextKey.HomeRitualLabel: return "ТВОЙ ТИХИЙ РИТУАЛ";
+                case DemoTextKey.HomeMoodLabel: return "ВЫБЕРИ НАСТРОЕНИЕ";
+                case DemoTextKey.PlayButton: return "Начать восстановление";
+                case DemoTextKey.ChooseSpaceButton: return "Выбрать пространство";
+                case DemoTextKey.LevelSelectTitle: return "Выбрать пространство";
+                case DemoTextKey.LevelSelectSubtitle: return "Немного порядка — один ритуал за раз.";
+                case DemoTextKey.Locked: return "ЗАКРЫТО";
+                case DemoTextKey.CompletionBadge: return "ВОССТАНОВЛЕНО";
+                case DemoTextKey.CompletionTitle: return "Порядок восстановлен";
+                case DemoTextKey.CompletionFallbackBody: return "Всё снова на своих местах.";
+                case DemoTextKey.NextSpace: return "Следующее пространство";
+                case DemoTextKey.BackHome: return "На главную";
+                case DemoTextKey.Loading: return "Миг спокойствия…";
+                case DemoTextKey.SoundOn: return "Звук включён";
+                case DemoTextKey.SoundOff: return "Звук выключен";
+                case DemoTextKey.CleaningPrompt: return "Бережно очисти поверхность";
+                case DemoTextKey.ScrewPrompt: return "Удерживай винт, чтобы выкрутить его";
+                case DemoTextKey.ToolHands: return "Расчистка";
+                case DemoTextKey.ToolCloth: return "Ткань";
+                case DemoTextKey.ToolSponge: return "Губка";
+                case DemoTextKey.ToolSqueegee: return "Скребок";
+                case DemoTextKey.HomeDecorLabel: return "ТВОЯ КОЛЛЕКЦИЯ СПОКОЙСТВИЯ";
+                case DemoTextKey.DecorationBuy: return "КУПИТЬ";
+                case DemoTextKey.DecorationOwned: return "КУПЛЕНО";
+                case DemoTextKey.DecorationSelected: return "ВЫБРАНО";
+                case DemoTextKey.Undo: return "Отменить";
+                case DemoTextKey.RestorationStageComplete: return "Этап восстановления завершён";
+                case DemoTextKey.RestorationComplete: return "Восстановление завершено";
+                case DemoTextKey.ContinueRestoration: return "Продолжить восстановление";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(key), key, "Unsupported demo localization key.");
+            }
+        }
     }
 
     /// <summary>
@@ -408,7 +496,7 @@ namespace CalmSpace.Demo
         public string CurrentLocaleShortLabel =>
             CurrentLocale == DemoLocale.Ukrainian
                 ? "УКР"
-                : "EN";
+                : CurrentLocale == DemoLocale.Russian ? "RU" : "EN";
 
         public void Initialize()
         {
@@ -425,7 +513,8 @@ namespace CalmSpace.Demo
         {
             EnsureInitialized();
             if (locale != DemoLocale.English &&
-                locale != DemoLocale.Ukrainian)
+                locale != DemoLocale.Ukrainian &&
+                locale != DemoLocale.Russian)
             {
                 return false;
             }
@@ -444,9 +533,7 @@ namespace CalmSpace.Demo
         public void ToggleLocale()
         {
             SelectLocale(
-                CurrentLocale == DemoLocale.English
-                    ? DemoLocale.Ukrainian
-                    : DemoLocale.English);
+                (DemoLocale)(((int)CurrentLocale + 1) % 3));
         }
 
         public string Get(DemoTextKey key)
@@ -511,8 +598,13 @@ namespace CalmSpace.Demo
             int total)
         {
             EnsureInitialized();
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? "Відновлено: " + completed + " із " + total
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return "Відновлено: " + completed + " із " + total;
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? "Восстановлено: " + completed + " из " + total
                 : completed + " / " + total + " spaces restored";
         }
 
@@ -520,8 +612,13 @@ namespace CalmSpace.Demo
         {
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? "ЖЕТОНИ ЗАТИШКУ · " + normalized
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return "ЖЕТОНИ ЗАТИШКУ · " + normalized;
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? "ЖЕТОНЫ УЮТА · " + normalized
                 : "COZY TOKENS · " + normalized;
         }
 
@@ -529,8 +626,13 @@ namespace CalmSpace.Demo
         {
             EnsureInitialized();
             var normalized = Mathf.Max(0, cost);
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? normalized + " ЖЕТОНІВ ЗАТИШКУ"
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return normalized + " ЖЕТОНІВ ЗАТИШКУ";
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? normalized + " ЖЕТОНОВ УЮТА"
                 : normalized + " TOKENS";
         }
 
@@ -538,8 +640,13 @@ namespace CalmSpace.Demo
         {
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? "+" + normalized + " ЖЕТОНІВ ЗАТИШКУ"
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return "+" + normalized + " ЖЕТОНІВ ЗАТИШКУ";
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? "+" + normalized + " ЖЕТОНОВ УЮТА"
                 : "+" + normalized + " COZY TOKENS";
         }
 
@@ -560,24 +667,42 @@ namespace CalmSpace.Demo
                     GetRestorationChapterName(stage.ChapterId);
                 if (stage.IsFinalStage)
                 {
-                    return CurrentLocale == DemoLocale.Ukrainian
+                    if (CurrentLocale == DemoLocale.Ukrainian)
+                    {
+                        return "«" + chapterName +
+                               "» — повністю відновлено.";
+                    }
+
+                    return CurrentLocale == DemoLocale.Russian
                         ? "«" + chapterName +
-                          "» — повністю відновлено."
+                          "» — полностью восстановлена."
                         : chapterName + " is fully restored.";
                 }
 
-                return CurrentLocale == DemoLocale.Ukrainian
-                    ? chapterName + " · етап " +
-                      stage.StageNumber + " з " +
-                      stage.StageCount + " завершено."
+                if (CurrentLocale == DemoLocale.Ukrainian)
+                {
+                    return chapterName + " · етап " +
+                           stage.StageNumber + " з " +
+                           stage.StageCount + " завершено.";
+                }
+
+                return CurrentLocale == DemoLocale.Russian
+                    ? chapterName + " · этап " +
+                      stage.StageNumber + " из " +
+                      stage.StageCount + " завершён."
                     : chapterName + " · stage " +
                       stage.StageNumber + " of " +
                       stage.StageCount + " complete.";
             }
 
             string levelName = GetLevelName(definition);
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? "«" + levelName + "» — знову в гармонії."
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return "«" + levelName + "» — знову в гармонії.";
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? "«" + levelName + "» — снова в гармонии."
                 : levelName + " feels calm again.";
         }
 
@@ -606,7 +731,12 @@ namespace CalmSpace.Demo
         {
             EnsureInitialized();
             var clamped = Mathf.Clamp(percentage, 0, 100);
-            return CurrentLocale == DemoLocale.Ukrainian
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return "Очищено: " + clamped + "%";
+            }
+
+            return CurrentLocale == DemoLocale.Russian
                 ? "Очищено: " + clamped + "%"
                 : clamped + "% clean";
         }
@@ -623,8 +753,14 @@ namespace CalmSpace.Demo
             var clampedPercentage = Mathf.Clamp(percentage, 0, 100);
             var toolName = Get(GetToolKey(tool));
 
-            return CurrentLocale == DemoLocale.Ukrainian
-                ? toolName + " · крок " + clampedStage + " з " +
+            if (CurrentLocale == DemoLocale.Ukrainian)
+            {
+                return toolName + " · крок " + clampedStage + " з " +
+                       clampedCount + " · " + clampedPercentage + "%";
+            }
+
+            return CurrentLocale == DemoLocale.Russian
+                ? toolName + " · шаг " + clampedStage + " из " +
                   clampedCount + " · " + clampedPercentage + "%"
                 : toolName + " · step " + clampedStage + " of " +
                   clampedCount + " · " + clampedPercentage + "%";
@@ -653,7 +789,8 @@ namespace CalmSpace.Demo
                     _playerPrefsKey,
                     (int)DemoLocale.English);
                 if (stored == (int)DemoLocale.English ||
-                    stored == (int)DemoLocale.Ukrainian)
+                    stored == (int)DemoLocale.Ukrainian ||
+                    stored == (int)DemoLocale.Russian)
                 {
                     return (DemoLocale)stored;
                 }
@@ -661,7 +798,9 @@ namespace CalmSpace.Demo
 
             return _systemLanguage == SystemLanguage.Ukrainian
                 ? DemoLocale.Ukrainian
-                : DemoLocale.English;
+                : _systemLanguage == SystemLanguage.Russian
+                    ? DemoLocale.Russian
+                    : DemoLocale.English;
         }
 
         private void SaveCurrent()

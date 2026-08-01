@@ -9,7 +9,7 @@ namespace CalmSpace.Tests.EditMode
     public sealed class DemoLocalizationTests
     {
         [Test]
-        public void EveryPlayerFacingKeyExistsInBothLocales()
+        public void EveryPlayerFacingKeyExistsInAllSupportedLocales()
         {
             foreach (DemoTextKey key in
                      Enum.GetValues(typeof(DemoTextKey)))
@@ -26,6 +26,45 @@ namespace CalmSpace.Tests.EditMode
                         key),
                     Is.Not.Empty,
                     "Missing Ukrainian copy for " + key);
+                Assert.That(
+                    DemoLocalizationTable.Get(
+                        (DemoLocale)2,
+                        key),
+                    Is.Not.Empty,
+                    "Missing Russian copy for " + key);
+            }
+        }
+
+        [Test]
+        public void RussianLocaleKeepsTheExistingValuesAndCyclesAfterUkrainian()
+        {
+            const DemoLocale russian = (DemoLocale)2;
+            var key = "calmspace.tests.locale." + Guid.NewGuid();
+            try
+            {
+                var service = new DemoLocalizationService(
+                    key,
+                    SystemLanguage.Russian);
+                service.Initialize();
+
+                Assert.That(service.CurrentLocale, Is.EqualTo(russian));
+                Assert.That(service.CurrentLocaleShortLabel, Is.EqualTo("RU"));
+                Assert.That(
+                    DemoLocalizationTable.Get(
+                        russian,
+                        DemoTextKey.PlayButton),
+                    Is.EqualTo("Начать восстановление"));
+
+                service.ToggleLocale();
+                Assert.That(service.CurrentLocale, Is.EqualTo(DemoLocale.English));
+                service.ToggleLocale();
+                Assert.That(service.CurrentLocale, Is.EqualTo(DemoLocale.Ukrainian));
+                service.ToggleLocale();
+                Assert.That(service.CurrentLocale, Is.EqualTo(russian));
+            }
+            finally
+            {
+                PlayerPrefs.DeleteKey(key);
             }
         }
 

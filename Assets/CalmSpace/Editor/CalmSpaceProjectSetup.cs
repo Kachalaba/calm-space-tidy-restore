@@ -108,6 +108,7 @@ namespace CalmSpace.Editor
                 itemMaterials,
                 targetMaterials);
             CalmSpaceWorkshopCatalogBuilder.CreateOrUpdate();
+            CalmSpaceWorkshopTextBuilder.CreateOrUpdate();
 
             CreateOrUpdateMainScene(
                 catalog,
