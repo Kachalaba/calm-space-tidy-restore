@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 using CalmSpace.Audio;
 using CalmSpace.Core;
 using CalmSpace.Demo;
@@ -8,6 +9,7 @@ using CalmSpace.Haptics;
 using CalmSpace.Input;
 using CalmSpace.Levels;
 using CalmSpace.UI;
+using CalmSpace.Workshop;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Build;
@@ -21,6 +23,7 @@ using UnityEngine.Audio;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
 namespace CalmSpace.Editor
@@ -58,6 +61,17 @@ namespace CalmSpace.Editor
             "levels/demo-fitting";
         private const string AddressableLabel =
             "calm-space-level";
+        private const string GeneratedSceneMarkerPrefix =
+            "CalmSpace Generated Scene · ";
+        private static readonly string[] GeneratedSceneSourcePaths =
+        {
+            "Assets/CalmSpace/Editor/CalmSpaceWorkshopSceneBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceDemoSceneBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceProjectSetup.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopBottomSheet.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeView.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs"
+        };
 
         private static readonly Color BackgroundColor =
             new Color(0.075f, 0.09f, 0.12f, 1f);
@@ -107,8 +121,10 @@ namespace CalmSpace.Editor
                 CalmSpaceDemoLevelBuilder.CreateOrUpdate(
                 itemMaterials,
                 targetMaterials);
-            CalmSpaceWorkshopCatalogBuilder.CreateOrUpdate();
-            CalmSpaceWorkshopTextBuilder.CreateOrUpdate();
+            LivingWorkshopCatalog workshopCatalog =
+                CalmSpaceWorkshopCatalogBuilder.CreateOrUpdate();
+            WorkshopTextCatalog workshopTextCatalog =
+                CalmSpaceWorkshopTextBuilder.CreateOrUpdate();
 
             CreateOrUpdateMainScene(
                 catalog,
@@ -117,7 +133,9 @@ namespace CalmSpace.Editor
                 ambientLoop,
                 mixerGroup,
                 menuBackground,
-                roundedSprite);
+                roundedSprite,
+                workshopCatalog,
+                workshopTextCatalog);
             EnsureCleaningShadersAreIncluded();
 
             EditorUtility.SetDirty(pipelineAsset);
@@ -776,12 +794,21 @@ namespace CalmSpace.Editor
             AudioClip ambientLoop,
             AudioMixerGroup mixerGroup,
             Sprite menuBackground,
-            Sprite roundedSprite)
+            Sprite roundedSprite,
+            LivingWorkshopCatalog workshopCatalog,
+            WorkshopTextCatalog workshopTextCatalog)
         {
+            string generatedSceneMarker = GetGeneratedSceneMarker();
+            if (TryReuseCurrentGeneratedScene(generatedSceneMarker))
+            {
+                return;
+            }
+
             Scene scene = EditorSceneManager.NewScene(
                 NewSceneSetup.EmptyScene,
                 NewSceneMode.Single);
             scene.name = "Main";
+            new GameObject(generatedSceneMarker);
 
             Camera camera = CreateCamera();
             CreateLighting();
@@ -850,6 +877,14 @@ namespace CalmSpace.Editor
                 lifetimeScope,
                 "_demoDecorationCatalog",
                 decorationCatalog);
+            SetObjectReference(
+                lifetimeScope,
+                "_livingWorkshopCatalog",
+                workshopCatalog);
+            SetObjectReference(
+                lifetimeScope,
+                "_workshopTextCatalog",
+                workshopTextCatalog);
 
             var inputObject = new GameObject("Input");
             DragInputRouter router =
@@ -875,6 +910,116 @@ namespace CalmSpace.Editor
             {
                 new EditorBuildSettingsScene(MainScenePath, true)
             };
+        }
+
+        private static bool TryReuseCurrentGeneratedScene(
+            string expectedMarker)
+        {
+            if (!File.Exists(Path.GetFullPath(MainScenePath)))
+            {
+                return false;
+            }
+
+            Scene scene = EditorSceneManager.OpenScene(
+                MainScenePath,
+                OpenSceneMode.Single);
+            GameObject[] roots = scene.GetRootGameObjects();
+            for (var index = 0; index < roots.Length; index++)
+            {
+                if (!string.Equals(
+                        roots[index].name,
+                        expectedMarker,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!ValidateGeneratedWorkshopScene(scene))
+                {
+                    return false;
+                }
+
+                EditorBuildSettings.scenes = new[]
+                {
+                    new EditorBuildSettingsScene(MainScenePath, true)
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool ValidateGeneratedWorkshopScene(Scene scene)
+        {
+            WorkshopHomeController home =
+                Object.FindFirstObjectByType<WorkshopHomeController>(
+                    FindObjectsInactive.Include);
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>(
+                    FindObjectsInactive.Include);
+            CalmSpaceLifetimeScope scope =
+                Object.FindFirstObjectByType<CalmSpaceLifetimeScope>(
+                    FindObjectsInactive.Include);
+            if (home == null || home.View == null || experience == null ||
+                scope == null)
+            {
+                return false;
+            }
+
+            SerializedObject view = new SerializedObject(home.View);
+            if (view.FindProperty("_primaryButton")?.objectReferenceValue == null ||
+                view.FindProperty("_catalogButton")?.objectReferenceValue == null ||
+                view.FindProperty("_settingsButton")?.objectReferenceValue == null ||
+                view.FindProperty("_hotspotButton")?.objectReferenceValue == null ||
+                view.FindProperty("_bottomSheet")?.objectReferenceValue == null)
+            {
+                return false;
+            }
+
+            SerializedObject scopeData = new SerializedObject(scope);
+            if (scopeData.FindProperty("_livingWorkshopCatalog")
+                    ?.objectReferenceValue == null ||
+                scopeData.FindProperty("_workshopTextCatalog")
+                    ?.objectReferenceValue == null)
+            {
+                return false;
+            }
+
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            return room != null && room.RoomRoot != null &&
+                room.RoomRoot.GetComponentsInChildren<Graphic>(true).Length >= 4;
+        }
+
+        private static string GetGeneratedSceneMarker()
+        {
+            using (SHA256 sha = SHA256.Create())
+            using (var stream = new MemoryStream())
+            {
+                for (var index = 0;
+                     index < GeneratedSceneSourcePaths.Length;
+                     index++)
+                {
+                    string path = Path.GetFullPath(
+                        GeneratedSceneSourcePaths[index]);
+                    if (!File.Exists(path))
+                    {
+                        throw new InvalidOperationException(
+                            "Generated scene source is missing: " + path);
+                    }
+
+                    byte[] bytes = File.ReadAllBytes(path);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+
+                stream.Position = 0;
+                byte[] hash = sha.ComputeHash(stream);
+                string fingerprint = BitConverter.ToString(hash)
+                    .Replace("-", string.Empty)
+                    .Substring(0, 16);
+                return GeneratedSceneMarkerPrefix + fingerprint;
+            }
         }
 
         private static Camera CreateCamera()

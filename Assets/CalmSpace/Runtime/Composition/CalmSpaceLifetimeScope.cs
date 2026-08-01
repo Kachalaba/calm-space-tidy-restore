@@ -9,6 +9,7 @@ using CalmSpace.Haptics;
 using CalmSpace.Levels;
 using CalmSpace.Monetization;
 using CalmSpace.UI;
+using CalmSpace.Workshop;
 using UnityEngine;
 using VContainer;
 using VContainer.Unity;
@@ -50,6 +51,12 @@ namespace CalmSpace.Core
         [SerializeField]
         private DemoDecorationCatalog _demoDecorationCatalog;
 
+        [SerializeField]
+        private LivingWorkshopCatalog _livingWorkshopCatalog;
+
+        [SerializeField]
+        private WorkshopTextCatalog _workshopTextCatalog;
+
         protected override void Configure(IContainerBuilder builder)
         {
             if (_levelCatalog == null)
@@ -77,9 +84,39 @@ namespace CalmSpace.Core
                     "CalmSpaceLifetimeScope.");
             }
 
+            if (_livingWorkshopCatalog == null)
+            {
+                throw new InvalidOperationException(
+                    "Assign a LivingWorkshopCatalog to " +
+                    "CalmSpaceLifetimeScope.");
+            }
+
+            WorkshopCatalogValidationResult workshopValidation =
+                WorkshopCatalogValidator.ValidateChapter(
+                    _levelCatalog,
+                    _livingWorkshopCatalog,
+                    WorkshopContentIds.CozyWorkshopChapterId);
+            if (!workshopValidation.IsValid)
+            {
+                throw new InvalidOperationException(
+                    "LivingWorkshopCatalog chapter data is invalid: " +
+                    workshopValidation.Code + ".");
+            }
+
+            if (_workshopTextCatalog == null ||
+                _workshopTextCatalog.Entries == null ||
+                _workshopTextCatalog.Entries.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Assign a non-empty WorkshopTextCatalog to " +
+                    "CalmSpaceLifetimeScope.");
+            }
+
             builder.RegisterInstance(_levelCatalog);
             builder.RegisterInstance(_demoThemeCatalog);
             builder.RegisterInstance(_demoDecorationCatalog);
+            builder.RegisterInstance(_livingWorkshopCatalog);
+            builder.RegisterInstance(_workshopTextCatalog);
 
             builder
                 .Register<PresentationActivityCoordinator>(
@@ -156,6 +193,29 @@ namespace CalmSpace.Core
                     Lifetime.Singleton)
                 .As<IDemoLocalizationService>();
 
+            builder.Register<WorkshopTextService>(
+                    resolver => new WorkshopTextService(
+                        _workshopTextCatalog,
+                        resolver.Resolve<IDemoLocalizationService>()),
+                    Lifetime.Singleton)
+                .As<IWorkshopTextService>();
+
+            builder.Register<WorkshopProgressProjector>(
+                    resolver => new WorkshopProgressProjector(
+                        _levelCatalog,
+                        _livingWorkshopCatalog),
+                    Lifetime.Singleton)
+                .As<IWorkshopProgressProjector>();
+
+            builder.Register<WorkshopFlowCoordinator>(
+                    resolver => new WorkshopFlowCoordinator(
+                        _levelCatalog,
+                        _livingWorkshopCatalog,
+                        resolver.Resolve<IDemoProgressStore>(),
+                        resolver.Resolve<IWorkshopProgressProjector>()),
+                    Lifetime.Singleton)
+                .As<IWorkshopFlowCoordinator>();
+
             builder.Register<ILevelFlowController>(
                 resolver =>
                     new AddressableLevelFlowController(
@@ -166,6 +226,9 @@ namespace CalmSpace.Core
                 Lifetime.Singleton);
 
             builder
+                .RegisterComponentInHierarchy<WorkshopHomeController>()
+                .As<IWorkshopHomeController>();
+            builder
                 .RegisterComponentInHierarchy<
                     DemoExperienceController>()
                 .As<IDemoExperienceController>();
@@ -174,7 +237,8 @@ namespace CalmSpace.Core
                     new GameBootstrapper(
                         resolver.Resolve<IMonetizationManager>(),
                         resolver.Resolve<
-                            IDemoExperienceController>()),
+                            IDemoExperienceController>(),
+                        resolver.Resolve<IWorkshopHomeController>()),
                 Lifetime.Singleton);
         }
 

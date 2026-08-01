@@ -16,17 +16,21 @@ namespace CalmSpace.Core
     {
         private readonly IMonetizationManager _monetization;
         private readonly IDemoExperienceController _experience;
+        private readonly IWorkshopHomeController _workshopHome;
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
 
         public GameBootstrapper(
             IMonetizationManager monetization,
-            IDemoExperienceController experience)
+            IDemoExperienceController experience,
+            IWorkshopHomeController workshopHome)
         {
             _monetization = monetization ??
                 throw new ArgumentNullException(nameof(monetization));
             _experience = experience ??
                 throw new ArgumentNullException(nameof(experience));
+            _workshopHome = workshopHome ??
+                throw new ArgumentNullException(nameof(workshopHome));
         }
 
         public void Start()
@@ -50,6 +54,14 @@ namespace CalmSpace.Core
                 await _monetization.InitializeAsync(
                     cancellationToken);
                 await _experience.InitializeAsync(
+                    cancellationToken);
+                await _workshopHome.InitializeAsync(
+                    cancellationToken);
+                await _workshopHome.PrepareEntryAsync(
+                    WorkshopHomeEntryReason.ColdStart,
+                    cancellationToken);
+                await _workshopHome.NotifyVisibleAsync(
+                    WorkshopHomeEntryReason.ColdStart,
                     cancellationToken);
             }
             catch (OperationCanceledException)

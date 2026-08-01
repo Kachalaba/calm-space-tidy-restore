@@ -6,6 +6,7 @@ using CalmSpace.Demo;
 using CalmSpace.Input;
 using CalmSpace.Levels;
 using CalmSpace.UI;
+using CalmSpace.Workshop;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
@@ -81,8 +82,35 @@ namespace CalmSpace.Tests.PlayMode
                     FindObjectsInactive.Include);
             Assert.That(room, Is.Not.Null);
             Assert.That(room.IsVisible, Is.True);
-            Assert.That(room.DecorationCount, Is.EqualTo(4));
-            Assert.That(room.SelectedDecorationIndex, Is.Zero);
+            Assert.That(room.DecorationCount, Is.Zero);
+            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(-1));
+            WorkshopHomeController workshopHome =
+                Object.FindFirstObjectByType<WorkshopHomeController>(
+                    FindObjectsInactive.Include);
+            Assert.That(workshopHome, Is.Not.Null);
+            Assert.That(workshopHome.View, Is.Not.Null);
+            Assert.That(workshopHome.View.gameObject.activeInHierarchy,
+                Is.True);
+            Assert.That(workshopHome.View.VisibleActionControlsHaveBindings,
+                Is.True);
+            Assert.That(
+                workshopHome.View.UnavailableCapabilityCount,
+                Is.EqualTo(0));
+            GameObject services = GameObject.Find("App Services");
+            Assert.That(services, Is.Not.Null);
+            Component scope = services.GetComponent(
+                "CalmSpaceLifetimeScope");
+            Assert.That(scope, Is.Not.Null);
+            Assert.That(
+                GetPrivateField<LivingWorkshopCatalog>(
+                    scope,
+                    "_livingWorkshopCatalog"),
+                Is.Not.Null);
+            Assert.That(
+                GetPrivateField<WorkshopTextCatalog>(
+                    scope,
+                    "_workshopTextCatalog"),
+                Is.Not.Null);
         }
 
         [UnityTest]
@@ -137,16 +165,23 @@ namespace CalmSpace.Tests.PlayMode
                 room.RoomRoot.GetComponentsInChildren<Collider>(true),
                 Is.Empty,
                 "The home preview must not contain physics primitives.");
-            Assert.That(room.DecorationCount, Is.EqualTo(4));
+            Assert.That(room.DecorationCount, Is.Zero,
+                "Task 12 decor must not appear in the Task 8 shell.");
+            Assert.That(
+                room.RoomRoot.GetComponentsInChildren<
+                    UnityEngine.UI.Button>(true),
+                Is.Empty,
+                "The room center owns no dead milestone controls.");
             Assert.That(
                 room.RoomRoot.GetComponentsInChildren<
                     UnityEngine.UI.Graphic>(true).Length,
-                Is.GreaterThanOrEqualTo(12),
-                "Every decoration should have distinct visible UI artwork.");
+                Is.GreaterThanOrEqualTo(4),
+                "Task 8 needs a static generated paper-and-wood room " +
+                "fallback before Task 9 art exists.");
             Assert.That(previewRect.rect.width, Is.GreaterThan(0f));
             Assert.That(previewRect.rect.height, Is.GreaterThan(0f));
-            Assert.That(previewRect.rect.width, Is.LessThanOrEqualTo(220f));
-            Assert.That(previewRect.rect.height, Is.LessThanOrEqualTo(220f));
+            Assert.That(previewRect.rect.width, Is.GreaterThan(600f));
+            Assert.That(previewRect.rect.height, Is.GreaterThan(1000f));
         }
 
         [UnityTest]
@@ -209,16 +244,20 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(progressText, Is.Not.Null);
             Assert.That(playButton, Is.Not.Null);
 
-            languageButton.onClick.Invoke();
+            WorkshopHomeController workshopHome =
+                Object.FindFirstObjectByType<WorkshopHomeController>();
+            Assert.That(workshopHome, Is.Not.Null);
+            workshopHome.View.SettingsLocaleButton.onClick.Invoke();
             yield return null;
 
             Assert.That(languageText.text, Is.EqualTo("УКР"));
             Assert.That(
                 progressText.text,
-                Is.EqualTo("Відновлено: 0 із 8"));
+                Is.EqualTo("0 / 8"));
             Assert.That(
-                playButton.GetComponentInChildren<Text>().text,
-                Is.EqualTo("Почати відновлення"));
+                workshopHome.View.PrimaryButton
+                    .GetComponentInChildren<Text>().text,
+                Is.EqualTo("Почати"));
             Assert.That(
                 PlayerPrefs.GetInt(
                     DemoLocalizationService.DefaultPlayerPrefsKey),
@@ -641,7 +680,7 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
-        public IEnumerator RoomPurchaseAndSelectionPersistAcrossReload()
+        public IEnumerator LaterMilestoneDecorControlsStayHidden()
         {
             AsyncOperation sceneLoad = SceneManager.LoadSceneAsync(
                 "Main",
@@ -670,10 +709,6 @@ namespace CalmSpace.Tests.PlayMode
                 GetPrivateField<IDemoProgressStore>(
                     experience,
                     "_progressStore");
-            DemoDecorationCatalog catalog =
-                GetPrivateField<DemoDecorationCatalog>(
-                    experience,
-                    "_decorationCatalog");
             DemoExperienceController.DecorationButtonBinding[]
                 buttons =
                     GetPrivateField<
@@ -681,80 +716,22 @@ namespace CalmSpace.Tests.PlayMode
                             .DecorationButtonBinding[]>(
                         experience,
                         "_decorationButtons");
-            Text currency =
-                GetPrivateField<Text>(
-                    experience,
-                    "_roomCurrencyText");
             Assert.That(progress, Is.Not.Null);
-            Assert.That(catalog, Is.Not.Null);
-            Assert.That(buttons, Has.Length.EqualTo(4));
-            Assert.That(currency, Is.Not.Null);
-            Assert.That(currency.text, Is.EqualTo("COZY TOKENS · 0"));
-
-            Assert.That(
-                progress.CompleteLevelAndReward(
-                    0,
-                    catalog.CompletionReward),
-                Is.EqualTo(15));
-            Assert.That(
-                progress.CompleteLevelAndReward(
-                    1,
-                    catalog.CompletionReward),
-                Is.EqualTo(15));
-            yield return null;
-
-            Assert.That(progress.Current.CozyTokens, Is.EqualTo(30));
-            Assert.That(buttons[1].Button.interactable, Is.True);
-            buttons[1].Button.onClick.Invoke();
-            yield return null;
-
-            Assert.That(progress.Current.CozyTokens, Is.EqualTo(10));
-            Assert.That(
-                progress.Current.OwnedDecorationMask,
-                Is.EqualTo(0b0011),
-                "One button press must buy only that decoration.");
-            Assert.That(
-                progress.Current.SelectedDecorationIndex,
-                Is.EqualTo(1));
+            Assert.That(buttons, Is.Empty);
 
             DemoRoomPresenter room =
                 Object.FindFirstObjectByType<DemoRoomPresenter>(
                     FindObjectsInactive.Include);
             Assert.That(room, Is.Not.Null);
-            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(1));
-
-            AsyncOperation reload = SceneManager.LoadSceneAsync(
-                "Main",
-                LoadSceneMode.Single);
-            while (!reload.isDone)
-            {
-                yield return null;
-            }
-
-            experience = null;
-            for (var frame = 0;
-                 frame < 300 &&
-                 (experience == null || !experience.IsInitialized);
-                 frame++)
-            {
-                experience =
-                    Object.FindFirstObjectByType<
-                        DemoExperienceController>();
-                yield return null;
-            }
-
-            Assert.That(experience, Is.Not.Null);
-            progress = GetPrivateField<IDemoProgressStore>(
-                experience,
-                "_progressStore");
-            room = Object.FindFirstObjectByType<DemoRoomPresenter>(
-                FindObjectsInactive.Include);
-            Assert.That(progress.Current.CozyTokens, Is.EqualTo(10));
-            Assert.That(
-                progress.Current.SelectedDecorationIndex,
-                Is.EqualTo(1));
-            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(1));
+            Assert.That(room.DecorationCount, Is.Zero);
+            Assert.That(room.SelectedDecorationIndex, Is.EqualTo(-1));
             Assert.That(room.IsVisible, Is.True);
+            Assert.That(
+                Object.FindObjectsByType<Button>(
+                    FindObjectsInactive.Exclude,
+                    FindObjectsSortMode.None),
+                Has.None.Matches<Button>(button =>
+                    button.name.Contains("Decoration")));
         }
 
         private static T GetPrivateField<T>(
