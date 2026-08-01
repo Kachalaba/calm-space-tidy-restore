@@ -148,18 +148,27 @@ namespace CalmSpace.Editor
                 new Vector2(38f, -36f), new Vector2(300f, 54f));
             progress.rectTransform.pivot = new Vector2(0f, 1f);
 
+            Text taskTitle = Text(taskCard.rectTransform, "Task Title",
+                "Clear the passage", font, 30, TextAnchor.UpperLeft, Paper);
+            Anchor(taskTitle.rectTransform, new Vector2(0f, 1f),
+                new Vector2(38f, -92f), new Vector2(850f, 72f));
+            taskTitle.rectTransform.pivot = new Vector2(0f, 1f);
+            taskTitle.resizeTextForBestFit = true;
+            taskTitle.resizeTextMinSize = 24;
+            taskTitle.resizeTextMaxSize = 30;
+
             Button primary = Button(taskCard.rectTransform, "Primary Task", "Start",
                 rounded, font, 32, Coral, out Text primaryLabel);
             Anchor(primary.GetComponent<RectTransform>(),
-                new Vector2(0.5f, 0f), new Vector2(0f, 116f),
-                new Vector2(850f, 112f));
+                new Vector2(0.5f, 0f), new Vector2(0f, 98f),
+                new Vector2(850f, 96f));
 
             Button catalog = Button(taskCard.rectTransform, "Catalog", "All spaces",
                 rounded, font, 25, new Color(0.15f, 0.23f, 0.20f, 1f),
                 out Text catalogLabel);
             Anchor(catalog.GetComponent<RectTransform>(),
-                new Vector2(0.5f, 0f), new Vector2(0f, 42f),
-                new Vector2(850f, 58f));
+                new Vector2(0.5f, 0f), new Vector2(0f, 26f),
+                new Vector2(850f, 44f));
 
             RectTransform sheetRect = Rect("Settings Bottom Sheet", safe);
             Image sheetImage = sheetRect.gameObject.AddComponent<Image>();
@@ -178,23 +187,59 @@ namespace CalmSpace.Editor
                 new Vector2(-24f, -24f), new Vector2(82f, 72f));
             close.GetComponent<RectTransform>().pivot = new Vector2(1f, 1f);
 
-            Button music = SettingsButton(sheetRect, "Music Setting", rounded, font,
+            RectTransform settingsContent = Rect("Settings Content", sheetRect);
+            Stretch(settingsContent);
+            Button music = SettingsButton(settingsContent, "Music Setting", rounded, font,
                 330f, out Text musicLabel);
-            Button locale = SettingsButton(sheetRect, "Locale Setting", rounded, font,
+            Button locale = SettingsButton(settingsContent, "Locale Setting", rounded, font,
                 220f, out Text localeLabel);
-            Button haptic = SettingsButton(sheetRect, "Haptic Setting", rounded, font,
+            Button haptic = SettingsButton(settingsContent, "Haptic Setting", rounded, font,
                 110f, out Text hapticLabel);
-            Button sheetAction = Button(sheetRect, "Sheet Action", string.Empty,
-                rounded, font, 1, Color.clear, out _);
+
+            RectTransform recoveryContent = Rect(
+                "Recovery Content",
+                sheetRect);
+            Stretch(recoveryContent);
+            Text recoveryTitle = Text(
+                recoveryContent,
+                "Failure Title",
+                "This space needs one calm moment.",
+                font,
+                32,
+                TextAnchor.MiddleCenter,
+                Paper);
+            Anchor(recoveryTitle.rectTransform, new Vector2(0.5f, 1f),
+                new Vector2(0f, -150f), new Vector2(820f, 128f));
+            Button sheetAction = Button(
+                recoveryContent,
+                "Sheet Action",
+                "Try again",
+                rounded,
+                font,
+                30,
+                Coral,
+                out Text sheetActionLabel);
+            Anchor(sheetAction.GetComponent<RectTransform>(),
+                new Vector2(0.5f, 0f),
+                new Vector2(0f, 92f),
+                new Vector2(820f, 104f));
             sheetAction.gameObject.SetActive(false);
+            recoveryContent.gameObject.SetActive(false);
 
             WorkshopBottomSheet bottomSheet =
                 sheetRect.gameObject.AddComponent<WorkshopBottomSheet>();
-            bottomSheet.Configure(sheetGroup, close, sheetAction);
+            bottomSheet.Configure(
+                sheetGroup,
+                close,
+                sheetAction,
+                settingsContent.gameObject,
+                recoveryContent.gameObject,
+                recoveryTitle,
+                sheetActionLabel);
 
             WorkshopHomeView view = screen.gameObject.AddComponent<WorkshopHomeView>();
             view.Configure(primary, catalog, settings, hotspot, album, decor, daily,
-                relax, primaryLabel, progress, bottomSheet);
+                relax, primaryLabel, taskTitle, progress, bottomSheet);
             view.ConfigureSettings(music, locale, haptic, musicLabel, localeLabel,
                 hapticLabel);
             view.ConfigureChrome(catalogLabel);
@@ -219,7 +264,7 @@ namespace CalmSpace.Editor
                 legacyPlay, legacyCatalog, legacyMusic, legacyLanguage,
                 progress, currency, legacyMusicText, legacyLanguageText,
                 musicState, wash, controller,
-                new[] { currency, primaryLabel, settingsLabel },
+                new[] { currency, taskTitle, primaryLabel, settingsLabel },
                 new[] { progress },
                 new[] { topBar, taskCard, sheetImage },
                 new[] { primary.GetComponent<Image>() });

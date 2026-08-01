@@ -59,6 +59,11 @@ namespace CalmSpace.Core
 
         protected override void Configure(IContainerBuilder builder)
         {
+            if (builder.ApplicationOrigin == null)
+            {
+                builder.ApplicationOrigin = this;
+            }
+
             if (_levelCatalog == null)
             {
                 throw new InvalidOperationException(
@@ -84,39 +89,29 @@ namespace CalmSpace.Core
                     "CalmSpaceLifetimeScope.");
             }
 
-            if (_livingWorkshopCatalog == null)
-            {
-                throw new InvalidOperationException(
-                    "Assign a LivingWorkshopCatalog to " +
-                    "CalmSpaceLifetimeScope.");
-            }
-
-            WorkshopCatalogValidationResult workshopValidation =
-                WorkshopCatalogValidator.ValidateChapter(
-                    _levelCatalog,
-                    _livingWorkshopCatalog,
-                    WorkshopContentIds.CozyWorkshopChapterId);
-            if (!workshopValidation.IsValid)
-            {
-                throw new InvalidOperationException(
-                    "LivingWorkshopCatalog chapter data is invalid: " +
-                    workshopValidation.Code + ".");
-            }
-
-            if (_workshopTextCatalog == null ||
-                _workshopTextCatalog.Entries == null ||
-                _workshopTextCatalog.Entries.Count == 0)
-            {
-                throw new InvalidOperationException(
-                    "Assign a non-empty WorkshopTextCatalog to " +
-                    "CalmSpaceLifetimeScope.");
-            }
+            LivingWorkshopCatalog runtimeWorkshop =
+                _livingWorkshopCatalog != null
+                    ? _livingWorkshopCatalog
+                    : ScriptableObject.CreateInstance<
+                        LivingWorkshopCatalog>();
+            WorkshopTextCatalog runtimeWorkshopText =
+                _workshopTextCatalog != null
+                    ? _workshopTextCatalog
+                    : ScriptableObject.CreateInstance<WorkshopTextCatalog>();
+            var workshopAvailability = new WorkshopRuntimeAvailability(
+                _levelCatalog,
+                runtimeWorkshop,
+                runtimeWorkshopText);
 
             builder.RegisterInstance(_levelCatalog);
             builder.RegisterInstance(_demoThemeCatalog);
             builder.RegisterInstance(_demoDecorationCatalog);
-            builder.RegisterInstance(_livingWorkshopCatalog);
-            builder.RegisterInstance(_workshopTextCatalog);
+            builder.RegisterInstance(runtimeWorkshop);
+            builder.RegisterInstance(runtimeWorkshopText);
+            builder.RegisterInstance(workshopAvailability);
+            builder.Register<WorkshopAnalyticsSessionState>(
+                _ => new WorkshopAnalyticsSessionState(),
+                Lifetime.Singleton);
 
             builder
                 .Register<PresentationActivityCoordinator>(
@@ -195,7 +190,7 @@ namespace CalmSpace.Core
 
             builder.Register<WorkshopTextService>(
                     resolver => new WorkshopTextService(
-                        _workshopTextCatalog,
+                        runtimeWorkshopText,
                         resolver.Resolve<IDemoLocalizationService>()),
                     Lifetime.Singleton)
                 .As<IWorkshopTextService>();
@@ -203,14 +198,14 @@ namespace CalmSpace.Core
             builder.Register<WorkshopProgressProjector>(
                     resolver => new WorkshopProgressProjector(
                         _levelCatalog,
-                        _livingWorkshopCatalog),
+                        runtimeWorkshop),
                     Lifetime.Singleton)
                 .As<IWorkshopProgressProjector>();
 
             builder.Register<WorkshopFlowCoordinator>(
                     resolver => new WorkshopFlowCoordinator(
                         _levelCatalog,
-                        _livingWorkshopCatalog,
+                        runtimeWorkshop,
                         resolver.Resolve<IDemoProgressStore>(),
                         resolver.Resolve<IWorkshopProgressProjector>()),
                     Lifetime.Singleton)
@@ -227,7 +222,8 @@ namespace CalmSpace.Core
 
             builder
                 .RegisterComponentInHierarchy<WorkshopHomeController>()
-                .As<IWorkshopHomeController>();
+                .As<IWorkshopHomeController>()
+                .As<IWorkshopHomeRecovery>();
             builder
                 .RegisterComponentInHierarchy<
                     DemoExperienceController>()

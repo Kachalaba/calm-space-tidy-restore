@@ -105,24 +105,45 @@ namespace CalmSpace.Workshop
             int levelIndex,
             int rewardAmount)
         {
-            if (!IsStoreReady() ||
-                _projector == null ||
-                !_projector.TryResolveCompletion(
-                    levelId,
-                    levelIndex,
-                    out WorkshopBeatDefinition beat))
+            if (!IsStoreReady())
             {
                 return InvalidCompletion();
             }
 
-            PendingPresentationEntry[] presentations =
-                CreatePresentations(beat);
+            PendingPresentationEntry[] presentations;
+            if (_projector != null &&
+                _projector.TryResolveCompletion(
+                    levelId,
+                    levelIndex,
+                    out WorkshopBeatDefinition beat))
+            {
+                presentations = CreatePresentations(beat);
+            }
+            else if (!IsExactCatalogLevel(levelId, levelIndex))
+            {
+                return InvalidCompletion();
+            }
+            else
+            {
+                presentations = Array.Empty<PendingPresentationEntry>();
+            }
+
             return _store.CompleteLevel(
                 new CompleteLevelCommand(
                     levelId,
                     levelIndex,
                     rewardAmount,
                     presentations));
+        }
+
+        private bool IsExactCatalogLevel(string levelId, int levelIndex)
+        {
+            return _levels != null &&
+                _levels.TryGetEntry(levelIndex, out LevelCatalogEntry entry) &&
+                string.Equals(
+                    entry.Definition.LevelId,
+                    levelId,
+                    StringComparison.Ordinal);
         }
 
         private PendingPresentationEntry[] CreatePresentations(

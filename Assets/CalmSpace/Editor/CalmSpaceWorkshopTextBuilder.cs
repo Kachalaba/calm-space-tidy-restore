@@ -54,6 +54,8 @@ namespace CalmSpace.Editor
             E("home.daily-care", "Brew family tea", "Заварити сімейний чай", "Заварить семейный чай"),
             E("home.view-workshop", "View the workshop", "Подивитися майстерню", "Посмотреть мастерскую"),
             E("home.chapter-complete", "The workshop is ready for everyone.", "Майстерня готова зустрічати всіх.", "Мастерская готова встретить всех."),
+            E("load.failure.title", "This space needs one calm moment.", "Цьому простору потрібна спокійна мить.", "Этому пространству нужна спокойная минута."),
+            E("load.failure.retry", "Try again", "Спробувати ще раз", "Попробовать снова"),
             E("save.retry", "Retry save", "Повторити збереження", "Повторить сохранение"),
             E("save.return-without", "Return without saving", "Повернутися без збереження", "Вернуться без сохранения"),
             E("album.title", "Our family album", "Наш сімейний альбом", "Наш семейный альбом"),

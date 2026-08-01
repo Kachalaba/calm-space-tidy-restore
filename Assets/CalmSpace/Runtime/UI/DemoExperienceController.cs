@@ -183,8 +183,11 @@ namespace CalmSpace.UI
         private IProductAnalytics _analytics;
         private IMonotonicClock _clock;
         private IWorkshopHomeController _workshopHomeController;
+        private IWorkshopHomeRecovery _workshopHomeRecovery;
         private IWorkshopFlowCoordinator _workshopFlowCoordinator;
         private IWorkshopTextService _workshopText;
+        private LivingWorkshopCatalog _livingWorkshopCatalog;
+        private WorkshopAnalyticsSessionState _workshopAnalyticsSession;
 
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
@@ -205,6 +208,10 @@ namespace CalmSpace.UI
         private string _pendingCompletionLevelId = string.Empty;
         private int _pendingCompletionLevelIndex = -1;
         private int _pendingCompletionReward;
+        private string _pendingCompletionBeatId = string.Empty;
+        private string _pendingCompletionMemoryId = string.Empty;
+        private string _pendingCompletionChapterId = string.Empty;
+        private bool _pendingCompletionIsFinale;
         private ProfileMutationStatus _lastCompletionStatus =
             ProfileMutationStatus.Invalid;
         private bool _invalidCompletionLogged;
@@ -236,8 +243,11 @@ namespace CalmSpace.UI
             IProductAnalytics analytics,
             IMonotonicClock clock,
             IWorkshopHomeController workshopHomeController,
+            IWorkshopHomeRecovery workshopHomeRecovery,
             IWorkshopFlowCoordinator workshopFlowCoordinator,
-            IWorkshopTextService workshopText)
+            IWorkshopTextService workshopText,
+            LivingWorkshopCatalog livingWorkshopCatalog,
+            WorkshopAnalyticsSessionState workshopAnalyticsSession)
         {
             _levelFlow = levelFlow ??
                 throw new ArgumentNullException(nameof(levelFlow));
@@ -263,11 +273,20 @@ namespace CalmSpace.UI
             _workshopHomeController = workshopHomeController ??
                 throw new ArgumentNullException(
                     nameof(workshopHomeController));
+            _workshopHomeRecovery = workshopHomeRecovery ??
+                throw new ArgumentNullException(
+                    nameof(workshopHomeRecovery));
             _workshopFlowCoordinator = workshopFlowCoordinator ??
                 throw new ArgumentNullException(
                     nameof(workshopFlowCoordinator));
             _workshopText = workshopText ??
                 throw new ArgumentNullException(nameof(workshopText));
+            _livingWorkshopCatalog = livingWorkshopCatalog ??
+                throw new ArgumentNullException(
+                    nameof(livingWorkshopCatalog));
+            _workshopAnalyticsSession = workshopAnalyticsSession ??
+                throw new ArgumentNullException(
+                    nameof(workshopAnalyticsSession));
         }
 
         private void Awake()
@@ -422,7 +441,6 @@ namespace CalmSpace.UI
             }
 
             BeginNavigation(true);
-            _workshopHomeController.NotifyHidden();
             bool restoredWorkshop = false;
             try
             {
@@ -440,6 +458,10 @@ namespace CalmSpace.UI
                     await PrepareWorkshopRecoveryAsync(
                         WorkshopHomeEntryReason.ReturnFromLevel);
                     ShowLoadRetry(request);
+                }
+                else
+                {
+                    _workshopHomeController.NotifyHidden();
                 }
 
                 return loaded;
@@ -512,6 +534,7 @@ namespace CalmSpace.UI
             }
 
             BeginNavigation(true);
+            bool restoredWorkshop = false;
             try
             {
                 await _levelTransitionCurtain.FadeToOpaqueAsync(
@@ -522,20 +545,26 @@ namespace CalmSpace.UI
                 await _workshopHomeController.PrepareEntryAsync(
                     reason,
                     cancellationToken);
+                restoredWorkshop = true;
             }
             catch (OperationCanceledException)
             {
-                // A scene shutdown cancels the visual transition.
+                restoredWorkshop =
+                    await RecoverInterruptedReturnAsync(reason);
             }
             catch (Exception exception)
             {
                 Debug.LogException(exception, this);
+                restoredWorkshop =
+                    await RecoverInterruptedReturnAsync(reason);
             }
             finally
             {
                 await RevealAfterLevelTransitionAsync();
                 EndNavigation();
-                if (_activeScreen == _homeScreen && !_destroying)
+                if (restoredWorkshop &&
+                    _activeScreen == _homeScreen &&
+                    !_destroying)
                 {
                     await NotifyWorkshopVisibleRecoveryAsync(reason);
                 }
@@ -633,6 +662,43 @@ namespace CalmSpace.UI
                 RefreshCleaningProgress(
                     _boundCleaner.CleanedFraction);
             }
+
+            SetActiveScreenBehindCurtain(_hudScreen);
+        }
+
+        private async UniTask<bool> RecoverInterruptedReturnAsync(
+            WorkshopHomeEntryReason reason)
+        {
+            LevelBase current = _levelFlow.CurrentLevel;
+            if (current != null)
+            {
+                _currentLevelIndex = _levelFlow.CurrentLevelIndex;
+                BindLevel(current);
+                ApplyCurrentThemeToLevel();
+                RefreshHud(
+                    current.ProgressCurrent,
+                    current.ProgressTotal);
+                if (_boundCleaner != null)
+                {
+                    RefreshCleaningProgress(
+                        _boundCleaner.CleanedFraction);
+                }
+
+                SetActiveScreenBehindCurtain(_hudScreen);
+                return false;
+            }
+
+            UnbindLevel();
+            _currentLevelIndex = -1;
+            _levelUndoCount = 0;
+            _levelStartedAtSeconds = 0d;
+            _levelThemeApplicator?.ClearCurrentLevel();
+            RefreshProgressUi();
+            RefreshLevelButtons();
+            RefreshDecorationUi();
+            SetActiveScreenBehindCurtain(_homeScreen);
+            await PrepareWorkshopRecoveryAsync(reason);
+            return true;
         }
 
         private async UniTask ReturnHomeCoreAsync(
@@ -712,13 +778,13 @@ namespace CalmSpace.UI
             }
 
             BeginNavigation(false);
-            _workshopHomeController.NotifyHidden();
             try
             {
                 RefreshLevelButtons();
                 await ShowScreenAsync(
                     _levelSelectScreen,
                     cancellationToken);
+                _workshopHomeController.NotifyHidden();
             }
             catch (OperationCanceledException)
             {
@@ -954,7 +1020,32 @@ namespace CalmSpace.UI
             _pendingCompletionLevelIndex = _currentLevelIndex;
             _pendingCompletionReward =
                 _decorationCatalog.CompletionReward;
+            CapturePendingWorkshopBeat();
             CompleteCapturedLevel();
+        }
+
+        private void CapturePendingWorkshopBeat()
+        {
+            _pendingCompletionBeatId = string.Empty;
+            _pendingCompletionMemoryId = string.Empty;
+            _pendingCompletionChapterId = string.Empty;
+            _pendingCompletionIsFinale = false;
+            if (_livingWorkshopCatalog == null ||
+                !_levelCatalog.TryGetRestorationStage(
+                    _pendingCompletionLevelIndex,
+                    out RestorationStageInfo stage) ||
+                !_livingWorkshopCatalog.TryFindBeat(
+                    stage.ChapterId,
+                    stage.StageIndex,
+                    out WorkshopBeatDefinition beat))
+            {
+                return;
+            }
+
+            _pendingCompletionBeatId = beat.BeatId;
+            _pendingCompletionMemoryId = beat.MemoryId;
+            _pendingCompletionChapterId = beat.ChapterId;
+            _pendingCompletionIsFinale = beat.IsFinale;
         }
 
         private void CompleteCapturedLevel()
@@ -1013,6 +1104,7 @@ namespace CalmSpace.UI
                     completion.FirstCompletion,
                     HasValidRestorationChapter(
                         _boundLevel.Definition)));
+            TrackWorkshopCompletionMilestones(result, completion);
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshDecorationUi();
@@ -1060,6 +1152,37 @@ namespace CalmSpace.UI
 
             PresentCompletionAsync(
                 _lifetimeCancellation.Token).Forget();
+        }
+
+        private void TrackWorkshopCompletionMilestones(
+            ProfileMutationResult<LevelCompletionMutation> result,
+            LevelCompletionMutation completion)
+        {
+            if (result.Status != ProfileMutationStatus.Applied ||
+                !completion.FirstCompletion)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(_pendingCompletionMemoryId) &&
+                _workshopAnalyticsSession.TryAdmitMemoryUnlocked(
+                    _pendingCompletionMemoryId,
+                    result.Status))
+            {
+                _analytics.Track(ProductAnalyticsEvent.MemoryUnlocked(
+                    _pendingCompletionBeatId,
+                    _pendingCompletionMemoryId));
+            }
+
+            if (_pendingCompletionIsFinale &&
+                _workshopAnalyticsSession.TryAdmitChapterCompleted(
+                    _pendingCompletionChapterId,
+                    result.Status))
+            {
+                _analytics.Track(ProductAnalyticsEvent.ChapterCompleted(
+                    _pendingCompletionChapterId,
+                    _pendingCompletionBeatId));
+            }
         }
 
         private void ShowPersistFailure()
@@ -1685,13 +1808,11 @@ namespace CalmSpace.UI
 
         private void ShowLoadRetry(LevelLaunchRequest request)
         {
-            if (_workshopHomeController is WorkshopHomeController home)
-            {
-                home.ShowLoadFailure(
-                    () => PlayLevelAsync(
-                        request,
-                        _lifetimeCancellation.Token).Forget());
-            }
+            _workshopHomeRecovery.ShowLoadFailure(
+                request,
+                retry => PlayLevelAsync(
+                    retry,
+                    _lifetimeCancellation.Token).Forget());
         }
 
         private void SetActiveScreenBehindCurtain(
@@ -2167,8 +2288,11 @@ namespace CalmSpace.UI
                 _analytics == null ||
                 _clock == null ||
                 _workshopHomeController == null ||
+                _workshopHomeRecovery == null ||
                 _workshopFlowCoordinator == null ||
-                _workshopText == null)
+                _workshopText == null ||
+                _livingWorkshopCatalog == null ||
+                _workshopAnalyticsSession == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController was not injected.");

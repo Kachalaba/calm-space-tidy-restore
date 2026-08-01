@@ -12,13 +12,30 @@ namespace CalmSpace.UI
             string progressLabel,
             bool primaryVisible,
             bool hotspotVisible)
+            : this(
+                string.Empty,
+                primaryLabel,
+                progressLabel,
+                primaryVisible,
+                hotspotVisible)
         {
+        }
+
+        public WorkshopHomeViewState(
+            string taskTitle,
+            string primaryLabel,
+            string progressLabel,
+            bool primaryVisible,
+            bool hotspotVisible)
+        {
+            TaskTitle = taskTitle ?? string.Empty;
             PrimaryLabel = primaryLabel ?? string.Empty;
             ProgressLabel = progressLabel ?? string.Empty;
             PrimaryVisible = primaryVisible;
             HotspotVisible = hotspotVisible;
         }
 
+        public string TaskTitle { get; }
         public string PrimaryLabel { get; }
         public string ProgressLabel { get; }
         public bool PrimaryVisible { get; }
@@ -37,6 +54,7 @@ namespace CalmSpace.UI
         [SerializeField] private GameObject _dailyCareRoot;
         [SerializeField] private GameObject _relaxPassRoot;
         [SerializeField] private Text _primaryLabel;
+        [SerializeField] private Text _taskTitle;
         [SerializeField] private Text _progressLabel;
         [SerializeField] private Text _catalogLabel;
         [SerializeField] private WorkshopBottomSheet _bottomSheet;
@@ -99,6 +117,35 @@ namespace CalmSpace.UI
             Text progressLabel,
             WorkshopBottomSheet bottomSheet)
         {
+            Configure(
+                primaryButton,
+                catalogButton,
+                settingsButton,
+                hotspotButton,
+                albumRoot,
+                decorRoot,
+                dailyCareRoot,
+                relaxPassRoot,
+                primaryLabel,
+                null,
+                progressLabel,
+                bottomSheet);
+        }
+
+        public void Configure(
+            Button primaryButton,
+            Button catalogButton,
+            Button settingsButton,
+            Button hotspotButton,
+            GameObject albumRoot,
+            GameObject decorRoot,
+            GameObject dailyCareRoot,
+            GameObject relaxPassRoot,
+            Text primaryLabel,
+            Text taskTitle,
+            Text progressLabel,
+            WorkshopBottomSheet bottomSheet)
+        {
             Unbind();
             _primaryButton = primaryButton;
             _catalogButton = catalogButton;
@@ -109,6 +156,7 @@ namespace CalmSpace.UI
             _dailyCareRoot = dailyCareRoot;
             _relaxPassRoot = relaxPassRoot;
             _primaryLabel = primaryLabel;
+            _taskTitle = taskTitle;
             _progressLabel = progressLabel;
             _bottomSheet = bottomSheet;
             _settingsMusicButton = null;
@@ -226,6 +274,11 @@ namespace CalmSpace.UI
                 _primaryLabel.text = state.PrimaryLabel;
             }
 
+            if (_taskTitle != null)
+            {
+                _taskTitle.text = state.TaskTitle;
+            }
+
             if (_progressLabel != null)
             {
                 _progressLabel.text = state.ProgressLabel;
@@ -234,9 +287,22 @@ namespace CalmSpace.UI
             HideUnavailableCapabilities();
         }
 
-        public void ShowRetry(Action retry)
+        public void ShowRetry(
+            string title,
+            string actionLabel,
+            Action retry)
         {
-            _bottomSheet?.Open(retry);
+            _bottomSheet?.OpenRecovery(title, actionLabel, retry);
+        }
+
+        public void RenderRecoveryCopy(string title, string actionLabel)
+        {
+            _bottomSheet?.RenderRecoveryCopy(title, actionLabel);
+        }
+
+        public void OpenSettings()
+        {
+            _bottomSheet?.OpenSettings();
         }
 
         public void RenderSettings(

@@ -129,18 +129,72 @@ namespace CalmSpace.Tests.PlayMode
             DemoExperienceController experience =
                 Object.FindFirstObjectByType<DemoExperienceController>();
             Assert.That(experience, Is.Not.Null);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_analytics", analytics);
+            WorkshopHomeController home = FindHome();
+            home.View.CatalogButton.onClick.Invoke();
+            CanvasGroup levelSelect = GetPrivateField<CanvasGroup>(
+                experience,
+                "_levelSelectScreen");
+            yield return WaitForScreen(levelSelect);
+            yield return WaitForNavigationIdle(experience);
 
-            var request = new LevelLaunchRequest(
-                "01-soft-blocks",
-                0,
-                LevelLaunchSource.Catalog,
-                string.Empty,
-                string.Empty);
-            UniTask<bool> play = experience.PlayLevelAsync(request);
-            yield return Await(play);
+            DemoExperienceController.LevelButtonBinding[] entries =
+                GetPrivateField<
+                    DemoExperienceController.LevelButtonBinding[]>(
+                    experience,
+                    "_levelButtons");
+            Assert.That(entries, Is.Not.Empty);
+            Assert.That(entries[0].Button.interactable, Is.True);
+            entries[0].Button.onClick.Invoke();
+            yield return WaitForCurrentLevel(experience, 0);
 
-            Assert.That(play.GetAwaiter().GetResult(), Is.True);
             Assert.That(experience.CurrentLevelIndex, Is.Zero);
+            ProductAnalyticsEvent started =
+                analytics.Find(ProductEventKind.LevelStarted);
+            Assert.That(started.LevelId, Is.EqualTo("01-soft-blocks"));
+            Assert.That(started.LaunchSource,
+                Is.EqualTo(LevelLaunchSource.Catalog));
+        }
+
+        [UnityTest]
+        public IEnumerator HomeTaskTitleTracksLiveLocaleAndCompleteCopy()
+        {
+            yield return LoadMain();
+            WorkshopHomeController home = FindHome();
+            Text taskTitle = GetPrivateField<Text>(home.View, "_taskTitle");
+            IDemoLocalizationService localization =
+                GetPrivateField<IDemoLocalizationService>(
+                    home,
+                    "_localization");
+
+            Assert.That(taskTitle.text, Is.EqualTo("Clear the passage"));
+            localization.SelectLocale(DemoLocale.Ukrainian);
+            yield return null;
+            Assert.That(taskTitle.text, Is.EqualTo("Звільнити прохід"));
+            localization.SelectLocale(DemoLocale.Russian);
+            yield return null;
+            Assert.That(taskTitle.text, Is.EqualTo("Освободить проход"));
+
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            IDemoProgressStore store = GetPrivateField<IDemoProgressStore>(
+                experience,
+                "_progressStore");
+            for (var index = 0; index < 8; index++)
+            {
+                store.MarkLevelCompleted(index);
+            }
+
+            UniTask prepare = home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ExplicitWorkshopView,
+                default);
+            yield return Await(prepare);
+            Assert.That(taskTitle.text,
+                Is.EqualTo("Мастерская готова встретить всех."));
+            Assert.That(home.View.PrimaryButton.gameObject.activeSelf,
+                Is.False);
+            Assert.That(home.View.ActiveHotspotCount, Is.Zero);
         }
 
         [UnityTest]
@@ -209,12 +263,204 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
-        public IEnumerator FailedLevelLoadReturnsHomeWithOneRetryAction()
+        public IEnumerator MidUnloadCancellationAfterReleaseRecoversCleanHome()
         {
             yield return LoadMain();
             DemoExperienceController experience =
                 Object.FindFirstObjectByType<DemoExperienceController>();
-            SetPrivateField(experience, "_levelFlow", new FailingLevelFlow());
+            yield return LoadFirstLevel(experience);
+            InvokeCompletion(experience);
+            yield return WaitForCompletionStatus(
+                experience,
+                ProfileMutationStatus.Applied);
+            CanvasGroup completion = GetPrivateField<CanvasGroup>(
+                experience,
+                "_completionScreen");
+            yield return WaitForScreen(completion);
+            LevelBase level = GetPrivateField<LevelBase>(
+                experience,
+                "_boundLevel");
+            var cancelling = new CancellingUnloadLevelFlow(
+                level,
+                0,
+                releaseBeforeCancel: true);
+            SetPrivateField(experience, "_levelFlow", cancelling);
+
+            UniTask returning = experience.ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel);
+            yield return Await(returning);
+
+            Assert.That(cancelling.CurrentLevel, Is.Null);
+            Assert.That(experience.CurrentLevelIndex, Is.EqualTo(-1));
+            Assert.That(
+                GetPrivateField<LevelBase>(experience, "_boundLevel"),
+                Is.Null);
+            CanvasGroup home = GetPrivateField<CanvasGroup>(
+                experience,
+                "_homeScreen");
+            Assert.That(home.gameObject.activeSelf, Is.True);
+            Assert.That(home.interactable, Is.True);
+            Assert.That(completion.gameObject.activeSelf, Is.False);
+            Assert.That(CountInteractiveScreens(), Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator MidUnloadCancellationWhileOwnedRestoresBoundHud()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            yield return LoadFirstLevel(experience);
+            LevelBase level = GetPrivateField<LevelBase>(
+                experience,
+                "_boundLevel");
+            var cancelling = new CancellingUnloadLevelFlow(
+                level,
+                0,
+                releaseBeforeCancel: false);
+            SetPrivateField(experience, "_levelFlow", cancelling);
+
+            UniTask returning = experience.ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel);
+            yield return Await(returning);
+
+            Assert.That(cancelling.CurrentLevel, Is.SameAs(level));
+            Assert.That(experience.CurrentLevelIndex, Is.Zero);
+            Assert.That(
+                GetPrivateField<LevelBase>(experience, "_boundLevel"),
+                Is.SameAs(level));
+            CanvasGroup hud = GetPrivateField<CanvasGroup>(
+                experience,
+                "_hudScreen");
+            Assert.That(hud.gameObject.activeSelf, Is.True);
+            Assert.That(hud.interactable, Is.True);
+            Assert.That(CountInteractiveScreens(), Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator CancelledAndFailedHomeTransitionsDoNotRepeatWorkshopViewed()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+            ILevelFlowController realFlow =
+                GetPrivateField<ILevelFlowController>(
+                    experience,
+                    "_levelFlow");
+            var request = new LevelLaunchRequest(
+                "01-soft-blocks",
+                0,
+                LevelLaunchSource.Workshop,
+                "cozy-workshop",
+                "cozy-workshop.clear-passage");
+
+            UniTask<bool> cancelled = experience.PlayLevelAsync(
+                request,
+                new System.Threading.CancellationToken(true));
+            yield return Await(cancelled);
+            Assert.That(
+                analytics.Count(ProductEventKind.WorkshopViewed),
+                Is.Zero,
+                "A pre-cancelled launch never hid the workshop.");
+
+            SetPrivateField(experience, "_levelFlow",
+                new CountingFailingLevelFlow());
+            UniTask<bool> failed = experience.PlayLevelAsync(request);
+            yield return Await(failed);
+            Assert.That(
+                analytics.Count(ProductEventKind.WorkshopViewed),
+                Is.Zero,
+                "A failed load restored the same visible workshop.");
+
+            SetPrivateField(experience, "_levelFlow", realFlow);
+            MethodInfo showCatalog =
+                typeof(DemoExperienceController).GetMethod(
+                    "ShowLevelSelectAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(showCatalog, Is.Not.Null);
+            UniTask cancelledCatalog = (UniTask)showCatalog.Invoke(
+                experience,
+                new object[]
+                {
+                    new System.Threading.CancellationToken(true)
+                });
+            yield return Await(cancelledCatalog);
+            Assert.That(
+                analytics.Count(ProductEventKind.WorkshopViewed),
+                Is.Zero,
+                "A cancelled catalog fade never hid the workshop.");
+        }
+
+        [UnityTest]
+        public IEnumerator SuccessfulCatalogRoundTripEmitsOneWorkshopViewed()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+
+            home.View.CatalogButton.onClick.Invoke();
+            CanvasGroup catalog = GetPrivateField<CanvasGroup>(
+                experience,
+                "_levelSelectScreen");
+            yield return WaitForScreen(catalog);
+            yield return WaitForNavigationIdle(experience);
+            Button back = GetPrivateField<Button>(
+                experience,
+                "_levelSelectBackButton");
+            back.onClick.Invoke();
+            CanvasGroup homeScreen = GetPrivateField<CanvasGroup>(
+                experience,
+                "_homeScreen");
+            yield return WaitForScreen(homeScreen);
+            yield return WaitForNavigationIdle(experience);
+
+            Assert.That(
+                analytics.Count(ProductEventKind.WorkshopViewed),
+                Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator SuccessfulLevelRoundTripEmitsOneWorkshopViewed()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+
+            home.View.PrimaryButton.onClick.Invoke();
+            yield return WaitForCurrentLevel(experience, 0);
+            yield return WaitForNavigationIdle(experience);
+            UniTask returning = experience.ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel);
+            yield return Await(returning);
+
+            Assert.That(
+                analytics.Count(ProductEventKind.WorkshopViewed),
+                Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator FailedLevelLoadShowsLocalizedVisibleRetryAndRetainsExactRequest()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            ILevelFlowController realFlow =
+                GetPrivateField<ILevelFlowController>(
+                    experience,
+                    "_levelFlow");
+            var failing = new CountingFailingLevelFlow();
+            SetPrivateField(experience, "_levelFlow", failing);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_analytics", analytics);
             var request = new LevelLaunchRequest(
                 "01-soft-blocks",
                 0,
@@ -232,6 +478,62 @@ namespace CalmSpace.Tests.PlayMode
                 Is.True);
             Assert.That(home.View.VisibleActionControlsHaveBindings, Is.True);
             Assert.That(CountInteractiveScreens(), Is.EqualTo(1));
+            Transform recovery =
+                home.View.BottomSheet.transform.Find("Recovery Content");
+            Assert.That(recovery, Is.Not.Null);
+            Text title = recovery.Find("Failure Title").GetComponent<Text>();
+            Text actionLabel = home.View.BottomSheet.ActionButton
+                .GetComponentInChildren<Text>(true);
+            Assert.That(title.text,
+                Is.EqualTo("This space needs one calm moment."));
+            Assert.That(actionLabel.text, Is.EqualTo("Try again"));
+            Assert.That(actionLabel.fontSize, Is.GreaterThanOrEqualTo(24));
+            Assert.That(
+                home.View.BottomSheet.ActionButton
+                    .GetComponent<RectTransform>().sizeDelta.x,
+                Is.GreaterThanOrEqualTo(600f));
+            Assert.That(
+                home.View.BottomSheet.ActionButton.targetGraphic.color.a,
+                Is.GreaterThanOrEqualTo(0.8f));
+            Assert.That(home.View.SettingsMusicButton.gameObject.activeSelf,
+                Is.False);
+            Assert.That(home.View.SettingsLocaleButton.gameObject.activeSelf,
+                Is.False);
+            Assert.That(home.View.SettingsHapticButton.gameObject.activeSelf,
+                Is.False);
+
+            IDemoLocalizationService localization =
+                GetPrivateField<IDemoLocalizationService>(
+                    home,
+                    "_localization");
+            localization.SelectLocale(DemoLocale.Ukrainian);
+            yield return null;
+            Assert.That(title.text,
+                Is.EqualTo("Цьому простору потрібна спокійна мить."));
+            Assert.That(actionLabel.text,
+                Is.EqualTo("Спробувати ще раз"));
+            localization.SelectLocale(DemoLocale.Russian);
+            yield return null;
+            Assert.That(title.text,
+                Is.EqualTo("Этому пространству нужна спокойная минута."));
+            Assert.That(actionLabel.text,
+                Is.EqualTo("Попробовать снова"));
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return WaitForLoadCalls(failing, 2);
+            Assert.That(failing.LoadCallCount, Is.EqualTo(2),
+                "Replacing the recovery action must not multiply listeners.");
+            yield return WaitForOpenSheet(home.View.BottomSheet);
+            yield return WaitForNavigationIdle(experience);
+
+            SetPrivateField(experience, "_levelFlow", realFlow);
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return WaitForCurrentLevel(experience, 0);
+            ProductAnalyticsEvent started =
+                analytics.Find(ProductEventKind.LevelStarted);
+            Assert.That(started.LevelId, Is.EqualTo(request.LevelId));
+            Assert.That(started.LevelIndex, Is.EqualTo(request.LevelIndex));
+            Assert.That(started.LaunchSource, Is.EqualTo(request.Source));
         }
 
         [UnityTest]
@@ -240,7 +542,7 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience =
                 Object.FindFirstObjectByType<DemoExperienceController>();
-            yield return LoadFirstLevel(experience);
+            yield return LoadLevelAt(experience, 7);
             var coordinator = new ScriptedWorkshopFlow(
                 ProfileMutationStatus.PersistFailed,
                 ProfileMutationStatus.Applied);
@@ -263,6 +565,10 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(returnWithout.gameObject.activeSelf, Is.True);
             Assert.That(analytics.Count(ProductEventKind.LevelCompleted),
                 Is.Zero);
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.Zero);
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
 
             yield return WaitForButton(retry);
 
@@ -275,6 +581,75 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(coordinator.AllCommandsMatch, Is.True);
             Assert.That(analytics.Count(ProductEventKind.LevelCompleted),
                 Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator AppliedStageTwoEmitsOneGatedMemoryUnlockedEvent()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            yield return LoadLevelAt(experience, 1);
+            var coordinator = new ScriptedWorkshopFlow(
+                ProfileMutationStatus.Applied,
+                ProfileMutationStatus.Applied);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
+            SetPrivateField(experience, "_analytics", analytics);
+
+            InvokeCompletion(experience);
+            InvokeCompletion(experience);
+            yield return null;
+
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.EqualTo(1));
+            ProductAnalyticsEvent unlocked =
+                analytics.Find(ProductEventKind.MemoryUnlocked);
+            Assert.That(unlocked.BeatId,
+                Is.EqualTo("cozy-workshop.pebble-shelf"));
+            Assert.That(unlocked.ItemId,
+                Is.EqualTo("family.summer-trail-stones"));
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator AppliedStageEightEmitsOneGatedMemoryAndChapterEvent()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            yield return LoadLevelAt(experience, 7);
+            var coordinator = new ScriptedWorkshopFlow(
+                ProfileMutationStatus.Applied,
+                ProfileMutationStatus.Applied);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
+            SetPrivateField(experience, "_analytics", analytics);
+
+            InvokeCompletion(experience);
+            InvokeCompletion(experience);
+            yield return null;
+
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.EqualTo(1));
+            ProductAnalyticsEvent unlocked =
+                analytics.Find(ProductEventKind.MemoryUnlocked);
+            ProductAnalyticsEvent chapter =
+                analytics.Find(ProductEventKind.ChapterCompleted);
+            Assert.That(unlocked.BeatId,
+                Is.EqualTo("cozy-workshop.open-window"));
+            Assert.That(unlocked.ItemId,
+                Is.EqualTo("family.open-windows"));
+            Assert.That(chapter.ChapterId, Is.EqualTo("cozy-workshop"));
+            Assert.That(chapter.BeatId,
+                Is.EqualTo("cozy-workshop.open-window"));
         }
 
         [UnityTest]
@@ -315,7 +690,7 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience =
                 Object.FindFirstObjectByType<DemoExperienceController>();
-            yield return LoadFirstLevel(experience);
+            yield return LoadLevelAt(experience, 7);
             var coordinator = new ScriptedWorkshopFlow(
                 ProfileMutationStatus.AlreadyApplied);
             var analytics = new RecordingAnalytics();
@@ -334,6 +709,10 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(analytics.Count(ProductEventKind.LevelCompleted),
                 Is.EqualTo(1));
             Assert.That(analytics.Last.Flag, Is.False);
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.Zero);
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
         }
 
         [UnityTest]
@@ -342,11 +721,13 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience =
                 Object.FindFirstObjectByType<DemoExperienceController>();
-            yield return LoadFirstLevel(experience);
+            yield return LoadLevelAt(experience, 7);
             var coordinator = new ScriptedWorkshopFlow(
                 ProfileMutationStatus.Invalid,
                 ProfileMutationStatus.Invalid);
+            var analytics = new RecordingAnalytics();
             SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
+            SetPrivateField(experience, "_analytics", analytics);
 
             LogAssert.Expect(
                 LogType.Error,
@@ -361,6 +742,10 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(hud.gameObject.activeSelf, Is.True);
             Assert.That(hud.interactable, Is.True);
             Assert.That(coordinator.CompleteCallCount, Is.EqualTo(2));
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.Zero);
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
         }
 
         private static WorkshopHomeController FindHome()
@@ -376,7 +761,25 @@ namespace CalmSpace.Tests.PlayMode
         private static IEnumerator LoadFirstLevel(
             DemoExperienceController experience)
         {
-            UniTask<bool> play = experience.PlayLevelAsync(0);
+            yield return LoadLevelAt(experience, 0);
+        }
+
+        private static IEnumerator LoadLevelAt(
+            DemoExperienceController experience,
+            int levelIndex)
+        {
+            IDemoProgressStore store = GetPrivateField<IDemoProgressStore>(
+                experience,
+                "_progressStore");
+            for (var index = 0; index < levelIndex; index++)
+            {
+                if (!store.IsLevelCompleted(index))
+                {
+                    store.MarkLevelCompleted(index);
+                }
+            }
+
+            UniTask<bool> play = experience.PlayLevelAsync(levelIndex);
             yield return Await(play);
             Assert.That(play.GetAwaiter().GetResult(), Is.True);
         }
@@ -420,6 +823,75 @@ namespace CalmSpace.Tests.PlayMode
 
             Assert.That(button.gameObject.activeInHierarchy, Is.True);
             Assert.That(button.interactable, Is.True);
+        }
+
+        private static IEnumerator WaitForScreen(CanvasGroup screen)
+        {
+            float timeout = Time.realtimeSinceStartup + 10f;
+            while ((!screen.gameObject.activeInHierarchy ||
+                    !screen.interactable ||
+                    !screen.blocksRaycasts) &&
+                Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+
+            Assert.That(screen.gameObject.activeInHierarchy, Is.True);
+            Assert.That(screen.interactable, Is.True);
+            Assert.That(screen.blocksRaycasts, Is.True);
+        }
+
+        private static IEnumerator WaitForCurrentLevel(
+            DemoExperienceController experience,
+            int expectedIndex)
+        {
+            float timeout = Time.realtimeSinceStartup + 10f;
+            while (experience.CurrentLevelIndex != expectedIndex &&
+                Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+
+            Assert.That(experience.CurrentLevelIndex,
+                Is.EqualTo(expectedIndex));
+        }
+
+        private static IEnumerator WaitForNavigationIdle(
+            DemoExperienceController experience)
+        {
+            float timeout = Time.realtimeSinceStartup + 10f;
+            while (experience.IsNavigating &&
+                Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+
+            Assert.That(experience.IsNavigating, Is.False);
+        }
+
+        private static IEnumerator WaitForLoadCalls(
+            CountingFailingLevelFlow flow,
+            int expectedCount)
+        {
+            float timeout = Time.realtimeSinceStartup + 10f;
+            while (flow.LoadCallCount < expectedCount &&
+                Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+
+            Assert.That(flow.LoadCallCount, Is.EqualTo(expectedCount));
+        }
+
+        private static IEnumerator WaitForOpenSheet(WorkshopBottomSheet sheet)
+        {
+            float timeout = Time.realtimeSinceStartup + 10f;
+            while (!sheet.IsOpen && Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+
+            Assert.That(sheet.IsOpen, Is.True);
         }
 
         private static int CountInteractiveScreens()
@@ -557,13 +1029,64 @@ namespace CalmSpace.Tests.PlayMode
 
                 return count;
             }
+
+            public ProductAnalyticsEvent Find(ProductEventKind kind)
+            {
+                foreach (ProductAnalyticsEvent analyticsEvent in _events)
+                {
+                    if (analyticsEvent.Kind == kind)
+                    {
+                        return analyticsEvent;
+                    }
+                }
+
+                Assert.Fail("Missing analytics event " + kind + ".");
+                return default;
+            }
         }
 
-        private sealed class FailingLevelFlow : ILevelFlowController
+        private sealed class CountingFailingLevelFlow : ILevelFlowController
         {
+            public int LoadCallCount { get; private set; }
             public LevelBase CurrentLevel => null;
             public int CurrentLevelIndex => -1;
             public bool IsLoading => false;
+            public UniTask<bool> LoadFirstLevelAsync(
+                System.Threading.CancellationToken cancellationToken = default)
+                => UniTask.FromResult(false);
+            public UniTask<bool> LoadLevelAsync(
+                string levelId,
+                System.Threading.CancellationToken cancellationToken = default)
+            {
+                LoadCallCount++;
+                return UniTask.FromResult(false);
+            }
+            public UniTask<bool> LoadNextLevelAsync(
+                System.Threading.CancellationToken cancellationToken = default)
+                => UniTask.FromResult(false);
+            public UniTask UnloadCurrentLevelAsync(
+                System.Threading.CancellationToken cancellationToken = default)
+                => UniTask.CompletedTask;
+        }
+
+        private sealed class CancellingUnloadLevelFlow : ILevelFlowController
+        {
+            private readonly bool _releaseBeforeCancel;
+
+            public CancellingUnloadLevelFlow(
+                LevelBase currentLevel,
+                int currentLevelIndex,
+                bool releaseBeforeCancel)
+            {
+                CurrentLevel = currentLevel;
+                CurrentLevelIndex = currentLevelIndex;
+                _releaseBeforeCancel = releaseBeforeCancel;
+            }
+
+            public LevelBase CurrentLevel { get; private set; }
+            public int CurrentLevelIndex { get; private set; }
+            public bool IsLoading { get; private set; }
+
             public UniTask<bool> LoadFirstLevelAsync(
                 System.Threading.CancellationToken cancellationToken = default)
                 => UniTask.FromResult(false);
@@ -574,9 +1097,22 @@ namespace CalmSpace.Tests.PlayMode
             public UniTask<bool> LoadNextLevelAsync(
                 System.Threading.CancellationToken cancellationToken = default)
                 => UniTask.FromResult(false);
-            public UniTask UnloadCurrentLevelAsync(
+
+            public async UniTask UnloadCurrentLevelAsync(
                 System.Threading.CancellationToken cancellationToken = default)
-                => UniTask.CompletedTask;
+            {
+                IsLoading = true;
+                await UniTask.Yield();
+                if (_releaseBeforeCancel)
+                {
+                    CurrentLevel = null;
+                    CurrentLevelIndex = -1;
+                }
+
+                IsLoading = false;
+                throw new System.OperationCanceledException(
+                    "Controlled cancellation after unload boundary.");
+            }
         }
 
         private sealed class ScriptedWorkshopFlow : IWorkshopFlowCoordinator

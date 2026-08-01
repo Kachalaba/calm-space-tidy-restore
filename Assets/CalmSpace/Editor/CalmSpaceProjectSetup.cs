@@ -70,7 +70,10 @@ namespace CalmSpace.Editor
             "Assets/CalmSpace/Editor/CalmSpaceProjectSetup.cs",
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopBottomSheet.cs",
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeView.cs",
-            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs"
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs",
+            "Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs",
+            "Assets/CalmSpace/Runtime/Composition/CalmSpaceLifetimeScope.cs",
+            "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs"
         };
 
         private static readonly Color BackgroundColor =
@@ -967,11 +970,40 @@ namespace CalmSpace.Editor
             }
 
             SerializedObject view = new SerializedObject(home.View);
-            if (view.FindProperty("_primaryButton")?.objectReferenceValue == null ||
+            if (!(home is IWorkshopHomeRecovery) ||
+                view.FindProperty("_primaryButton")?.objectReferenceValue == null ||
                 view.FindProperty("_catalogButton")?.objectReferenceValue == null ||
                 view.FindProperty("_settingsButton")?.objectReferenceValue == null ||
                 view.FindProperty("_hotspotButton")?.objectReferenceValue == null ||
-                view.FindProperty("_bottomSheet")?.objectReferenceValue == null)
+                view.FindProperty("_taskTitle")?.objectReferenceValue == null ||
+                view.FindProperty("_bottomSheet")?.objectReferenceValue == null ||
+                view.FindProperty("_settingsMusicButton")
+                    ?.objectReferenceValue == null ||
+                view.FindProperty("_settingsLocaleButton")
+                    ?.objectReferenceValue == null ||
+                view.FindProperty("_settingsHapticButton")
+                    ?.objectReferenceValue == null)
+            {
+                return false;
+            }
+
+            WorkshopBottomSheet bottomSheet = home.View.BottomSheet;
+            if (bottomSheet == null)
+            {
+                return false;
+            }
+
+            var sheetData = new SerializedObject(bottomSheet);
+            if (sheetData.FindProperty("_settingsContent")
+                    ?.objectReferenceValue == null ||
+                sheetData.FindProperty("_recoveryContent")
+                    ?.objectReferenceValue == null ||
+                sheetData.FindProperty("_recoveryTitleLabel")
+                    ?.objectReferenceValue == null ||
+                sheetData.FindProperty("_actionLabel")
+                    ?.objectReferenceValue == null ||
+                sheetData.FindProperty("_actionButton")
+                    ?.objectReferenceValue == null)
             {
                 return false;
             }

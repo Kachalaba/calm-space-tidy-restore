@@ -134,6 +134,47 @@ namespace CalmSpace.Tests.EditMode
                 Is.False);
         }
 
+        [Test]
+        public void InvalidWorkshopMetadataKeepsCoreCatalogCompletionUsable()
+        {
+            LevelCatalog levels = AssetDatabase.LoadAssetAtPath<
+                LevelCatalog>(LevelCatalogPath);
+            LivingWorkshopCatalog invalid =
+                UnityEngine.ScriptableObject.CreateInstance<
+                    LivingWorkshopCatalog>();
+            var store = new InMemoryProgressStore(
+                DemoProgressRules.CreateDefault(8, "sage"), 8);
+            try
+            {
+                var coordinator = new WorkshopFlowCoordinator(
+                    levels,
+                    invalid,
+                    store,
+                    new WorkshopProgressProjector(levels, invalid));
+
+                ProfileMutationResult<LevelCompletionMutation> valid =
+                    coordinator.CompleteLevel("01-soft-blocks", 0, 5);
+                ProfileMutationResult<LevelCompletionMutation> wrongId =
+                    coordinator.CompleteLevel("not-the-level", 0, 5);
+                ProfileMutationResult<LevelCompletionMutation> wrongIndex =
+                    coordinator.CompleteLevel("01-soft-blocks", 7, 5);
+
+                Assert.That(valid.Status,
+                    Is.EqualTo(ProfileMutationStatus.Applied));
+                Assert.That(store.CompleteCallCount, Is.EqualTo(1));
+                Assert.That(store.LastCommand.PresentationCount, Is.Zero,
+                    "Unavailable workshop metadata must not queue fake meta presentation.");
+                Assert.That(wrongId.Status,
+                    Is.EqualTo(ProfileMutationStatus.Invalid));
+                Assert.That(wrongIndex.Status,
+                    Is.EqualTo(ProfileMutationStatus.Invalid));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(invalid);
+            }
+        }
+
         private static void AssertPresentation(
             CompleteLevelCommand command,
             int index,

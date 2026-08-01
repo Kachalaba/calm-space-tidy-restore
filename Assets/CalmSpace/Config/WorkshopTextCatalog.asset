@@ -11,7 +11,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 69022ee1bfeca4a8f8890ea7012b0c50, type: 3}
   m_Name: WorkshopTextCatalog
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   _entries:
   - _key: chapter.cozy-workshop.title
     _english: Old Family Workshop
@@ -229,6 +229,20 @@ MonoBehaviour:
       \u0437\u0443\u0441\u0442\u0440\u0456\u0447\u0430\u0442\u0438 \u0432\u0441\u0456\u0445."
     _russian: "\u041C\u0430\u0441\u0442\u0435\u0440\u0441\u043A\u0430\u044F \u0433\u043E\u0442\u043E\u0432\u0430
       \u0432\u0441\u0442\u0440\u0435\u0442\u0438\u0442\u044C \u0432\u0441\u0435\u0445."
+  - _key: load.failure.title
+    _english: This space needs one calm moment.
+    _ukrainian: "\u0426\u044C\u043E\u043C\u0443 \u043F\u0440\u043E\u0441\u0442\u043E\u0440\u0443
+      \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0430 \u0441\u043F\u043E\u043A\u0456\u0439\u043D\u0430
+      \u043C\u0438\u0442\u044C."
+    _russian: "\u042D\u0442\u043E\u043C\u0443 \u043F\u0440\u043E\u0441\u0442\u0440\u0430\u043D\u0441\u0442\u0432\u0443
+      \u043D\u0443\u0436\u043D\u0430 \u0441\u043F\u043E\u043A\u043E\u0439\u043D\u0430\u044F
+      \u043C\u0438\u043D\u0443\u0442\u0430."
+  - _key: load.failure.retry
+    _english: Try again
+    _ukrainian: "\u0421\u043F\u0440\u043E\u0431\u0443\u0432\u0430\u0442\u0438 \u0449\u0435
+      \u0440\u0430\u0437"
+    _russian: "\u041F\u043E\u043F\u0440\u043E\u0431\u043E\u0432\u0430\u0442\u044C
+      \u0441\u043D\u043E\u0432\u0430"
   - _key: save.retry
     _english: Retry save
     _ukrainian: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0438 \u0437\u0431\u0435\u0440\u0435\u0436\u0435\u043D\u043D\u044F"

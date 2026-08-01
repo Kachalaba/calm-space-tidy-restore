@@ -54,6 +54,8 @@ namespace CalmSpace.Tests.EditMode
             "home.daily-care",
             "home.view-workshop",
             "home.chapter-complete",
+            "load.failure.title",
+            "load.failure.retry",
             "save.retry",
             "save.return-without",
             "album.title",
@@ -113,6 +115,24 @@ namespace CalmSpace.Tests.EditMode
                 catalog.Get("daily.instruction", DemoLocale.Ukrainian),
                 Is.EqualTo(
                     "Додай чай, обережно налий воду й зроби три спокійні кола ложкою."));
+            Assert.That(
+                catalog.Get("load.failure.title", DemoLocale.English),
+                Is.EqualTo("This space needs one calm moment."));
+            Assert.That(
+                catalog.Get("load.failure.title", DemoLocale.Ukrainian),
+                Is.EqualTo("Цьому простору потрібна спокійна мить."));
+            Assert.That(
+                catalog.Get("load.failure.title", DemoLocale.Russian),
+                Is.EqualTo("Этому пространству нужна спокойная минута."));
+            Assert.That(
+                catalog.Get("load.failure.retry", DemoLocale.English),
+                Is.EqualTo("Try again"));
+            Assert.That(
+                catalog.Get("load.failure.retry", DemoLocale.Ukrainian),
+                Is.EqualTo("Спробувати ще раз"));
+            Assert.That(
+                catalog.Get("load.failure.retry", DemoLocale.Russian),
+                Is.EqualTo("Попробовать снова"));
         }
 
         [Test]

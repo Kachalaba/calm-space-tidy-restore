@@ -33,10 +33,22 @@ namespace CalmSpace.UI
         void NotifyHidden();
     }
 
+    /// <summary>
+    /// Narrow companion boundary for navigation recovery. The primary home
+    /// contract remains stable and does not own level loading.
+    /// </summary>
+    public interface IWorkshopHomeRecovery
+    {
+        void ShowLoadFailure(
+            LevelLaunchRequest request,
+            Action<LevelLaunchRequest> retry);
+    }
+
     [DisallowMultipleComponent]
     public sealed class WorkshopHomeController :
         MonoBehaviour,
-        IWorkshopHomeController
+        IWorkshopHomeController,
+        IWorkshopHomeRecovery
     {
         [SerializeField] private WorkshopHomeView _view;
 
@@ -48,9 +60,13 @@ namespace CalmSpace.UI
         private IHapticService _haptics;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _music;
+        private WorkshopRuntimeAvailability _availability;
         private bool _initialized;
         private bool _eventsBound;
         private bool _visible;
+        private bool _hasLoadFailure;
+        private LevelLaunchRequest _failedRequest;
+        private Action<LevelLaunchRequest> _retryLoad;
 
         public event Action<LevelLaunchRequest> LevelLaunchRequested;
         public event Action CatalogRequested;
@@ -67,7 +83,8 @@ namespace CalmSpace.UI
             IProductAnalytics analytics,
             IHapticService haptics,
             IDemoLocalizationService localization,
-            IBackgroundMusicService music)
+            IBackgroundMusicService music,
+            WorkshopRuntimeAvailability availability)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _flow = flow ?? throw new ArgumentNullException(nameof(flow));
@@ -81,6 +98,8 @@ namespace CalmSpace.UI
             _localization = localization ??
                 throw new ArgumentNullException(nameof(localization));
             _music = music ?? throw new ArgumentNullException(nameof(music));
+            _availability = availability ??
+                throw new ArgumentNullException(nameof(availability));
         }
 
         public UniTask InitializeAsync(CancellationToken cancellationToken)
@@ -93,7 +112,8 @@ namespace CalmSpace.UI
 
             if (_view == null || _store == null || _flow == null ||
                 _projector == null || _text == null || _analytics == null ||
-                _haptics == null || _localization == null || _music == null)
+                _haptics == null || _localization == null || _music == null ||
+                _availability == null)
             {
                 throw new InvalidOperationException(
                     "WorkshopHomeController is not fully configured.");
@@ -137,15 +157,35 @@ namespace CalmSpace.UI
         public void NotifyHidden()
         {
             _visible = false;
+            _hasLoadFailure = false;
+            _retryLoad = null;
             _view?.CloseBottomSheet();
         }
 
-        public void ShowLoadFailure(Action retry)
+        public void ShowLoadFailure(
+            LevelLaunchRequest request,
+            Action<LevelLaunchRequest> retry)
         {
-            if (_initialized)
+            if (!_initialized)
             {
-                _view.ShowRetry(retry);
+                return;
             }
+
+            _failedRequest = request;
+            _retryLoad = retry;
+            _hasLoadFailure = true;
+            _view.ShowRetry(
+                GetTextOrFallback(
+                    "load.failure.title",
+                    "This space needs one calm moment.",
+                    "Цьому простору потрібна спокійна мить.",
+                    "Этому пространству нужна спокойная минута."),
+                GetTextOrFallback(
+                    "load.failure.retry",
+                    "Try again",
+                    "Спробувати ще раз",
+                    "Попробовать снова"),
+                RetryFailedLoad);
         }
 
         private void BindEvents()
@@ -220,7 +260,9 @@ namespace CalmSpace.UI
 
         private void HandleSettingsRequested()
         {
-            _view.BottomSheet?.Open();
+            _hasLoadFailure = false;
+            _retryLoad = null;
+            _view.OpenSettings();
         }
 
         private void HandleSettingsMusicRequested()
@@ -241,6 +283,22 @@ namespace CalmSpace.UI
         private void HandleLocaleChanged(DemoLocale locale)
         {
             Refresh();
+            if (_hasLoadFailure &&
+                _view.BottomSheet != null &&
+                _view.BottomSheet.IsOpen)
+            {
+                _view.RenderRecoveryCopy(
+                    GetTextOrFallback(
+                        "load.failure.title",
+                        "This space needs one calm moment.",
+                        "Цьому простору потрібна спокійна мить.",
+                        "Этому пространству нужна спокойная минута."),
+                    GetTextOrFallback(
+                        "load.failure.retry",
+                        "Try again",
+                        "Спробувати ще раз",
+                        "Попробовать снова"));
+            }
         }
 
         private void HandleMusicChanged(bool enabled)
@@ -255,12 +313,21 @@ namespace CalmSpace.UI
 
         private void Refresh()
         {
+            _view.RenderChrome(GetTextOrFallback(
+                "home.catalog",
+                "All spaces",
+                "Усі простори",
+                "Все пространства"));
+            RefreshSettings();
+
             if (!_store.IsInitialized ||
+                !_availability.HomeMetaAvailable ||
                 !_projector.TryProject(
                     _store.Current,
                     out WorkshopProgressProjection projection))
             {
                 _view.Render(new WorkshopHomeViewState(
+                    string.Empty,
                     string.Empty,
                     string.Empty,
                     false,
@@ -275,18 +342,33 @@ namespace CalmSpace.UI
                 action.Value.Kind ==
                     WorkshopRecommendedActionKind.StartLevel &&
                 _flow.TryCreateLaunchRequest(action.Value, out _);
-            string label = projection.IsComplete
+            string taskTitle = projection.IsComplete
                 ? _text.Get("home.chapter-complete")
-                : _text.Get("home.start");
+                : ResolveTaskTitle(action);
             string progress = projection.CompletedBeatCount + " / " +
                 projection.BeatCount;
             _view.Render(new WorkshopHomeViewState(
-                label,
+                taskTitle,
+                _text.Get("home.start"),
                 progress,
                 hasLevel,
                 hasLevel));
-            _view.RenderChrome(_text.Get("home.catalog"));
-            RefreshSettings();
+        }
+
+        private string ResolveTaskTitle(WorkshopRecommendedAction? action)
+        {
+            if (!action.HasValue ||
+                action.Value.Kind != WorkshopRecommendedActionKind.StartLevel ||
+                !_projector.TryResolveStartLevel(
+                    action.Value.StableId,
+                    out _,
+                    out _,
+                    out WorkshopBeatDefinition beat))
+            {
+                return string.Empty;
+            }
+
+            return _text.Get(beat.TitleTextKey);
         }
 
         private void RefreshSettings()
@@ -315,9 +397,44 @@ namespace CalmSpace.UI
                     _music.IsEnabled
                         ? DemoTextKey.SoundOn
                         : DemoTextKey.SoundOff),
-                _text.Get("home.settings") + " · " +
+                GetTextOrFallback(
+                    "home.settings",
+                    "Settings",
+                    "Налаштування",
+                    "Настройки") + " · " +
                     _localization.CurrentLocaleShortLabel,
                 hapticLabel);
+        }
+
+        private void RetryFailedLoad()
+        {
+            Action<LevelLaunchRequest> retry = _retryLoad;
+            LevelLaunchRequest request = _failedRequest;
+            _hasLoadFailure = false;
+            _retryLoad = null;
+            retry?.Invoke(request);
+        }
+
+        private string GetTextOrFallback(
+            string key,
+            string english,
+            string ukrainian,
+            string russian)
+        {
+            if (_availability != null && _availability.TextAvailable)
+            {
+                return _text.Get(key);
+            }
+
+            switch (_localization.CurrentLocale)
+            {
+                case DemoLocale.Ukrainian:
+                    return ukrainian;
+                case DemoLocale.Russian:
+                    return russian;
+                default:
+                    return english;
+            }
         }
 
         private void OnDestroy()

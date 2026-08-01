@@ -13,6 +13,10 @@ namespace CalmSpace.UI
         [SerializeField] private CanvasGroup _sheet;
         [SerializeField] private Button _closeButton;
         [SerializeField] private Button _actionButton;
+        [SerializeField] private GameObject _settingsContent;
+        [SerializeField] private GameObject _recoveryContent;
+        [SerializeField] private Text _recoveryTitleLabel;
+        [SerializeField] private Text _actionLabel;
 
         private UnityAction _action;
         private bool _closeBound;
@@ -29,11 +33,36 @@ namespace CalmSpace.UI
             Button closeButton,
             Button actionButton)
         {
+            Configure(
+                sheet,
+                closeButton,
+                actionButton,
+                null,
+                null,
+                null,
+                actionButton == null
+                    ? null
+                    : actionButton.GetComponentInChildren<Text>(true));
+        }
+
+        public void Configure(
+            CanvasGroup sheet,
+            Button closeButton,
+            Button actionButton,
+            GameObject settingsContent,
+            GameObject recoveryContent,
+            Text recoveryTitleLabel,
+            Text actionLabel)
+        {
             UnbindClose();
             ClearAction();
             _sheet = sheet;
             _closeButton = closeButton;
             _actionButton = actionButton;
+            _settingsContent = settingsContent;
+            _recoveryContent = recoveryContent;
+            _recoveryTitleLabel = recoveryTitleLabel;
+            _actionLabel = actionLabel;
             BindClose();
             Close();
         }
@@ -45,21 +74,65 @@ namespace CalmSpace.UI
 
         public void Open(Action action = null)
         {
-            ClearAction();
-            if (action != null && _actionButton != null)
+            if (action == null)
             {
-                _action = () => action();
-                _actionButton.onClick.AddListener(_action);
-                _actionButton.gameObject.SetActive(true);
-                _actionButton.interactable = true;
+                OpenSettings();
+                return;
             }
-            else if (_actionButton != null)
+
+            OpenRecovery(
+                _recoveryTitleLabel?.text,
+                _actionLabel?.text,
+                action);
+        }
+
+        public void OpenSettings()
+        {
+            ClearAction();
+            SetContentMode(settings: true);
+            if (_actionButton != null)
             {
                 _actionButton.gameObject.SetActive(false);
                 _actionButton.interactable = false;
             }
 
             SetOpen(true);
+        }
+
+        public void OpenRecovery(
+            string title,
+            string actionLabel,
+            Action action)
+        {
+            ClearAction();
+            RenderRecoveryCopy(title, actionLabel);
+            SetContentMode(settings: false);
+            if (_actionButton != null)
+            {
+                _action = () =>
+                {
+                    Close();
+                    action?.Invoke();
+                };
+                _actionButton.onClick.AddListener(_action);
+                _actionButton.gameObject.SetActive(true);
+                _actionButton.interactable = action != null;
+            }
+
+            SetOpen(true);
+        }
+
+        public void RenderRecoveryCopy(string title, string actionLabel)
+        {
+            if (_recoveryTitleLabel != null)
+            {
+                _recoveryTitleLabel.text = title ?? string.Empty;
+            }
+
+            if (_actionLabel != null)
+            {
+                _actionLabel.text = actionLabel ?? string.Empty;
+            }
         }
 
         public void Close()
@@ -105,6 +178,31 @@ namespace CalmSpace.UI
             }
 
             _action = null;
+        }
+
+        private void SetContentMode(bool settings)
+        {
+            if (_settingsContent != null)
+            {
+                _settingsContent.SetActive(settings);
+                SetChildButtonsActive(_settingsContent, settings);
+            }
+
+            if (_recoveryContent != null)
+            {
+                _recoveryContent.SetActive(!settings);
+            }
+        }
+
+        private static void SetChildButtonsActive(
+            GameObject root,
+            bool active)
+        {
+            Button[] buttons = root.GetComponentsInChildren<Button>(true);
+            for (var index = 0; index < buttons.Length; index++)
+            {
+                buttons[index].gameObject.SetActive(active);
+            }
         }
 
         private void SetOpen(bool open)
