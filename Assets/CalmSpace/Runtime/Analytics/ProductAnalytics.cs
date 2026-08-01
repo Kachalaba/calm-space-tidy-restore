@@ -395,6 +395,8 @@ namespace CalmSpace.Analytics
             DecorationSelectionSource source,
             int tokenBalance)
         {
+            RequireStableId(slotId, nameof(slotId));
+            RequireStableId(variantId, nameof(variantId));
             return CreateWorkshopEvent(
                 ProductEventKind.DecorationSelected,
                 string.Empty,
@@ -428,6 +430,7 @@ namespace CalmSpace.Analytics
 
         public static ProductAnalyticsEvent WorkshopViewed(string chapterId)
         {
+            RequireStableId(chapterId, nameof(chapterId));
             return CreateWorkshopEvent(
                 ProductEventKind.WorkshopViewed,
                 string.Empty,
@@ -449,6 +452,9 @@ namespace CalmSpace.Analytics
         public static ProductAnalyticsEvent RestorationTaskSelected(
             LevelLaunchRequest request)
         {
+            RequireStableId(request.LevelId, "levelId");
+            RequireStableId(request.ChapterId, "chapterId");
+            RequireStableId(request.BeatId, "beatId");
             return CreateWorkshopEvent(
                 ProductEventKind.RestorationTaskSelected,
                 request.LevelId,
@@ -470,6 +476,7 @@ namespace CalmSpace.Analytics
         public static ProductAnalyticsEvent RestorationRevealStarted(
             string beatId)
         {
+            RequireStableId(beatId, nameof(beatId));
             return CreateWorkshopEvent(
                 ProductEventKind.RestorationRevealStarted,
                 string.Empty,
@@ -491,6 +498,7 @@ namespace CalmSpace.Analytics
         public static ProductAnalyticsEvent RestorationRevealCompleted(
             string beatId)
         {
+            RequireStableId(beatId, nameof(beatId));
             return CreateWorkshopEvent(
                 ProductEventKind.RestorationRevealCompleted,
                 string.Empty,
@@ -513,6 +521,8 @@ namespace CalmSpace.Analytics
             string beatId,
             string memoryId)
         {
+            RequireStableId(beatId, nameof(beatId));
+            RequireStableId(memoryId, nameof(memoryId));
             return CreateWorkshopEvent(
                 ProductEventKind.MemoryUnlocked,
                 string.Empty,
@@ -536,6 +546,7 @@ namespace CalmSpace.Analytics
             string memoryId,
             bool firstView)
         {
+            RequireStableId(memoryId, nameof(memoryId));
             return CreateWorkshopEvent(
                 ProductEventKind.MemoryViewed,
                 string.Empty,
@@ -591,6 +602,7 @@ namespace CalmSpace.Analytics
 
         public static ProductAnalyticsEvent DailyCareAvailable(string careId)
         {
+            RequireStableId(careId, nameof(careId));
             return CreateWorkshopEvent(
                 ProductEventKind.DailyCareAvailable,
                 string.Empty,
@@ -614,6 +626,7 @@ namespace CalmSpace.Analytics
             int reward,
             int tokenBalance)
         {
+            RequireStableId(careId, nameof(careId));
             return CreateWorkshopEvent(
                 ProductEventKind.DailyCareCompleted,
                 string.Empty,
@@ -636,6 +649,8 @@ namespace CalmSpace.Analytics
             string chapterId,
             string beatId)
         {
+            RequireStableId(chapterId, nameof(chapterId));
+            RequireStableId(beatId, nameof(beatId));
             return CreateWorkshopEvent(
                 ProductEventKind.ChapterCompleted,
                 string.Empty,
@@ -657,6 +672,7 @@ namespace CalmSpace.Analytics
         public static ProductAnalyticsEvent NextRoomTeaserViewed(
             string chapterId)
         {
+            RequireStableId(chapterId, nameof(chapterId));
             return CreateWorkshopEvent(
                 ProductEventKind.NextRoomTeaserViewed,
                 string.Empty,
@@ -679,6 +695,8 @@ namespace CalmSpace.Analytics
             string slotId,
             string variantId)
         {
+            RequireStableId(slotId, nameof(slotId));
+            RequireStableId(variantId, nameof(variantId));
             return CreateWorkshopEvent(
                 ProductEventKind.RewardedOfferOpened,
                 string.Empty,
@@ -702,6 +720,8 @@ namespace CalmSpace.Analytics
             string variantId,
             AdShowOutcome outcome)
         {
+            RequireStableId(slotId, nameof(slotId));
+            RequireStableId(variantId, nameof(variantId));
             return CreateWorkshopEvent(
                 ProductEventKind.RewardedOfferOutcome,
                 string.Empty,
@@ -1043,6 +1063,7 @@ namespace CalmSpace.Analytics
             ProductEventKind kind,
             string slotId)
         {
+            RequireStableId(slotId, nameof(slotId));
             return CreateWorkshopEvent(
                 kind,
                 string.Empty,
@@ -1198,6 +1219,18 @@ namespace CalmSpace.Analytics
                         nameof(outcome),
                         outcome,
                         "Unsupported rewarded offer outcome.");
+            }
+        }
+
+        private static void RequireStableId(
+            string stableId,
+            string parameterName)
+        {
+            if (string.IsNullOrWhiteSpace(stableId))
+            {
+                throw new ArgumentException(
+                    "A stable identifier is required.",
+                    parameterName);
             }
         }
 

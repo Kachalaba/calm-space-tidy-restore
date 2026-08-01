@@ -11,8 +11,6 @@ namespace CalmSpace.Analytics
     /// </summary>
     public sealed class WorkshopAnalyticsSessionState
     {
-        private readonly HashSet<int> _availableDailyCareDayKeys =
-            new HashSet<int>();
         private readonly HashSet<string> _unlockedMemoryIds =
             new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> _completedRevealBeatIds =
@@ -21,10 +19,18 @@ namespace CalmSpace.Analytics
             new HashSet<string>(StringComparer.Ordinal);
         private int _activeRewardedOfferSessionId;
         private int _nextRewardedOfferSessionId;
+        private int _highestAdmittedDailyCareUtcDayKey;
 
         public bool TryAdmitDailyCareAvailable(int utcDayKey)
         {
-            return _availableDailyCareDayKeys.Add(utcDayKey);
+            if (!IsValidUtcDayKey(utcDayKey) ||
+                utcDayKey <= _highestAdmittedDailyCareUtcDayKey)
+            {
+                return false;
+            }
+
+            _highestAdmittedDailyCareUtcDayKey = utcDayKey;
+            return true;
         }
 
         public bool TryBeginRewardedOffer(out int offerSessionId)
@@ -103,6 +109,42 @@ namespace CalmSpace.Analytics
         {
             return !string.IsNullOrWhiteSpace(stableId) &&
                 admittedIds.Add(stableId);
+        }
+
+        private static bool IsValidUtcDayKey(int utcDayKey)
+        {
+            int year = utcDayKey / 10000;
+            int month = (utcDayKey / 100) % 100;
+            int day = utcDayKey % 100;
+            if (year < 1000 || year > 9999 || month < 1 || month > 12)
+            {
+                return false;
+            }
+
+            int daysInMonth;
+            switch (month)
+            {
+                case 2:
+                    daysInMonth = IsLeapYear(year) ? 29 : 28;
+                    break;
+                case 4:
+                case 6:
+                case 9:
+                case 11:
+                    daysInMonth = 30;
+                    break;
+                default:
+                    daysInMonth = 31;
+                    break;
+            }
+
+            return day >= 1 && day <= daysInMonth;
+        }
+
+        private static bool IsLeapYear(int year)
+        {
+            return (year % 4 == 0 && year % 100 != 0) ||
+                year % 400 == 0;
         }
     }
 }

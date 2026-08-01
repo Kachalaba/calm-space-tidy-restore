@@ -290,7 +290,8 @@ namespace CalmSpace.Tests.EditMode
                 "WorkshopViewed",
                 new[] { typeof(string) },
                 new object[] { "cozy-workshop" },
-                "workshop_viewed");
+                "workshop_viewed",
+                chapterId: "cozy-workshop");
             ProductAnalyticsEvent selected = InvokeFactory(
                 "RestorationTaskSelected",
                 new[] { typeof(LevelLaunchRequest) },
@@ -369,12 +370,14 @@ namespace CalmSpace.Tests.EditMode
                 new[] { typeof(string), typeof(string) },
                 new object[] { "cozy-workshop", "dusty-window" },
                 "chapter_completed",
-                beatId: "dusty-window");
+                beatId: "dusty-window",
+                chapterId: "cozy-workshop");
             AssertFactory(
                 "NextRoomTeaserViewed",
                 new[] { typeof(string) },
                 new object[] { "cozy-workshop" },
-                "next_room_teaser_viewed");
+                "next_room_teaser_viewed",
+                chapterId: "cozy-workshop");
             ProductAnalyticsEvent opened = InvokeFactory(
                 "RewardedOfferOpened",
                 new[] { typeof(string), typeof(string) },
@@ -411,6 +414,216 @@ namespace CalmSpace.Tests.EditMode
                 "relax_pass_screen_opened");
         }
 
+        [Test]
+        public void DecorSourcesHaveExactTypedStableMappings()
+        {
+            AssertDecorSource(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationSelectionSource.Owned,
+                    45),
+                DecorationSelectionSource.Owned,
+                "owned",
+                45);
+            AssertDecorSource(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationSelectionSource.Purchase,
+                    40),
+                DecorationSelectionSource.Purchase,
+                "purchase",
+                40);
+            AssertDecorSource(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationGrantSource.Rewarded,
+                    45),
+                DecorationSelectionSource.Rewarded,
+                "rewarded",
+                45);
+            AssertDecorSource(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationGrantSource.RelaxPass,
+                    45),
+                DecorationSelectionSource.RelaxPass,
+                "relax_pass",
+                45);
+            AssertDecorSource(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationGrantSource.Migration,
+                    45),
+                DecorationSelectionSource.Migration,
+                "migration",
+                45);
+        }
+
+        [Test]
+        public void TypedEventsSerializeExactApplicableFieldsOnly()
+        {
+            LevelDefinition definition = CreateDefinition();
+
+            Assert.That(
+                ProductAnalyticsEvent.LevelStarted(
+                    definition,
+                    4,
+                    45,
+                    LevelLaunchSource.Workshop).ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=level_started " +
+                    "level_id=05-fastener-tray level_index=4 " +
+                    "level_type=ScrewPuzzle chapter_id=cozy-workshop " +
+                    "stage_number=3 stage_count=6 token_balance=45 " +
+                    "launch_source=workshop"));
+            Assert.That(
+                ProductAnalyticsEvent.DecorationSelected(
+                    "shelf",
+                    "shelf-lamp",
+                    DecorationSelectionSource.Owned,
+                    45).ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=decoration_selected " +
+                    "token_balance=45 source=owned slot_id=shelf " +
+                    "variant_id=shelf-lamp"));
+            Assert.That(
+                ProductAnalyticsEvent.MemoryViewed(
+                    "tea-postcard",
+                    true).ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=memory_viewed " +
+                    "item_id=tea-postcard first_view=1"));
+            Assert.That(
+                ProductAnalyticsEvent.DailyCareCompleted(
+                    "tea-care",
+                    5,
+                    45).ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=daily_care_completed " +
+                    "token_delta=5 token_balance=45 care_id=tea-care"));
+            Assert.That(
+                ProductAnalyticsEvent.RewardedOfferOutcome(
+                    "shelf",
+                    "shelf-lamp",
+                    AdShowOutcome.Completed).ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=rewarded_offer_outcome " +
+                    "slot_id=shelf variant_id=shelf-lamp " +
+                    "outcome=completed"));
+        }
+
+        [Test]
+        public void WorkshopFactoriesFailClosedForMissingRequiredStableIds()
+        {
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.WorkshopViewed(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.RestorationTaskSelected(
+                    new LevelLaunchRequest(
+                        string.Empty,
+                        2,
+                        LevelLaunchSource.Workshop,
+                        "cozy-workshop",
+                        "tea-drawer")));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.RestorationRevealStarted(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.RestorationRevealCompleted(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.MemoryUnlocked(
+                    "tea-drawer",
+                    ""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.MemoryViewed("", true));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.WorkshopChoiceShown(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.DecorSlotOpened(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.DailyCareAvailable(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.DailyCareCompleted("", 5, 45));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.ChapterCompleted(
+                    "cozy-workshop",
+                    ""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.NextRoomTeaserViewed(""));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.RewardedOfferOpened("", "shelf-lamp"));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.RewardedOfferOutcome(
+                    "shelf",
+                    "",
+                    AdShowOutcome.Completed));
+            Assert.Throws<ArgumentException>(
+                () => ProductAnalyticsEvent.DecorationSelected(
+                    "",
+                    "shelf-lamp",
+                    DecorationSelectionSource.Owned,
+                    45));
+        }
+
+        [Test]
+        public void PublicTypedContractExcludesPersonalAndProviderFields()
+        {
+            PropertyInfo[] properties = typeof(ProductAnalyticsEvent).GetProperties(
+                BindingFlags.Public | BindingFlags.Instance);
+            var forbiddenPropertyNames = new[]
+            {
+                "PlayerName",
+                "UserName",
+                "FreeText",
+                "DeviceId",
+                "AdvertisingId",
+                "ProviderMessage"
+            };
+
+            for (var propertyIndex = 0;
+                propertyIndex < properties.Length;
+                propertyIndex++)
+            {
+                for (var nameIndex = 0;
+                    nameIndex < forbiddenPropertyNames.Length;
+                    nameIndex++)
+                {
+                    Assert.That(
+                        properties[propertyIndex].Name,
+                        Is.Not.EqualTo(forbiddenPropertyNames[nameIndex]));
+                }
+            }
+
+            string serialized = ProductAnalyticsEvent.RewardedOfferOutcome(
+                "shelf",
+                "shelf-lamp",
+                AdShowOutcome.Completed).ToDebugString();
+            Assert.That(serialized, Does.Not.Contain("provider"));
+            Assert.That(serialized, Does.Not.Contain("device"));
+            Assert.That(serialized, Does.Not.Contain("advertising"));
+        }
+
+        private static void AssertDecorSource(
+            ProductAnalyticsEvent analyticsEvent,
+            DecorationSelectionSource expectedSource,
+            string expectedSerializedSource,
+            int expectedTokenBalance)
+        {
+            Assert.That(analyticsEvent.DecorationSource, Is.EqualTo(expectedSource));
+            Assert.That(analyticsEvent.Source, Is.EqualTo(expectedSerializedSource));
+            Assert.That(
+                analyticsEvent.ToDebugString(),
+                Is.EqualTo(
+                    "CALMSPACE_ANALYTICS event=decoration_selected " +
+                    "token_balance=" + expectedTokenBalance + " source=" +
+                    expectedSerializedSource +
+                    " slot_id=shelf variant_id=shelf-lamp"));
+        }
+
         private static void AssertFactory(
             string factoryName,
             Type[] parameterTypes,
@@ -420,7 +633,10 @@ namespace CalmSpace.Tests.EditMode
             string slotId = "",
             string careId = "",
             string itemId = "",
-            bool? firstView = null)
+            bool? firstView = null,
+            string chapterId = "",
+            string levelId = "",
+            string variantId = "")
         {
             ProductAnalyticsEvent analyticsEvent = InvokeFactory(
                 factoryName,
@@ -428,8 +644,13 @@ namespace CalmSpace.Tests.EditMode
                 arguments);
 
             Assert.That(analyticsEvent.EventName, Is.EqualTo(eventName));
+            Assert.That(analyticsEvent.LevelId, Is.EqualTo(levelId));
+            Assert.That(analyticsEvent.ChapterId, Is.EqualTo(chapterId));
             Assert.That(GetProperty<string>(analyticsEvent, "BeatId"), Is.EqualTo(beatId));
             Assert.That(GetProperty<string>(analyticsEvent, "SlotId"), Is.EqualTo(slotId));
+            Assert.That(
+                GetProperty<string>(analyticsEvent, "VariantId"),
+                Is.EqualTo(variantId));
             Assert.That(GetProperty<string>(analyticsEvent, "CareId"), Is.EqualTo(careId));
             if (!string.IsNullOrEmpty(itemId))
             {

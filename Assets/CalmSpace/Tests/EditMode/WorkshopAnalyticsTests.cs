@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using CalmSpace.Demo;
 using NUnit.Framework;
@@ -8,9 +9,29 @@ namespace CalmSpace.Tests.EditMode
     public sealed class WorkshopAnalyticsTests
     {
         [Test]
-        public void DailyCareAvailabilityIsAdmittedOncePerUtcDayKey()
+        public void DailyCareAvailabilityAcceptsOnlyForwardValidUtcDayKeys()
         {
             object state = CreateState();
+
+            int[] invalidKeys =
+            {
+                0,
+                -1,
+                20260001,
+                20260100,
+                20261301,
+                20260230,
+                20250229
+            };
+            for (var index = 0; index < invalidKeys.Length; index++)
+            {
+                Assert.That(
+                    InvokeBool(
+                        state,
+                        "TryAdmitDailyCareAvailable",
+                        invalidKeys[index]),
+                    Is.False);
+            }
 
             Assert.That(
                 InvokeBool(
@@ -28,6 +49,12 @@ namespace CalmSpace.Tests.EditMode
                 InvokeBool(
                     state,
                     "TryAdmitDailyCareAvailable",
+                    20260731),
+                Is.False);
+            Assert.That(
+                InvokeBool(
+                    state,
+                    "TryAdmitDailyCareAvailable",
                     20260802),
                 Is.True);
             Assert.That(
@@ -35,6 +62,9 @@ namespace CalmSpace.Tests.EditMode
                     state,
                     "TryAdmitDailyCareAvailable",
                     20260801),
+                Is.False);
+            Assert.That(
+                HasCallerControlledDailyKeyCollection(state),
                 Is.False);
         }
 
@@ -218,6 +248,21 @@ namespace CalmSpace.Tests.EditMode
                 parameterTypes);
             Assert.That(method, Is.Not.Null, methodName + " gate is required.");
             return (bool)method.Invoke(state, arguments);
+        }
+
+        private static bool HasCallerControlledDailyKeyCollection(object state)
+        {
+            FieldInfo[] fields = state.GetType().GetFields(
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            for (var index = 0; index < fields.Length; index++)
+            {
+                if (fields[index].FieldType == typeof(HashSet<int>))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
