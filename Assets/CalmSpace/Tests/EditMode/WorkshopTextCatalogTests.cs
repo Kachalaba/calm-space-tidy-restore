@@ -60,6 +60,7 @@ namespace CalmSpace.Tests.EditMode
             "save.return-without",
             "album.title",
             "album.locked",
+            "reveal.fallback.title",
             "common.skip",
             "common.close",
             "rewarded.unlock",

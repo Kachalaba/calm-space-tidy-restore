@@ -60,6 +60,7 @@ namespace CalmSpace.Editor
             E("save.return-without", "Return without saving", "Повернутися без збереження", "Вернуться без сохранения"),
             E("album.title", "Our family album", "Наш сімейний альбом", "Наш семейный альбом"),
             E("album.locked", "A memory is still waiting here.", "Тут іще чекає спогад.", "Здесь ещё ждёт воспоминание."),
+            E("reveal.fallback.title", "The workshop changed while you were away.", "Майстерня змінилася, поки вас не було.", "Мастерская изменилась, пока вас не было."),
             E("common.skip", "Skip", "Пропустити", "Пропустить"),
             E("common.close", "Close", "Закрити", "Закрыть"),
             E("rewarded.unlock", "Watch to unlock this decor", "Переглянути й відкрити цей декор", "Посмотреть и открыть этот декор"),

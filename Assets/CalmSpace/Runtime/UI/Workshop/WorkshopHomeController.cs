@@ -56,8 +56,11 @@ namespace CalmSpace.UI
         private IWorkshopRoomLoader _roomLoader;
         private WorkshopRoomPresenter _room;
         private CancellationTokenSource _roomCancellation;
+        private CancellationTokenSource _revealCancellation;
         private bool _roomUnavailable;
         private bool _roomLoading;
+        private bool _revealPlaying;
+        private string _revealFallbackBeatId = string.Empty;
         private IDemoProgressStore _store;
         private IWorkshopFlowCoordinator _flow;
         private IWorkshopProgressProjector _projector;
@@ -170,6 +173,7 @@ namespace CalmSpace.UI
                     WorkshopContentIds.CozyWorkshopChapterId));
             }
 
+            BeginPendingReveal();
             return UniTask.CompletedTask;
         }
 
@@ -178,8 +182,167 @@ namespace CalmSpace.UI
             _visible = false;
             _hasLoadFailure = false;
             _retryLoad = null;
+            CancelReveal();
+            _revealFallbackBeatId = string.Empty;
             _room?.SetVisible(false);
             _view?.CloseBottomSheet();
+        }
+
+        /// <summary>
+        /// Plays the reveal for the oldest unseen room presentation. The queue
+        /// is read from the latest persisted profile on every entry, never
+        /// from a side list, so an interrupted reveal is simply still pending
+        /// the next time the player comes home.
+        /// </summary>
+        private void BeginPendingReveal()
+        {
+            if (!_initialized ||
+                !_visible ||
+                _revealPlaying ||
+                _hasLoadFailure ||
+                !string.IsNullOrEmpty(_revealFallbackBeatId) ||
+                !TryGetPendingRevealBeatId(out string beatId))
+            {
+                return;
+            }
+
+            if (_room == null)
+            {
+                ShowRevealFallback(beatId);
+                return;
+            }
+
+            _revealPlaying = true;
+            Refresh();
+            CancelReveal();
+            _revealCancellation = new CancellationTokenSource();
+            PlayPendingRevealAsync(beatId, _revealCancellation.Token).Forget();
+        }
+
+        private async UniTaskVoid PlayPendingRevealAsync(
+            string beatId,
+            CancellationToken cancellationToken)
+        {
+            var result = WorkshopRevealPlaybackResult.Cancelled;
+            try
+            {
+                result = await _room.PlayRevealAsync(beatId, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                result = WorkshopRevealPlaybackResult.Cancelled;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
+            finally
+            {
+                _revealPlaying = false;
+            }
+
+            if (this == null || !_initialized)
+            {
+                return;
+            }
+
+            switch (result)
+            {
+                case WorkshopRevealPlaybackResult.Completed:
+                    MarkRevealSeen(beatId);
+                    break;
+                case WorkshopRevealPlaybackResult.MissingVisual:
+                    Refresh();
+                    ShowRevealFallback(beatId);
+                    break;
+                default:
+                    // Interrupted playback persists nothing, so the same
+                    // presentation is replayed on the next entry.
+                    Refresh();
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Retires the presentation exactly once. Replay of an already
+        /// completed level enqueues nothing, so no reward or story repeats.
+        /// </summary>
+        private void MarkRevealSeen(string beatId)
+        {
+            _store.MarkPresentationSeen(
+                PendingPresentationEntry.RoomReveal(beatId));
+            Refresh();
+
+            if (TryGetPendingRevealBeatId(out string next) &&
+                !string.Equals(next, beatId, StringComparison.Ordinal))
+            {
+                BeginPendingReveal();
+            }
+        }
+
+        private bool TryGetPendingRevealBeatId(out string beatId)
+        {
+            beatId = string.Empty;
+            if (_store == null ||
+                !_store.IsInitialized ||
+                _availability == null ||
+                !_availability.HomeMetaAvailable ||
+                !_projector.TryProject(
+                    _store.Current, out WorkshopProgressProjection projection) ||
+                string.IsNullOrEmpty(projection.PendingRevealBeatId))
+            {
+                return false;
+            }
+
+            beatId = projection.PendingRevealBeatId;
+            return true;
+        }
+
+        private void ShowRevealFallback(string beatId)
+        {
+            _revealFallbackBeatId = beatId;
+            _view.ShowRetry(
+                RevealFallbackTitle(),
+                RevealFallbackAction(),
+                SkipRevealFallback);
+        }
+
+        private void SkipRevealFallback()
+        {
+            string beatId = _revealFallbackBeatId;
+            _revealFallbackBeatId = string.Empty;
+            _view.CloseBottomSheet();
+            if (!string.IsNullOrEmpty(beatId))
+            {
+                MarkRevealSeen(beatId);
+            }
+        }
+
+        private string RevealFallbackTitle()
+        {
+            return GetTextOrFallback(
+                "reveal.fallback.title",
+                "The workshop changed while you were away.",
+                "Майстерня змінилася, поки вас не було.",
+                "Мастерская изменилась, пока вас не было.");
+        }
+
+        private string RevealFallbackAction()
+        {
+            return GetTextOrFallback(
+                "common.skip", "Skip", "Пропустити", "Пропустить");
+        }
+
+        private void CancelReveal()
+        {
+            if (_revealCancellation == null)
+            {
+                return;
+            }
+
+            _revealCancellation.Cancel();
+            _revealCancellation.Dispose();
+            _revealCancellation = null;
         }
 
         /// <summary>
@@ -353,6 +516,7 @@ namespace CalmSpace.UI
         {
             _hasLoadFailure = false;
             _retryLoad = null;
+            _revealFallbackBeatId = string.Empty;
             _view.OpenSettings();
         }
 
@@ -374,6 +538,16 @@ namespace CalmSpace.UI
         private void HandleLocaleChanged(DemoLocale locale)
         {
             Refresh();
+            if (!string.IsNullOrEmpty(_revealFallbackBeatId) &&
+                _view.BottomSheet != null &&
+                _view.BottomSheet.IsOpen)
+            {
+                _view.RenderRecoveryCopy(
+                    RevealFallbackTitle(),
+                    RevealFallbackAction());
+                return;
+            }
+
             if (_hasLoadFailure &&
                 _view.BottomSheet != null &&
                 _view.BottomSheet.IsOpen)
@@ -445,10 +619,10 @@ namespace CalmSpace.UI
                 taskTitle,
                 _text.Get("home.start"),
                 progress,
-                hasLevel,
+                hasLevel && !_revealPlaying,
                 // The illustrated room owns the real hotspot when it is
                 // present, so exactly one hotspot is ever actionable.
-                hasLevel && _room == null));
+                hasLevel && !_revealPlaying && _room == null));
         }
 
         private string ResolveTaskTitle(WorkshopRecommendedAction? action)
@@ -535,6 +709,7 @@ namespace CalmSpace.UI
 
         private void OnDestroy()
         {
+            CancelReveal();
             if (_roomCancellation != null)
             {
                 _roomCancellation.Cancel();
