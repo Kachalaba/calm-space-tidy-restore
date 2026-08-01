@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 03-tea-drawer
   _displayName: Tea Drawer
   _levelType: 3
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 0
+  _restorationStageCount: 6

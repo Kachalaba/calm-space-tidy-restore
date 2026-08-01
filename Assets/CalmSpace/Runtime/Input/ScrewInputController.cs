@@ -17,8 +17,8 @@ namespace CalmSpace.Input
     /// finger is still turning a screw.
     ///
     /// Once a screw is grabbed the finger is free to drift off it — the hold
-    /// keeps counting until the pointer is lifted. Nothing here can undo
-    /// progress; the worst a lift can do is pause it.
+    /// keeps counting until the pointer is lifted. Each hold becomes one
+    /// compact undo step, so partial turns and removals are both reversible.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class ScrewInputController : MonoBehaviour
@@ -40,11 +40,14 @@ namespace CalmSpace.Input
             QueryTriggerInteraction.Ignore;
 
         private IPresentationActivityCoordinator _activityCoordinator;
+        private IUndoHistory _undoHistory;
         private IDisposable _dragLease;
         private ScrewController _heldScrew;
         private int _activeTouchId = NoTouchId;
         private bool _mouseOwnsHold;
         private bool _ownsEnhancedTouchSupport;
+        private ScrewUndoState _holdStartState;
+        private bool _hasHoldStartState;
 
         public ScrewController HeldScrew => _heldScrew;
 
@@ -52,11 +55,14 @@ namespace CalmSpace.Input
 
         [Inject]
         public void Construct(
-            IPresentationActivityCoordinator activityCoordinator)
+            IPresentationActivityCoordinator activityCoordinator,
+            IUndoHistory undoHistory)
         {
             _activityCoordinator = activityCoordinator ??
                 throw new ArgumentNullException(
                     nameof(activityCoordinator));
+            _undoHistory = undoHistory ??
+                throw new ArgumentNullException(nameof(undoHistory));
         }
 
         private void OnEnable()
@@ -201,6 +207,8 @@ namespace CalmSpace.Input
                 return false;
             }
 
+            ScrewUndoState startState =
+                screw.CaptureUndoState();
             if (!screw.BeginHold())
             {
                 lease.Dispose();
@@ -210,6 +218,8 @@ namespace CalmSpace.Input
 
             _dragLease = lease;
             _heldScrew = screw;
+            _holdStartState = startState;
+            _hasHoldStartState = true;
             return true;
         }
 
@@ -276,10 +286,21 @@ namespace CalmSpace.Input
         {
             if (_heldScrew != null)
             {
-                _heldScrew.EndHold();
+                ScrewController screw = _heldScrew;
+                screw.EndHold();
+                if (_hasHoldStartState &&
+                    screw.CaptureUndoState() != _holdStartState)
+                {
+                    _undoHistory?.Push(
+                        new ScrewHoldUndoCommand(
+                            screw,
+                            _holdStartState));
+                }
+
                 _heldScrew = null;
             }
 
+            _hasHoldStartState = false;
             ResetPointerState();
         }
 
@@ -299,6 +320,32 @@ namespace CalmSpace.Input
             if (_raycastCamera == null)
             {
                 _raycastCamera = Camera.main;
+            }
+        }
+
+        private sealed class ScrewHoldUndoCommand :
+            IUndoCommand
+        {
+            private readonly ScrewController _screw;
+            private readonly ScrewUndoState _state;
+
+            public ScrewHoldUndoCommand(
+                ScrewController screw,
+                ScrewUndoState state)
+            {
+                _screw = screw;
+                _state = state;
+            }
+
+            public bool CanUndo =>
+                _screw != null &&
+                _screw.CaptureUndoState() != _state;
+
+            public bool TryUndo()
+            {
+                return
+                    _screw != null &&
+                    _screw.RestoreUndoState(_state);
             }
         }
     }

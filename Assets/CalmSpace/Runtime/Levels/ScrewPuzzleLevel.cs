@@ -46,6 +46,7 @@ namespace CalmSpace.Levels
                 }
 
                 screw.Removed += HandleScrewRemoved;
+                screw.Restored += HandleScrewRestored;
                 if (screw.IsRemoved)
                 {
                     _removedScrews.Add(screw.GetInstanceID());
@@ -71,6 +72,7 @@ namespace CalmSpace.Levels
                 if (screw != null)
                 {
                     screw.Removed -= HandleScrewRemoved;
+                    screw.Restored -= HandleScrewRestored;
                 }
             }
 
@@ -91,6 +93,18 @@ namespace CalmSpace.Levels
             {
                 CompleteLevel().Forget();
             }
+        }
+
+        private void HandleScrewRestored(ScrewController screw)
+        {
+            if (screw == null ||
+                !_removedScrews.Remove(screw.GetInstanceID()))
+            {
+                return;
+            }
+
+            ReopenAfterUndo();
+            RaiseProgressChanged();
         }
     }
 }

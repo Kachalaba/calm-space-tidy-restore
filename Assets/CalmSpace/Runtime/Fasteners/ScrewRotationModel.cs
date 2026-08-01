@@ -2,6 +2,60 @@ using System;
 
 namespace CalmSpace.Fasteners
 {
+    public readonly struct ScrewRotationSnapshot :
+        IEquatable<ScrewRotationSnapshot>
+    {
+        public ScrewRotationSnapshot(
+            float elapsedSeconds,
+            int completedTurns)
+        {
+            ElapsedSeconds = elapsedSeconds;
+            CompletedTurns = completedTurns;
+        }
+
+        public float ElapsedSeconds { get; }
+
+        public int CompletedTurns { get; }
+
+        public bool Equals(ScrewRotationSnapshot other)
+        {
+            return
+                ElapsedSeconds.Equals(other.ElapsedSeconds) &&
+                CompletedTurns == other.CompletedTurns;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return
+                obj is ScrewRotationSnapshot other &&
+                Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                return
+                    (ElapsedSeconds.GetHashCode() * 397) ^
+                    CompletedTurns;
+            }
+        }
+
+        public static bool operator ==(
+            ScrewRotationSnapshot left,
+            ScrewRotationSnapshot right)
+        {
+            return left.Equals(right);
+        }
+
+        public static bool operator !=(
+            ScrewRotationSnapshot left,
+            ScrewRotationSnapshot right)
+        {
+            return !left.Equals(right);
+        }
+    }
+
     /// <summary>
     /// Outcome of advancing one screw by a slice of hold time.
     /// </summary>
@@ -119,6 +173,35 @@ namespace CalmSpace.Fasteners
         {
             _elapsedSeconds = 0f;
             _completedTurns = 0;
+        }
+
+        public ScrewRotationSnapshot CaptureSnapshot()
+        {
+            return new ScrewRotationSnapshot(
+                _elapsedSeconds,
+                _completedTurns);
+        }
+
+        public void Restore(ScrewRotationSnapshot snapshot)
+        {
+            if (float.IsNaN(snapshot.ElapsedSeconds) ||
+                float.IsInfinity(snapshot.ElapsedSeconds))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(snapshot));
+            }
+
+            _elapsedSeconds = Math.Max(
+                0f,
+                Math.Min(_totalSeconds, snapshot.ElapsedSeconds));
+            int derivedTurns = IsComplete
+                ? _turnsRequired
+                : (int)(_elapsedSeconds / _secondsPerTurn);
+            _completedTurns = Math.Max(
+                0,
+                Math.Min(
+                    derivedTurns,
+                    snapshot.CompletedTurns));
         }
 
         private ScrewAdvanceResult CreateResult(

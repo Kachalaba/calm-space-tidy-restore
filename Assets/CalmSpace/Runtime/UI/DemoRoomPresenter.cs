@@ -15,6 +15,8 @@ namespace CalmSpace.UI
 
         private int _selectedDecorationIndex = -1;
 
+        public event Action<int> DecorationPlacementRequested;
+
         public GameObject RoomRoot => _roomRoot;
 
         public int DecorationCount =>
@@ -61,6 +63,15 @@ namespace CalmSpace.UI
 
             _selectedDecorationIndex = decorationIndex;
             return true;
+        }
+
+        /// <summary>
+        /// Raises player intent. Inventory validation and encrypted persistence
+        /// happen before SelectDecoration renders the resulting profile event.
+        /// </summary>
+        public void RequestDecorationPlacement(int decorationIndex)
+        {
+            DecorationPlacementRequested?.Invoke(decorationIndex);
         }
     }
 }

@@ -195,13 +195,19 @@ namespace CalmSpace.Editor
 
             Directory.CreateDirectory(outputDirectory);
 
+            BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
+            if (!requireReleaseSigning)
+            {
+                buildOptions |= BuildOptions.Development;
+            }
+
             var options = new BuildPlayerOptions
             {
                 scenes = new[] { MainScenePath },
                 locationPathName = outputPath,
                 target = BuildTarget.Android,
                 targetGroup = BuildTargetGroup.Android,
-                options = BuildOptions.CompressWithLz4HC
+                options = buildOptions
             };
 
             BuildReport report = BuildPipeline.BuildPlayer(options);
@@ -1110,8 +1116,13 @@ namespace CalmSpace.Editor
         private static void EnsureCleaningShadersAreIncluded()
         {
             Shader brush = Shader.Find("Hidden/CalmSpace/MaskBrush");
+            Shader coverage =
+                Shader.Find(
+                    "Hidden/CalmSpace/CoverageDownsample");
             Shader surface = Shader.Find("CalmSpace/CleanableSurface");
-            if (brush == null || surface == null)
+            if (brush == null ||
+                coverage == null ||
+                surface == null)
             {
                 throw new InvalidOperationException(
                     "Calm Space cleaning shaders did not import.");
@@ -1142,6 +1153,7 @@ namespace CalmSpace.Editor
             }
 
             AddUniqueObjectReference(shaders, brush);
+            AddUniqueObjectReference(shaders, coverage);
             AddUniqueObjectReference(shaders, surface);
             serialized.ApplyModifiedPropertiesWithoutUndo();
         }

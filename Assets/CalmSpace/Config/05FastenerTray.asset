@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 05-fastener-tray
   _displayName: Fastener Tray
   _levelType: 2
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 2
+  _restorationStageCount: 6

@@ -6,19 +6,20 @@ using Cysharp.Threading.Tasks;
 namespace CalmSpace.Monetization
 {
     /// <summary>
-    /// Provider-neutral monetization policy. Receipt/store restoration remains
-    /// authoritative; the encrypted local state is only a conservative cache.
+    /// Rewarded-only monetization policy. Fullscreen presentation is possible
+    /// solely after an explicit player action, and the activity coordinator
+    /// rejects it while gameplay or a drag owns the screen.
     /// </summary>
     public sealed class MonetizationManager : IMonetizationManager
     {
         private const int CurrentStateSchemaVersion = 1;
 
-        private readonly IAdProvider _adProvider;
-        private readonly INoAdsEntitlementProvider _entitlementProvider;
+        private readonly IRewardedAdProvider _rewardedAdProvider;
+        private readonly IRelaxPassEntitlementProvider
+            _relaxPassProvider;
         private readonly IMonetizationStateStore _stateStore;
         private readonly IPresentationActivityCoordinator
             _activityCoordinator;
-        private readonly IMonotonicClock _clock;
         private readonly MonetizationOptions _options;
         private readonly object _stateSync = new object();
         private readonly SemaphoreSlim _initializationGate =
@@ -30,42 +31,37 @@ namespace CalmSpace.Monetization
         private bool _isDisposed;
         private ProviderInitializationStatus _adProviderStatus =
             ProviderInitializationStatus.Unavailable;
-        private bool _cachedLifetimeNoAds;
+        private bool _relaxPassOwned;
         private EntitlementVerification _entitlementVerification =
             EntitlementVerification.Unverified;
-        private bool _suppressInterruptiveAds = true;
-        private int _interruptiveAdReservations;
-        private double _lastInterstitialOpenedAtSeconds;
         private ProviderEntitlementRestoreResult _lastRestoreResult =
             new ProviderEntitlementRestoreResult(
                 ProviderEntitlementStatus.Unavailable,
                 null);
-        private int _providerAvailabilityNotificationQueued;
+        private int _availabilityNotificationQueued;
 
         public MonetizationManager(
-            IAdProvider adProvider,
-            INoAdsEntitlementProvider entitlementProvider,
+            IRewardedAdProvider rewardedAdProvider,
+            IRelaxPassEntitlementProvider relaxPassProvider,
             IMonetizationStateStore stateStore,
             IPresentationActivityCoordinator activityCoordinator,
-            IMonotonicClock clock,
             MonetizationOptions options)
         {
-            _adProvider = adProvider ??
-                throw new ArgumentNullException(nameof(adProvider));
-            _entitlementProvider = entitlementProvider ??
+            _rewardedAdProvider = rewardedAdProvider ??
                 throw new ArgumentNullException(
-                    nameof(entitlementProvider));
+                    nameof(rewardedAdProvider));
+            _relaxPassProvider = relaxPassProvider ??
+                throw new ArgumentNullException(
+                    nameof(relaxPassProvider));
             _stateStore = stateStore ??
                 throw new ArgumentNullException(nameof(stateStore));
             _activityCoordinator = activityCoordinator ??
                 throw new ArgumentNullException(
                     nameof(activityCoordinator));
-            _clock = clock ??
-                throw new ArgumentNullException(nameof(clock));
             _options = options ??
                 throw new ArgumentNullException(nameof(options));
 
-            _adProvider.AvailabilityChanged +=
+            _rewardedAdProvider.AvailabilityChanged +=
                 HandleProviderAvailabilityChanged;
         }
 
@@ -80,20 +76,19 @@ namespace CalmSpace.Monetization
                     return new MonetizationSnapshot(
                         _isInitialized,
                         _adProviderStatus,
-                        _cachedLifetimeNoAds,
-                        _entitlementVerification,
-                        _suppressInterruptiveAds);
+                        _relaxPassOwned,
+                        _entitlementVerification);
                 }
             }
         }
 
-        public bool IsNoAds
+        public bool HasRelaxPass
         {
             get
             {
                 lock (_stateSync)
                 {
-                    return _cachedLifetimeNoAds;
+                    return _relaxPassOwned;
                 }
             }
         }
@@ -111,9 +106,6 @@ namespace CalmSpace.Monetization
                     {
                         return;
                     }
-
-                    _lastInterstitialOpenedAtSeconds =
-                        ReadMonotonicTimeFailClosed();
                 }
 
                 PersistentStateLoadResult loadResult;
@@ -136,11 +128,11 @@ namespace CalmSpace.Monetization
 
                 ApplyCachedState(loadResult);
 
-                ProviderInitializationStatus initializationStatus;
+                ProviderInitializationStatus adStatus;
                 try
                 {
-                    initializationStatus =
-                        await _adProvider.InitializeAsync(
+                    adStatus =
+                        await _rewardedAdProvider.InitializeAsync(
                             cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
@@ -151,7 +143,7 @@ namespace CalmSpace.Monetization
                 }
                 catch (Exception)
                 {
-                    initializationStatus =
+                    adStatus =
                         ProviderInitializationStatus.Unavailable;
                 }
 
@@ -161,11 +153,10 @@ namespace CalmSpace.Monetization
 
                 lock (_stateSync)
                 {
-                    _adProviderStatus = initializationStatus;
+                    _adProviderStatus = adStatus;
                     _lastRestoreResult = restoreResult;
                     _isInitialized = true;
                 }
-
             }
             finally
             {
@@ -174,163 +165,6 @@ namespace CalmSpace.Monetization
 
             await UniTask.SwitchToMainThread();
             RaiseAvailabilityChanged();
-        }
-
-        public async UniTask<InterstitialAdResult>
-            TryShowInterstitialAsync(
-                InterstitialAdRequest request,
-                CancellationToken cancellationToken = default)
-        {
-            ThrowIfDisposed();
-
-            if (request == null)
-            {
-                return BlockedInterstitial(
-                    AdBlockReason.InvalidRequest);
-            }
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                return new InterstitialAdResult(
-                    AdShowOutcome.Cancelled,
-                    AdBlockReason.Cancelled,
-                    null);
-            }
-
-            MonetizationSnapshot snapshot = Snapshot;
-            if (!snapshot.IsInitialized)
-            {
-                return BlockedInterstitial(
-                    AdBlockReason.NotInitialized);
-            }
-
-            if (snapshot.SuppressInterruptiveAds)
-            {
-                return BlockedInterstitial(
-                    AdBlockReason.EntitlementSuppressed);
-            }
-
-            if (!IsProviderReady(
-                AdFormat.Interstitial,
-                request.PlacementId))
-            {
-                return BlockedInterstitial(
-                    AdBlockReason.ProviderNotReady);
-            }
-
-            if (!IsInterstitialCooldownElapsed())
-            {
-                return BlockedInterstitial(
-                    AdBlockReason.Cooldown);
-            }
-
-            if (!_activityCoordinator.TryEnterAd(
-                out IDisposable adLease,
-                out AdBlockReason activityBlockReason))
-            {
-                return BlockedInterstitial(activityBlockReason);
-            }
-
-            var policyReservation = false;
-            try
-            {
-                snapshot = Snapshot;
-                if (snapshot.SuppressInterruptiveAds)
-                {
-                    return BlockedInterstitial(
-                        AdBlockReason.EntitlementSuppressed);
-                }
-
-                if (!IsInterstitialCooldownElapsed())
-                {
-                    return BlockedInterstitial(
-                        AdBlockReason.Cooldown);
-                }
-
-                if (!IsProviderReady(
-                    AdFormat.Interstitial,
-                    request.PlacementId))
-                {
-                    return BlockedInterstitial(
-                        AdBlockReason.ProviderNotReady);
-                }
-
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    return new InterstitialAdResult(
-                        AdShowOutcome.Cancelled,
-                        AdBlockReason.Cancelled,
-                        null);
-                }
-
-                if (!TryReserveInterruptiveAd())
-                {
-                    return BlockedInterstitial(
-                        AdBlockReason.EntitlementSuppressed);
-                }
-
-                policyReservation = true;
-                var observer = new InterstitialSessionObserver(
-                    this);
-                ProviderAdResult providerResult;
-                try
-                {
-                    providerResult = await _adProvider.ShowAsync(
-                        new ProviderAdRequest(
-                            AdFormat.Interstitial,
-                            request.PlacementId),
-                        observer,
-                        cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    await UniTask.SwitchToMainThread();
-                    return new InterstitialAdResult(
-                        AdShowOutcome.Cancelled,
-                        AdBlockReason.Cancelled,
-                        null);
-                }
-                catch (Exception exception)
-                {
-                    await UniTask.SwitchToMainThread();
-                    return new InterstitialAdResult(
-                        AdShowOutcome.Failed,
-                        AdBlockReason.None,
-                        exception.GetType().Name);
-                }
-
-                await UniTask.SwitchToMainThread();
-                return new InterstitialAdResult(
-                    MapAdOutcome(providerResult.Outcome),
-                    AdBlockReason.None,
-                    providerResult.ProviderMessage);
-            }
-            finally
-            {
-                if (policyReservation)
-                {
-                    ReleaseInterruptiveAdReservation();
-                }
-
-                adLease.Dispose();
-            }
-        }
-
-        public UniTask<InterstitialAdResult>
-            TryShowInterstitialBetweenLevelsAsync(
-                string placementId,
-                CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(placementId))
-            {
-                return UniTask.FromResult(
-                    BlockedInterstitial(
-                        AdBlockReason.InvalidRequest));
-            }
-
-            return TryShowInterstitialAsync(
-                new InterstitialAdRequest(placementId),
-                cancellationToken);
         }
 
         public async UniTask<RewardedAdResult> ShowRewardedAsync(
@@ -344,19 +178,14 @@ namespace CalmSpace.Monetization
             {
                 return CompleteWithoutSession(
                     callbacks,
-                    BlockedRewarded(
-                        AdBlockReason.InvalidRequest));
+                    BlockedRewarded(AdBlockReason.InvalidRequest));
             }
 
             if (cancellationToken.IsCancellationRequested)
             {
                 return CompleteWithoutSession(
                     callbacks,
-                    new RewardedAdResult(
-                        AdShowOutcome.Cancelled,
-                        AdBlockReason.Cancelled,
-                        false,
-                        null));
+                    CancelledRewarded());
             }
 
             MonetizationSnapshot snapshot = Snapshot;
@@ -364,12 +193,11 @@ namespace CalmSpace.Monetization
             {
                 return CompleteWithoutSession(
                     callbacks,
-                    BlockedRewarded(
-                        AdBlockReason.NotInitialized));
+                    BlockedRewarded(AdBlockReason.NotInitialized));
             }
 
-            if (snapshot.CachedLifetimeNoAds &&
-                !_options.AllowRewardedForNoAdsOwners)
+            if (snapshot.RelaxPassOwned &&
+                !_options.AllowRewardedForRelaxPassOwners)
             {
                 return CompleteWithoutSession(
                     callbacks,
@@ -377,9 +205,7 @@ namespace CalmSpace.Monetization
                         AdBlockReason.EntitlementSuppressed));
             }
 
-            if (!IsProviderReady(
-                AdFormat.Rewarded,
-                request.PlacementId))
+            if (!IsProviderReady(request.PlacementId))
             {
                 return CompleteWithoutSession(
                     callbacks,
@@ -388,8 +214,8 @@ namespace CalmSpace.Monetization
             }
 
             if (!_activityCoordinator.TryEnterAd(
-                out IDisposable adLease,
-                out AdBlockReason activityBlockReason))
+                    out IDisposable adLease,
+                    out AdBlockReason activityBlockReason))
             {
                 return CompleteWithoutSession(
                     callbacks,
@@ -400,8 +226,8 @@ namespace CalmSpace.Monetization
             try
             {
                 snapshot = Snapshot;
-                if (snapshot.CachedLifetimeNoAds &&
-                    !_options.AllowRewardedForNoAdsOwners)
+                if (snapshot.RelaxPassOwned &&
+                    !_options.AllowRewardedForRelaxPassOwners)
                 {
                     return CompleteWithoutSession(
                         callbacks,
@@ -409,9 +235,7 @@ namespace CalmSpace.Monetization
                             AdBlockReason.EntitlementSuppressed));
                 }
 
-                if (!IsProviderReady(
-                    AdFormat.Rewarded,
-                    request.PlacementId))
+                if (!IsProviderReady(request.PlacementId))
                 {
                     return CompleteWithoutSession(
                         callbacks,
@@ -423,30 +247,24 @@ namespace CalmSpace.Monetization
                 {
                     return CompleteWithoutSession(
                         callbacks,
-                        new RewardedAdResult(
-                            AdShowOutcome.Cancelled,
-                            AdBlockReason.Cancelled,
-                            false,
-                            null));
+                        CancelledRewarded());
                 }
 
                 observer = new RewardedSessionObserver(
                     callbacks,
                     new RewardGrant(
-                        request.RewardId,
+                        request.Benefit,
                         request.Amount));
 
                 ProviderAdResult providerResult;
                 try
                 {
-                    providerResult = await _adProvider.ShowAsync(
-                        new ProviderAdRequest(
-                            AdFormat.Rewarded,
-                            request.PlacementId,
-                            request.RewardId,
-                            request.Amount),
-                        observer,
-                        cancellationToken);
+                    providerResult =
+                        await _rewardedAdProvider.ShowAsync(
+                            new ProviderRewardedAdRequest(
+                                request.PlacementId),
+                            observer,
+                            cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -473,69 +291,54 @@ namespace CalmSpace.Monetization
             }
             finally
             {
-                if (observer != null)
-                {
-                    observer.CompleteIfNeeded();
-                }
-
+                observer?.CompleteIfNeeded();
                 adLease.Dispose();
             }
         }
 
-        public UniTask<RewardedAdResult> TryShowRewardedAsync(
-            RewardedAdRequest request,
-            IRewardedAdCallbacks callbacks,
-            CancellationToken cancellationToken = default)
-        {
-            return ShowRewardedAsync(
-                request,
-                callbacks,
-                cancellationToken);
-        }
-
-        public async UniTask<ProviderNoAdsPurchaseResult>
-            PurchaseLifetimeNoAdsAsync(
+        public async UniTask<ProviderRelaxPassPurchaseResult>
+            PurchaseRelaxPassAsync(
                 CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
             await InitializeAsync(cancellationToken);
             await _entitlementGate.WaitAsync(cancellationToken);
-            var availabilityChanged = false;
-            ProviderNoAdsPurchaseResult result;
+            var changed = false;
+            ProviderRelaxPassPurchaseResult result;
 
             try
             {
                 try
                 {
                     result =
-                        await _entitlementProvider
-                            .PurchaseLifetimeNoAdsAsync(
+                        await _relaxPassProvider
+                            .PurchaseRelaxPassAsync(
                                 cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (OperationCanceledException)
                 {
-                    result = new ProviderNoAdsPurchaseResult(
+                    result = new ProviderRelaxPassPurchaseResult(
                         ProviderPurchaseStatus.Cancelled,
                         null);
                 }
                 catch (Exception exception)
                 {
-                    result = new ProviderNoAdsPurchaseResult(
+                    result = new ProviderRelaxPassPurchaseResult(
                         ProviderPurchaseStatus.Failed,
                         exception.GetType().Name);
                 }
 
                 if (result.Status ==
-                    ProviderPurchaseStatus.Purchased ||
+                        ProviderPurchaseStatus.Purchased ||
                     result.Status ==
-                    ProviderPurchaseStatus.AlreadyOwned)
+                        ProviderPurchaseStatus.AlreadyOwned)
                 {
                     ApplyVerifiedEntitlement(true);
                     await PersistAuthoritativeStateAsync(
                         true,
                         cancellationToken);
-                    availabilityChanged = true;
+                    changed = true;
                 }
             }
             finally
@@ -543,7 +346,7 @@ namespace CalmSpace.Monetization
                 _entitlementGate.Release();
             }
 
-            if (availabilityChanged)
+            if (changed)
             {
                 await UniTask.SwitchToMainThread();
                 RaiseAvailabilityChanged();
@@ -552,15 +355,8 @@ namespace CalmSpace.Monetization
             return result;
         }
 
-        public UniTask<ProviderNoAdsPurchaseResult>
-            PurchaseNoAdsAsync(
-                CancellationToken cancellationToken = default)
-        {
-            return PurchaseLifetimeNoAdsAsync(cancellationToken);
-        }
-
         public async UniTask<ProviderEntitlementRestoreResult>
-            RestoreLifetimeNoAdsAsync(
+            RestoreRelaxPassAsync(
                 CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
@@ -575,7 +371,8 @@ namespace CalmSpace.Monetization
             }
 
             ProviderEntitlementRestoreResult result =
-                await RestoreFromProviderCoreAsync(cancellationToken);
+                await RestoreFromProviderCoreAsync(
+                    cancellationToken);
             lock (_stateSync)
             {
                 _lastRestoreResult = result;
@@ -584,13 +381,6 @@ namespace CalmSpace.Monetization
             await UniTask.SwitchToMainThread();
             RaiseAvailabilityChanged();
             return result;
-        }
-
-        public UniTask<ProviderEntitlementRestoreResult>
-            RestoreNoAdsAsync(
-                CancellationToken cancellationToken = default)
-        {
-            return RestoreLifetimeNoAdsAsync(cancellationToken);
         }
 
         public void Dispose()
@@ -605,7 +395,7 @@ namespace CalmSpace.Monetization
                 _isDisposed = true;
             }
 
-            _adProvider.AvailabilityChanged -=
+            _rewardedAdProvider.AvailabilityChanged -=
                 HandleProviderAvailabilityChanged;
         }
 
@@ -620,8 +410,8 @@ namespace CalmSpace.Monetization
                 try
                 {
                     result =
-                        await _entitlementProvider
-                            .RestoreLifetimeNoAdsAsync(
+                        await _relaxPassProvider
+                            .RestoreRelaxPassAsync(
                                 cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
@@ -640,22 +430,18 @@ namespace CalmSpace.Monetization
 
                 switch (result.Status)
                 {
-                    case ProviderEntitlementStatus
-                        .VerifiedEntitled:
+                    case ProviderEntitlementStatus.VerifiedEntitled:
                         ApplyVerifiedEntitlement(true);
                         await PersistAuthoritativeStateAsync(
                             true,
                             cancellationToken);
                         break;
-
-                    case ProviderEntitlementStatus
-                        .VerifiedNotEntitled:
+                    case ProviderEntitlementStatus.VerifiedNotEntitled:
                         ApplyVerifiedEntitlement(false);
                         await PersistAuthoritativeStateAsync(
                             false,
                             cancellationToken);
                         break;
-
                     default:
                         ApplyUnavailableEntitlement();
                         break;
@@ -670,7 +456,7 @@ namespace CalmSpace.Monetization
         }
 
         private async UniTask PersistAuthoritativeStateAsync(
-            bool lifetimeNoAds,
+            bool relaxPassOwned,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -678,7 +464,7 @@ namespace CalmSpace.Monetization
                 await _stateStore.SaveAsync(
                     new PersistentMonetizationState(
                         CurrentStateSchemaVersion,
-                        lifetimeNoAds,
+                        relaxPassOwned,
                         DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
                     cancellationToken);
             if (saveResult.Status ==
@@ -695,51 +481,24 @@ namespace CalmSpace.Monetization
         {
             lock (_stateSync)
             {
-                _cachedLifetimeNoAds =
+                _relaxPassOwned =
                     loadResult.HasState &&
                     loadResult.State.SchemaVersion ==
-                    CurrentStateSchemaVersion &&
-                    loadResult.State.LifetimeNoAds;
+                        CurrentStateSchemaVersion &&
+                    loadResult.State.RelaxPassOwned;
                 _entitlementVerification =
                     EntitlementVerification.Unverified;
-                _suppressInterruptiveAds = true;
             }
         }
 
-        private void ApplyVerifiedEntitlement(bool lifetimeNoAds)
+        private void ApplyVerifiedEntitlement(bool relaxPassOwned)
         {
             lock (_stateSync)
             {
-                _cachedLifetimeNoAds = lifetimeNoAds;
-                _entitlementVerification = lifetimeNoAds
+                _relaxPassOwned = relaxPassOwned;
+                _entitlementVerification = relaxPassOwned
                     ? EntitlementVerification.VerifiedEntitled
                     : EntitlementVerification.VerifiedNotEntitled;
-                _suppressInterruptiveAds = lifetimeNoAds;
-            }
-        }
-
-        private bool TryReserveInterruptiveAd()
-        {
-            lock (_stateSync)
-            {
-                if (_suppressInterruptiveAds || _isDisposed)
-                {
-                    return false;
-                }
-
-                _interruptiveAdReservations++;
-                return true;
-            }
-        }
-
-        private void ReleaseInterruptiveAdReservation()
-        {
-            lock (_stateSync)
-            {
-                if (_interruptiveAdReservations > 0)
-                {
-                    _interruptiveAdReservations--;
-                }
             }
         }
 
@@ -749,89 +508,19 @@ namespace CalmSpace.Monetization
             {
                 _entitlementVerification =
                     EntitlementVerification.Unavailable;
-                _suppressInterruptiveAds = true;
             }
         }
 
-        private bool IsInterstitialCooldownElapsed()
-        {
-            double now = ReadMonotonicTimeFailClosed();
-            double lastOpened;
-            lock (_stateSync)
-            {
-                lastOpened = _lastInterstitialOpenedAtSeconds;
-            }
-
-            if (!IsFinite(now) ||
-                !IsFinite(lastOpened) ||
-                now < lastOpened)
-            {
-                return false;
-            }
-
-            return now - lastOpened >=
-                _options.InterstitialCooldown.TotalSeconds;
-        }
-
-        private void MarkInterstitialOpened()
-        {
-            double now = ReadMonotonicTimeFailClosed();
-            lock (_stateSync)
-            {
-                if (!IsFinite(now) ||
-                    !IsFinite(_lastInterstitialOpenedAtSeconds) ||
-                    now < _lastInterstitialOpenedAtSeconds)
-                {
-                    // A clock failure at the actual open boundary must poison
-                    // this run rather than make a second ad immediately
-                    // eligible after the clock recovers.
-                    _lastInterstitialOpenedAtSeconds = double.NaN;
-                    return;
-                }
-
-                _lastInterstitialOpenedAtSeconds = now;
-            }
-        }
-
-        private double ReadMonotonicTimeFailClosed()
+        private bool IsProviderReady(string placementId)
         {
             try
             {
-                return _clock.NowSeconds;
-            }
-            catch (Exception)
-            {
-                return double.NaN;
-            }
-        }
-
-        private bool IsProviderReady(
-            AdFormat format,
-            string placementId)
-        {
-            try
-            {
-                return _adProvider.IsReady(format, placementId);
+                return _rewardedAdProvider.IsReady(placementId);
             }
             catch (Exception)
             {
                 return false;
             }
-        }
-
-        private static bool IsFinite(double value)
-        {
-            return !double.IsNaN(value) &&
-                !double.IsInfinity(value);
-        }
-
-        private static InterstitialAdResult BlockedInterstitial(
-            AdBlockReason reason)
-        {
-            return new InterstitialAdResult(
-                AdShowOutcome.Blocked,
-                reason,
-                null);
         }
 
         private static RewardedAdResult BlockedRewarded(
@@ -844,21 +533,31 @@ namespace CalmSpace.Monetization
                 null);
         }
 
+        private static RewardedAdResult CancelledRewarded()
+        {
+            return new RewardedAdResult(
+                AdShowOutcome.Cancelled,
+                AdBlockReason.Cancelled,
+                false,
+                null);
+        }
+
         private static RewardedAdResult CompleteWithoutSession(
             IRewardedAdCallbacks callbacks,
             RewardedAdResult result)
         {
-            if (callbacks != null)
+            if (callbacks == null)
             {
-                try
-                {
-                    callbacks.OnCompleted(result);
-                }
-                catch (Exception)
-                {
-                    // Consumer callbacks cannot compromise presentation
-                    // cleanup or cause a duplicate completion.
-                }
+                return result;
+            }
+
+            try
+            {
+                callbacks.OnCompleted(result);
+            }
+            catch (Exception)
+            {
+                // A consumer cannot compromise presentation cleanup.
             }
 
             return result;
@@ -885,7 +584,7 @@ namespace CalmSpace.Monetization
         private void HandleProviderAvailabilityChanged()
         {
             if (Interlocked.Exchange(
-                    ref _providerAvailabilityNotificationQueued,
+                    ref _availabilityNotificationQueued,
                     1) != 0)
             {
                 return;
@@ -899,9 +598,8 @@ namespace CalmSpace.Monetization
         private void DispatchProviderAvailabilityChanged()
         {
             Interlocked.Exchange(
-                ref _providerAvailabilityNotificationQueued,
+                ref _availabilityNotificationQueued,
                 0);
-
             lock (_stateSync)
             {
                 if (_isDisposed)
@@ -930,8 +628,7 @@ namespace CalmSpace.Monetization
                 }
                 catch (Exception)
                 {
-                    // One observer must not prevent other observers from
-                    // receiving the provider availability transition.
+                    // One observer cannot starve the others.
                 }
             }
         }
@@ -948,38 +645,14 @@ namespace CalmSpace.Monetization
             }
         }
 
-        private sealed class InterstitialSessionObserver :
-            IProviderAdSessionObserver
-        {
-            private readonly MonetizationManager _owner;
-            private int _opened;
-
-            public InterstitialSessionObserver(
-                MonetizationManager owner)
-            {
-                _owner = owner;
-            }
-
-            public void OnOpened()
-            {
-                if (Interlocked.Exchange(ref _opened, 1) == 0)
-                {
-                    _owner.MarkInterstitialOpened();
-                }
-            }
-
-            public void OnRewardEarned()
-            {
-            }
-        }
-
         private sealed class RewardedSessionObserver :
-            IProviderAdSessionObserver
+            IProviderRewardedAdSessionObserver
         {
             private readonly object _sync = new object();
             private readonly IRewardedAdCallbacks _callbacks;
             private readonly RewardGrant _reward;
             private bool _rewardSignalReceived;
+            private bool _completing;
             private bool _completed;
             private RewardedAdResult _completedResult;
 
@@ -999,12 +672,10 @@ namespace CalmSpace.Monetization
             {
                 lock (_sync)
                 {
-                    if (_completed || _rewardSignalReceived)
+                    if (!_completed)
                     {
-                        return;
+                        _rewardSignalReceived = true;
                     }
-
-                    _rewardSignalReceived = true;
                 }
             }
 
@@ -1013,54 +684,63 @@ namespace CalmSpace.Monetization
                 AdBlockReason blockReason,
                 string providerMessage)
             {
-                IRewardedAdCallbacks callbacks;
-                RewardedAdResult result;
-                var grantReward = false;
-
+                bool shouldApply;
                 lock (_sync)
                 {
+                    while (_completing && !_completed)
+                    {
+                        Monitor.Wait(_sync);
+                    }
+
                     if (_completed)
                     {
                         return _completedResult;
                     }
 
-                    grantReward =
+                    _completing = true;
+                    shouldApply =
                         outcome == AdShowOutcome.Completed &&
-                        _rewardSignalReceived;
-                    result = new RewardedAdResult(
-                        outcome,
-                        blockReason,
-                        grantReward,
-                        providerMessage);
-                    _completedResult = result;
-                    _completed = true;
-                    callbacks = _callbacks;
+                        _rewardSignalReceived &&
+                        _callbacks != null;
                 }
 
-                if (callbacks == null)
-                {
-                    return result;
-                }
-
-                if (grantReward)
+                var applied = false;
+                if (shouldApply)
                 {
                     try
                     {
-                        callbacks.OnRewardEarned(_reward);
+                        applied =
+                            _callbacks.TryApplyReward(_reward);
                     }
                     catch (Exception)
                     {
-                        // The authoritative signal remains consumed once.
+                        applied = false;
                     }
                 }
 
-                try
+                var result = new RewardedAdResult(
+                    outcome,
+                    blockReason,
+                    applied,
+                    providerMessage);
+                lock (_sync)
                 {
-                    callbacks.OnCompleted(result);
+                    _completedResult = result;
+                    _completed = true;
+                    _completing = false;
+                    Monitor.PulseAll(_sync);
                 }
-                catch (Exception)
+
+                if (_callbacks != null)
                 {
-                    // Completion is still considered delivered once.
+                    try
+                    {
+                        _callbacks.OnCompleted(result);
+                    }
+                    catch (Exception)
+                    {
+                        // Completion remains delivered once.
+                    }
                 }
 
                 return result;

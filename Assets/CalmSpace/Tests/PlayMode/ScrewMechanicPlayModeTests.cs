@@ -206,6 +206,67 @@ namespace CalmSpace.Tests.PlayMode
             yield return null;
         }
 
+        [UnityTest]
+        public IEnumerator CompletedScrewHoldUndoRestoresPanelProgressAndLevel()
+        {
+            ScrewFixture fixture =
+                ScrewFixture.Create("Undo Complete", 1);
+            yield return null;
+
+            ScrewController screw = fixture.Screws[0];
+            ScrewUndoState beforeHold = screw.CaptureUndoState();
+            var history = new LevelSessionUndoHistory();
+            var activity =
+                new PresentationActivityCoordinator();
+            var inputObject = new GameObject("Undo Screw Input");
+            var input =
+                inputObject.AddComponent<ScrewInputController>();
+            input.Construct(activity, history);
+
+            Assert.That(screw.BeginHold(), Is.True);
+            Assert.That(
+                activity.TryEnterDrag(out var dragLease),
+                Is.True);
+            SetPrivateField(input, "_heldScrew", screw);
+            SetPrivateField(input, "_holdStartState", beforeHold);
+            SetPrivateField(input, "_hasHoldStartState", true);
+            SetPrivateField(input, "_dragLease", dragLease);
+
+            fixture.TurnOutScrew(0);
+            InvokePrivate(input, "EndHold");
+            fixture.Level.OnItemPlaced(fixture.Item);
+
+            Assert.That(screw.IsRemoved, Is.True);
+            Assert.That(screw.gameObject.activeSelf, Is.False);
+            Assert.That(fixture.Panel.RemovedScrewCount, Is.EqualTo(1));
+            Assert.That(fixture.Panel.IsReleased, Is.True);
+            Assert.That(fixture.Level.ProgressCurrent, Is.EqualTo(2));
+            Assert.That(fixture.Level.ProgressTotal, Is.EqualTo(2));
+            Assert.That(fixture.Level.State, Is.EqualTo(LevelState.Completed));
+            Assert.That(input.HeldScrew, Is.Null);
+            Assert.That(input.HasActiveHold, Is.False);
+            Assert.That(activity.ActiveDragCount, Is.Zero);
+            Assert.That(history.Count, Is.EqualTo(1));
+
+            Assert.That(history.Undo(), Is.True);
+
+            Assert.That(screw.gameObject.activeSelf, Is.True);
+            Assert.That(screw.IsRemoved, Is.False);
+            Assert.That(screw.Progress, Is.Zero);
+            Assert.That(fixture.Panel.RemovedScrewCount, Is.Zero);
+            Assert.That(fixture.Panel.IsReleased, Is.False);
+            Assert.That(fixture.PlateCollider.enabled, Is.False);
+            Assert.That(fixture.Item.enabled, Is.False);
+            Assert.That(fixture.Level.ProgressCurrent, Is.EqualTo(1));
+            Assert.That(fixture.Level.ProgressTotal, Is.EqualTo(2));
+            Assert.That(fixture.Level.CheckWinCondition(), Is.False);
+            Assert.That(fixture.Level.State, Is.EqualTo(LevelState.Active));
+
+            Object.Destroy(inputObject);
+            fixture.Destroy();
+            yield return null;
+        }
+
         private sealed class ScrewFixture
         {
             private readonly GameObject _root;
@@ -371,6 +432,20 @@ namespace CalmSpace.Tests.PlayMode
                     BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, fieldName);
             field.SetValue(target, value);
+        }
+
+        private static void InvokePrivate(
+            object target,
+            string methodName)
+        {
+            MethodInfo method = target
+                .GetType()
+                .GetMethod(
+                    methodName,
+                    BindingFlags.Instance |
+                    BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, methodName);
+            method.Invoke(target, null);
         }
 
         private sealed class SilentHaptics : IHapticService

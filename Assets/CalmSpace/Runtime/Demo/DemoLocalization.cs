@@ -39,7 +39,11 @@ namespace CalmSpace.Demo
         HomeDecorLabel = 23,
         DecorationBuy = 24,
         DecorationOwned = 25,
-        DecorationSelected = 26
+        DecorationSelected = 26,
+        Undo = 27,
+        RestorationStageComplete = 28,
+        RestorationComplete = 29,
+        ContinueRestoration = 30
     }
 
     public interface IDemoLocalizationService
@@ -62,6 +66,8 @@ namespace CalmSpace.Demo
 
         string GetLevelName(LevelDefinition definition);
 
+        string GetRestorationChapterName(string chapterId);
+
         string GetThemeName(ThemePalette palette);
 
         string GetDecorationName(
@@ -75,7 +81,13 @@ namespace CalmSpace.Demo
 
         string FormatCompletionReward(int amount);
 
-        string FormatCompletionBody(LevelDefinition definition);
+        string FormatCompletionBody(
+            LevelDefinition definition,
+            bool includeRestorationContext = true);
+
+        string FormatRestorationStageTitle(
+            LevelDefinition definition,
+            bool includeRestorationContext = true);
 
         string FormatCleaningProgress(int percentage);
 
@@ -163,6 +175,21 @@ namespace CalmSpace.Demo
             }
         }
 
+        public static string GetRestorationChapterName(
+            DemoLocale locale,
+            string chapterId)
+        {
+            switch (chapterId)
+            {
+                case "cozy-workshop":
+                    return locale == DemoLocale.Ukrainian
+                        ? "Затишна майстерня"
+                        : "Cozy Workshop";
+                default:
+                    return chapterId ?? string.Empty;
+            }
+        }
+
         public static string GetDecorationName(
             DemoLocale locale,
             string decorationId,
@@ -246,6 +273,14 @@ namespace CalmSpace.Demo
                     return "OWNED";
                 case DemoTextKey.DecorationSelected:
                     return "SELECTED";
+                case DemoTextKey.Undo:
+                    return "Undo";
+                case DemoTextKey.RestorationStageComplete:
+                    return "Restoration step complete";
+                case DemoTextKey.RestorationComplete:
+                    return "Restoration complete";
+                case DemoTextKey.ContinueRestoration:
+                    return "Continue restoring";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -312,6 +347,14 @@ namespace CalmSpace.Demo
                     return "ПРИДБАНО";
                 case DemoTextKey.DecorationSelected:
                     return "ОБРАНО";
+                case DemoTextKey.Undo:
+                    return "Скасувати";
+                case DemoTextKey.RestorationStageComplete:
+                    return "Етап відновлення завершено";
+                case DemoTextKey.RestorationComplete:
+                    return "Відновлення завершено";
+                case DemoTextKey.ContinueRestoration:
+                    return "Продовжити відновлення";
                 default:
                     throw new ArgumentOutOfRangeException(
                         nameof(key),
@@ -426,6 +469,14 @@ namespace CalmSpace.Demo
                 definition.DisplayName);
         }
 
+        public string GetRestorationChapterName(string chapterId)
+        {
+            EnsureInitialized();
+            return DemoLocalizationTable.GetRestorationChapterName(
+                CurrentLocale,
+                chapterId);
+        }
+
         public string GetThemeName(ThemePalette palette)
         {
             EnsureInitialized();
@@ -470,8 +521,8 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? "ЖЕТОНИ СПОКОЮ · " + normalized
-                : "CALM TOKENS · " + normalized;
+                ? "ЖЕТОНИ ЗАТИШКУ · " + normalized
+                : "COZY TOKENS · " + normalized;
         }
 
         public string FormatDecorationCost(int cost)
@@ -479,7 +530,7 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, cost);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? normalized + " ЖЕТОНІВ"
+                ? normalized + " ЖЕТОНІВ ЗАТИШКУ"
                 : normalized + " TOKENS";
         }
 
@@ -488,12 +539,13 @@ namespace CalmSpace.Demo
             EnsureInitialized();
             var normalized = Mathf.Max(0, amount);
             return CurrentLocale == DemoLocale.Ukrainian
-                ? "+" + normalized + " ЖЕТОНІВ СПОКОЮ"
-                : "+" + normalized + " CALM TOKENS";
+                ? "+" + normalized + " ЖЕТОНІВ ЗАТИШКУ"
+                : "+" + normalized + " COZY TOKENS";
         }
 
         public string FormatCompletionBody(
-            LevelDefinition definition)
+            LevelDefinition definition,
+            bool includeRestorationContext = true)
         {
             EnsureInitialized();
             if (definition == null)
@@ -501,10 +553,53 @@ namespace CalmSpace.Demo
                 return Get(DemoTextKey.CompletionFallbackBody);
             }
 
-            var levelName = GetLevelName(definition);
+            if (includeRestorationContext &&
+                definition.TryGetRestorationStage(out var stage))
+            {
+                string chapterName =
+                    GetRestorationChapterName(stage.ChapterId);
+                if (stage.IsFinalStage)
+                {
+                    return CurrentLocale == DemoLocale.Ukrainian
+                        ? "«" + chapterName +
+                          "» — повністю відновлено."
+                        : chapterName + " is fully restored.";
+                }
+
+                return CurrentLocale == DemoLocale.Ukrainian
+                    ? chapterName + " · етап " +
+                      stage.StageNumber + " з " +
+                      stage.StageCount + " завершено."
+                    : chapterName + " · stage " +
+                      stage.StageNumber + " of " +
+                      stage.StageCount + " complete.";
+            }
+
+            string levelName = GetLevelName(definition);
             return CurrentLocale == DemoLocale.Ukrainian
                 ? "«" + levelName + "» — знову в гармонії."
                 : levelName + " feels calm again.";
+        }
+
+        public string FormatRestorationStageTitle(
+            LevelDefinition definition,
+            bool includeRestorationContext = true)
+        {
+            EnsureInitialized();
+            if (definition == null ||
+                !includeRestorationContext ||
+                !definition.TryGetRestorationStage(out var stage))
+            {
+                return GetLevelName(definition);
+            }
+
+            string chapterName =
+                GetRestorationChapterName(stage.ChapterId);
+            string levelName = GetLevelName(definition);
+            return chapterName + "\n" +
+                   stage.StageNumber + "/" +
+                   stage.StageCount + " · " +
+                   levelName;
         }
 
         public string FormatCleaningProgress(int percentage)

@@ -8,6 +8,57 @@ using VContainer;
 
 namespace CalmSpace.Fasteners
 {
+    public readonly struct ScrewUndoState :
+        IEquatable<ScrewUndoState>
+    {
+        public ScrewUndoState(
+            ScrewRotationSnapshot rotation,
+            bool isRemoved)
+        {
+            Rotation = rotation;
+            IsRemoved = isRemoved;
+        }
+
+        public ScrewRotationSnapshot Rotation { get; }
+
+        public bool IsRemoved { get; }
+
+        public bool Equals(ScrewUndoState other)
+        {
+            return
+                Rotation == other.Rotation &&
+                IsRemoved == other.IsRemoved;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return
+                obj is ScrewUndoState other &&
+                Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            return
+                (Rotation.GetHashCode() * 397) ^
+                IsRemoved.GetHashCode();
+        }
+
+        public static bool operator ==(
+            ScrewUndoState left,
+            ScrewUndoState right)
+        {
+            return left.Equals(right);
+        }
+
+        public static bool operator !=(
+            ScrewUndoState left,
+            ScrewUndoState right)
+        {
+            return !left.Equals(right);
+        }
+    }
+
     /// <summary>
     /// One screw the player turns out by holding a finger on it. The screw
     /// rises and spins while the hold lasts, ticks once per whole turn, and
@@ -49,8 +100,11 @@ namespace CalmSpace.Fasteners
         private bool _initialized;
         private bool _isRemoved;
         private bool _isHeld;
+        private int _settleGeneration;
 
         public event Action<ScrewController> Removed;
+
+        public event Action<ScrewController> Restored;
 
         public FastenerPanel Panel => _panel;
 
@@ -121,6 +175,45 @@ namespace CalmSpace.Fasteners
             _isHeld = false;
         }
 
+        public ScrewUndoState CaptureUndoState()
+        {
+            EnsureInitialized();
+            return new ScrewUndoState(
+                _model.CaptureSnapshot(),
+                _isRemoved);
+        }
+
+        public bool RestoreUndoState(ScrewUndoState state)
+        {
+            EnsureInitialized();
+            ScrewUndoState current = CaptureUndoState();
+            if (current == state)
+            {
+                return false;
+            }
+
+            bool wasRemoved = _isRemoved;
+            _settleGeneration++;
+            if (!gameObject.activeSelf)
+            {
+                gameObject.SetActive(true);
+            }
+
+            _model.Restore(state.Rotation);
+            _isRemoved = state.IsRemoved;
+            _isHeld = false;
+            transform.localScale = _seatedLocalScale;
+            ApplyPose();
+            SetCollidersEnabled(!_isRemoved);
+
+            if (wasRemoved && !_isRemoved)
+            {
+                InvokeRestored();
+            }
+
+            return true;
+        }
+
         private void Awake()
         {
             EnsureInitialized();
@@ -157,10 +250,13 @@ namespace CalmSpace.Fasteners
         {
             _isRemoved = true;
             _isHeld = false;
+            int settleGeneration = ++_settleGeneration;
             SetCollidersEnabled(false);
             InvokeRemoved();
             PlayRemovalFeedback();
-            PlaySettleAsync(this.GetCancellationTokenOnDestroy())
+            PlaySettleAsync(
+                    settleGeneration,
+                    this.GetCancellationTokenOnDestroy())
                 .Forget();
         }
 
@@ -198,6 +294,7 @@ namespace CalmSpace.Fasteners
         }
 
         private async UniTaskVoid PlaySettleAsync(
+            int settleGeneration,
             CancellationToken cancellationToken)
         {
             if (_settleDurationSeconds > 0f)
@@ -210,6 +307,10 @@ namespace CalmSpace.Fasteners
                         await UniTask.Yield(
                             PlayerLoopTiming.Update,
                             cancellationToken);
+                        if (settleGeneration != _settleGeneration)
+                        {
+                            return;
+                        }
                         elapsed += Time.deltaTime;
                         float remaining = 1f - Mathf.Clamp01(
                             elapsed / _settleDurationSeconds);
@@ -223,7 +324,9 @@ namespace CalmSpace.Fasteners
                 }
             }
 
-            if (this == null)
+            if (this == null ||
+                settleGeneration != _settleGeneration ||
+                !_isRemoved)
             {
                 return;
             }
@@ -235,6 +338,28 @@ namespace CalmSpace.Fasteners
         private void InvokeRemoved()
         {
             var handler = Removed;
+            if (handler == null)
+            {
+                return;
+            }
+
+            foreach (Action<ScrewController> subscriber in
+                     handler.GetInvocationList())
+            {
+                try
+                {
+                    subscriber(this);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        private void InvokeRestored()
+        {
+            var handler = Restored;
             if (handler == null)
             {
                 return;

@@ -78,7 +78,7 @@ namespace CalmSpace.Monetization
             Buffer.BlockCopy(Magic, 0, bytes, 0, Magic.Length);
             bytes[4] = FileFormatVersion;
             WriteInt32BigEndian(bytes, 5, state.SchemaVersion);
-            bytes[9] = state.LifetimeNoAds ? (byte)1 : (byte)0;
+            bytes[9] = state.RelaxPassOwned ? (byte)1 : (byte)0;
             WriteInt64BigEndian(
                 bytes,
                 10,

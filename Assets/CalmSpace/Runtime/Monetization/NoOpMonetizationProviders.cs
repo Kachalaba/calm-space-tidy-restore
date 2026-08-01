@@ -5,10 +5,11 @@ using Cysharp.Threading.Tasks;
 namespace CalmSpace.Monetization
 {
     /// <summary>
-    /// Conservative adapter used until a real ad SDK is selected and wired.
-    /// It never reports inventory and never emits presentation callbacks.
+    /// Conservative rewarded adapter used until an SDK is selected. It never
+    /// reports inventory and can never open a fullscreen presentation.
     /// </summary>
-    public sealed class NoOpAdProvider : IAdProvider
+    public sealed class NoOpRewardedAdProvider :
+        IRewardedAdProvider
     {
         public event Action AvailabilityChanged
         {
@@ -23,14 +24,14 @@ namespace CalmSpace.Monetization
                 ProviderInitializationStatus.Unavailable);
         }
 
-        public bool IsReady(AdFormat format, string placementId)
+        public bool IsReady(string placementId)
         {
             return false;
         }
 
         public UniTask<ProviderAdResult> ShowAsync(
-            ProviderAdRequest request,
-            IProviderAdSessionObserver observer,
+            ProviderRewardedAdRequest request,
+            IProviderRewardedAdSessionObserver observer,
             CancellationToken cancellationToken)
         {
             return UniTask.FromResult(
@@ -43,14 +44,14 @@ namespace CalmSpace.Monetization
     }
 
     /// <summary>
-    /// Conservative store adapter used until a receipt-authoritative IAP
-    /// provider is selected. It never grants or revokes ownership.
+    /// Conservative store adapter. A receipt-authoritative IAP integration can
+    /// replace it without changing gameplay or rewarded-ad policy.
     /// </summary>
-    public sealed class NoOpNoAdsEntitlementProvider :
-        INoAdsEntitlementProvider
+    public sealed class NoOpRelaxPassEntitlementProvider :
+        IRelaxPassEntitlementProvider
     {
         public UniTask<ProviderEntitlementRestoreResult>
-            RestoreLifetimeNoAdsAsync(
+            RestoreRelaxPassAsync(
                 CancellationToken cancellationToken)
         {
             return UniTask.FromResult(
@@ -59,12 +60,12 @@ namespace CalmSpace.Monetization
                     null));
         }
 
-        public UniTask<ProviderNoAdsPurchaseResult>
-            PurchaseLifetimeNoAdsAsync(
+        public UniTask<ProviderRelaxPassPurchaseResult>
+            PurchaseRelaxPassAsync(
                 CancellationToken cancellationToken)
         {
             return UniTask.FromResult(
-                new ProviderNoAdsPurchaseResult(
+                new ProviderRelaxPassPurchaseResult(
                     cancellationToken.IsCancellationRequested
                         ? ProviderPurchaseStatus.Cancelled
                         : ProviderPurchaseStatus.Unavailable,

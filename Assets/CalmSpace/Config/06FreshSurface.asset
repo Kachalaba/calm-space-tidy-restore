@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 06-fresh-surface
   _displayName: Fresh Surface
   _levelType: 1
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 3
+  _restorationStageCount: 6

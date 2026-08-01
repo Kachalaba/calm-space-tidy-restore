@@ -15,3 +15,6 @@ MonoBehaviour:
   _levelId: 04-color-shelf
   _displayName: Color Shelf
   _levelType: 0
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 1
+  _restorationStageCount: 6

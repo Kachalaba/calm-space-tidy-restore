@@ -59,6 +59,7 @@ namespace CalmSpace.Fasteners
                     if (screw != null)
                     {
                         screw.Removed -= HandleScrewRemoved;
+                        screw.Restored -= HandleScrewRestored;
                     }
                 }
             }
@@ -66,6 +67,7 @@ namespace CalmSpace.Fasteners
             if (_item != null)
             {
                 _item.Placed -= HandleItemPlaced;
+                _item.Unplaced -= HandleItemUnplaced;
             }
         }
 
@@ -82,6 +84,7 @@ namespace CalmSpace.Fasteners
             if (_item != null)
             {
                 _item.Placed += HandleItemPlaced;
+                _item.Unplaced += HandleItemUnplaced;
             }
 
             if (_screws != null)
@@ -96,6 +99,7 @@ namespace CalmSpace.Fasteners
 
                     _requiredScrewCount++;
                     screw.Removed += HandleScrewRemoved;
+                    screw.Restored += HandleScrewRestored;
                     if (screw.IsRemoved)
                     {
                         _removedScrews.Add(screw.GetInstanceID());
@@ -120,6 +124,30 @@ namespace CalmSpace.Fasteners
         private void HandleItemPlaced(ItemSnapController item)
         {
             Reveal();
+        }
+
+        private void HandleItemUnplaced(ItemSnapController item)
+        {
+            HideReveal();
+        }
+
+        private void HandleScrewRestored(ScrewController screw)
+        {
+            if (screw == null ||
+                !_removedScrews.Remove(screw.GetInstanceID()))
+            {
+                return;
+            }
+
+            if (_removedScrews.Count < _requiredScrewCount)
+            {
+                _isReleased = false;
+                SetFastened(true);
+                if (_item == null || !_item.IsPlaced)
+                {
+                    HideReveal();
+                }
+            }
         }
 
         private void TryRelease()
@@ -176,6 +204,20 @@ namespace CalmSpace.Fasteners
             if (_revealsOnRelease != null)
             {
                 _revealsOnRelease.SetActive(true);
+            }
+        }
+
+        private void HideReveal()
+        {
+            if (!_hasRevealed)
+            {
+                return;
+            }
+
+            _hasRevealed = false;
+            if (_revealsOnRelease != null)
+            {
+                _revealsOnRelease.SetActive(false);
             }
         }
 

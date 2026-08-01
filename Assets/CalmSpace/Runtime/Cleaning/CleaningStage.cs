@@ -59,6 +59,13 @@ namespace CalmSpace.Cleaning
         public event Action<CleaningStage> Completed;
 
         /// <summary>
+        /// Raised when Undo makes a previously completed pass incomplete.
+        /// The owning level uses this to hide later passes and restore the
+        /// exact stage the player chose to revisit.
+        /// </summary>
+        public event Action<CleaningStage> Reopened;
+
+        /// <summary>
         /// Raised after debris state has actually changed. LevelBase gets the
         /// item's Placed event first, so without this the HUD would render a
         /// stage fraction that is one piece of debris out of date.
@@ -144,24 +151,15 @@ namespace CalmSpace.Cleaning
         /// </summary>
         public void PrepareHidden()
         {
-            GameObject root = ResolveRoot();
-            if (root != gameObject)
-            {
-                root.SetActive(false);
-            }
-
-            if (_cleaner != null)
-            {
-                _cleaner.gameObject.SetActive(false);
-            }
-
-            SetDebrisActive(false);
+            SetPresented(false);
         }
 
         public void Activate()
         {
             if (_isActivated)
             {
+                SetPresented(true);
+                EvaluateCompletion();
                 return;
             }
 
@@ -185,6 +183,50 @@ namespace CalmSpace.Cleaning
             EvaluateCompletion();
         }
 
+        /// <summary>
+        /// Shows or hides this pass without discarding its reversible state.
+        /// Render resources may be rebuilt when a hidden pass is revisited;
+        /// item placement state remains authoritative.
+        /// </summary>
+        public void SetPresented(bool value)
+        {
+            GameObject root = ResolveRoot();
+            root.SetActive(value);
+
+            if (!value)
+            {
+                if (_cleaner != null &&
+                    _cleaner.gameObject != root)
+                {
+                    _cleaner.gameObject.SetActive(false);
+                }
+
+                SetDebrisActive(false);
+                return;
+            }
+
+            SetDebrisActive(_isActivated && HasPendingDebris);
+            if (_cleaner != null &&
+                _cleaner.gameObject != root)
+            {
+                _cleaner.gameObject.SetActive(
+                    _isActivated && !HasPendingDebris);
+            }
+        }
+
+        /// <summary>
+        /// Allows a pass after the reopened one to emit completion again when
+        /// the player reaches it.
+        /// </summary>
+        public void RearmCompletion()
+        {
+            _isComplete = false;
+            _surfaceCleaned =
+                _cleaner == null ||
+                _cleaner.CleanedFraction >=
+                RenderTextureCleaner.CompletionThreshold;
+        }
+
         private void OnDestroy()
         {
             if (_cleaner != null)
@@ -203,6 +245,7 @@ namespace CalmSpace.Cleaning
                 if (item != null)
                 {
                     item.Placed -= HandleDebrisPlaced;
+                    item.Unplaced -= HandleDebrisUnplaced;
                 }
             }
         }
@@ -246,6 +289,7 @@ namespace CalmSpace.Cleaning
 
                 _requiredDebrisCount++;
                 item.Placed += HandleDebrisPlaced;
+                item.Unplaced += HandleDebrisUnplaced;
                 if (item.IsPlaced)
                 {
                     _clearedDebris.Add(item.ItemInstanceId);
@@ -274,6 +318,28 @@ namespace CalmSpace.Cleaning
 
             Invoke(ProgressChanged);
             EvaluateCompletion();
+        }
+
+        private void HandleDebrisUnplaced(ItemSnapController item)
+        {
+            if (item == null ||
+                !_clearedDebris.Remove(item.ItemInstanceId))
+            {
+                return;
+            }
+
+            if (_cleaner != null)
+            {
+                _cleaner.OnCleaned100Percent -= HandleSurfaceCleaned;
+            }
+
+            if (_isComplete)
+            {
+                _isComplete = false;
+                Invoke(Reopened);
+            }
+
+            Invoke(ProgressChanged);
         }
 
         private bool HasPendingDebris =>

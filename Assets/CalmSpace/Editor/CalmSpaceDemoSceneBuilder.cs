@@ -221,7 +221,9 @@ namespace CalmSpace.Editor
                 primaryTexts,
                 secondaryTexts,
                 panelImages,
+                localizedTexts,
                 out Button hudHomeButton,
+                out Button hudUndoButton,
                 out Text hudLevelNameText,
                 out Text hudProgressText);
 
@@ -237,6 +239,7 @@ namespace CalmSpace.Editor
                 panelImages,
                 localizedTexts,
                 out Button completionHomeButton,
+                out Button completionUndoButton,
                 out Button nextButton,
                 out Text completionTitleText,
                 out Text completionBodyText,
@@ -245,6 +248,9 @@ namespace CalmSpace.Editor
 
             CanvasGroup loading =
                 CreateScreen(uiRoot.transform, "Loading");
+            LevelTransitionCurtain transitionCurtain =
+                loading.gameObject.AddComponent<
+                    LevelTransitionCurtain>();
             BuildLoadingOverlay(
                 loading.transform,
                 roundedSprite,
@@ -277,6 +283,10 @@ namespace CalmSpace.Editor
                 experience,
                 "_loadingOverlay",
                 loading);
+            SetObjectReference(
+                experience,
+                "_levelTransitionCurtain",
+                transitionCurtain);
             SetObjectReference(experience, "_playButton", playButton);
             SetObjectReference(
                 experience,
@@ -292,8 +302,16 @@ namespace CalmSpace.Editor
                 hudHomeButton);
             SetObjectReference(
                 experience,
+                "_hudUndoButton",
+                hudUndoButton);
+            SetObjectReference(
+                experience,
                 "_completionHomeButton",
                 completionHomeButton);
+            SetObjectReference(
+                experience,
+                "_completionUndoButton",
+                completionUndoButton);
             SetObjectReference(experience, "_nextButton", nextButton);
             SetObjectReference(
                 experience,
@@ -556,7 +574,7 @@ namespace CalmSpace.Editor
 
             Image currencyPill = CreateImage(
                 safe,
-                "Calm Tokens",
+                "Cozy Tokens",
                 rounded,
                 SagePanel,
                 false);
@@ -572,7 +590,7 @@ namespace CalmSpace.Editor
             currencyText = CreateText(
                 currencyPill.rectTransform,
                 "Value",
-                "CALM TOKENS · 0",
+                "COZY TOKENS · 0",
                 font,
                 23,
                 FontStyle.Bold,
@@ -1057,7 +1075,7 @@ namespace CalmSpace.Editor
                     "Name",
                     "Level",
                     font,
-                    32,
+                    28,
                     FontStyle.Bold,
                     TextAnchor.LowerLeft,
                     Paper);
@@ -1065,10 +1083,18 @@ namespace CalmSpace.Editor
                     name.rectTransform,
                     new Vector2(0f, 0f),
                     new Vector2(0f, 0f),
-                    new Vector2(28f, 27f),
-                    new Vector2(330f, 94f));
+                    new Vector2(28f, 23f),
+                    new Vector2(368f, 116f));
                 name.rectTransform.pivot =
                     new Vector2(0f, 0f);
+                name.resizeTextForBestFit = true;
+                name.resizeTextMinSize = 23;
+                name.resizeTextMaxSize = 28;
+                name.horizontalOverflow =
+                    HorizontalWrapMode.Wrap;
+                name.verticalOverflow =
+                    VerticalWrapMode.Truncate;
+                name.lineSpacing = 0.9f;
 
                 GameObject lockRoot =
                     CreateUiObject("Locked", card.Rect);
@@ -1151,7 +1177,10 @@ namespace CalmSpace.Editor
             List<Text> primaryTexts,
             List<Text> secondaryTexts,
             List<Image> panelImages,
+            List<DemoExperienceController.LocalizedTextBinding>
+                localizedTexts,
             out Button homeButton,
+            out Button undoButton,
             out Text levelName,
             out Text progress)
         {
@@ -1191,12 +1220,35 @@ namespace CalmSpace.Editor
             panelImages.Add(home.Background);
             primaryTexts.Add(home.Label);
 
+            ButtonVisual undo = CreateButton(
+                bar.rectTransform,
+                "Undo",
+                "Undo",
+                rounded,
+                font,
+                28,
+                new Color(0.16f, 0.24f, 0.21f, 1f));
+            SetAnchored(
+                undo.Rect,
+                new Vector2(1f, 0.5f),
+                new Vector2(1f, 0.5f),
+                new Vector2(-20f, 0f),
+                new Vector2(188f, 112f));
+            undo.Rect.pivot = new Vector2(1f, 0.5f);
+            undoButton = undo.Button;
+            panelImages.Add(undo.Background);
+            primaryTexts.Add(undo.Label);
+            AddLocalizedText(
+                localizedTexts,
+                undo.Label,
+                DemoTextKey.Undo);
+
             levelName = CreateText(
                 bar.rectTransform,
                 "Level Name",
                 "Soft Blocks",
                 font,
-                34,
+                26,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
                 Paper);
@@ -1205,9 +1257,17 @@ namespace CalmSpace.Editor
                 new Vector2(0f, 0.5f),
                 new Vector2(0f, 0.5f),
                 new Vector2(162f, 0f),
-                new Vector2(320f, 84f));
+                new Vector2(370f, 104f));
             levelName.rectTransform.pivot =
                 new Vector2(0f, 0.5f);
+            levelName.resizeTextForBestFit = true;
+            levelName.resizeTextMinSize = 21;
+            levelName.resizeTextMaxSize = 26;
+            levelName.horizontalOverflow =
+                HorizontalWrapMode.Wrap;
+            levelName.verticalOverflow =
+                VerticalWrapMode.Truncate;
+            levelName.lineSpacing = 0.9f;
             primaryTexts.Add(levelName);
 
             progress = CreateText(
@@ -1223,8 +1283,8 @@ namespace CalmSpace.Editor
                 progress.rectTransform,
                 new Vector2(1f, 0.5f),
                 new Vector2(1f, 0.5f),
-                new Vector2(-26f, 0f),
-                new Vector2(420f, 104f));
+                new Vector2(-226f, 0f),
+                new Vector2(260f, 104f));
             progress.rectTransform.pivot =
                 new Vector2(1f, 0.5f);
             secondaryTexts.Add(progress);
@@ -1241,6 +1301,7 @@ namespace CalmSpace.Editor
             List<DemoExperienceController.LocalizedTextBinding>
                 localizedTexts,
             out Button homeButton,
+            out Button undoButton,
             out Button nextButton,
             out Text title,
             out Text body,
@@ -1330,7 +1391,7 @@ namespace CalmSpace.Editor
             reward = CreateText(
                 card.rectTransform,
                 "Reward",
-                "+15 CALM TOKENS",
+                "+15 COZY TOKENS",
                 font,
                 24,
                 FontStyle.Bold,
@@ -1344,20 +1405,42 @@ namespace CalmSpace.Editor
                 new Vector2(810f, 52f));
             primaryTexts.Add(reward);
 
+            ButtonVisual undo = CreateButton(
+                card.rectTransform,
+                "Undo",
+                "Undo",
+                rounded,
+                font,
+                28,
+                new Color(0.15f, 0.23f, 0.20f, 1f));
+            SetAnchored(
+                undo.Rect,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(-218f, 220f),
+                new Vector2(374f, 146f));
+            undoButton = undo.Button;
+            panelImages.Add(undo.Background);
+            primaryTexts.Add(undo.Label);
+            AddLocalizedText(
+                localizedTexts,
+                undo.Label,
+                DemoTextKey.Undo);
+
             ButtonVisual next = CreateButton(
                 card.rectTransform,
                 "Next",
                 "Next space",
                 rounded,
                 font,
-                36,
+                30,
                 Coral);
             SetAnchored(
                 next.Rect,
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
-                new Vector2(0f, 220f),
-                new Vector2(810f, 146f));
+                new Vector2(218f, 220f),
+                new Vector2(374f, 146f));
             nextButton = next.Button;
             nextText = next.Label;
             accentImages.Add(next.Background);

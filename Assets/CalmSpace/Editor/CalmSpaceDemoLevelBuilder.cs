@@ -78,7 +78,10 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/DemoFitting.prefab",
                 "levels/01-soft-blocks",
                 3,
-                0.78f),
+                0.78f,
+                string.Empty,
+                0,
+                0),
             new LevelSpec(
                 "02-pebble-pairs",
                 "Pebble Pairs",
@@ -87,7 +90,10 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/02PebblePairs.prefab",
                 "levels/02-pebble-pairs",
                 4,
-                0.72f),
+                0.72f,
+                string.Empty,
+                0,
+                0),
             new LevelSpec(
                 "03-tea-drawer",
                 "Tea Drawer",
@@ -96,7 +102,10 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/03TeaDrawer.prefab",
                 "levels/03-tea-drawer",
                 4,
-                0.68f),
+                0.68f,
+                "cozy-workshop",
+                0,
+                6),
             new LevelSpec(
                 "04-color-shelf",
                 "Color Shelf",
@@ -105,7 +114,10 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/04ColorShelf.prefab",
                 "levels/04-color-shelf",
                 5,
-                0.64f),
+                0.64f,
+                "cozy-workshop",
+                1,
+                6),
             new LevelSpec(
                 "05-fastener-tray",
                 "Fastener Tray",
@@ -115,6 +127,9 @@ namespace CalmSpace.Editor
                 "levels/05-fastener-tray",
                 0,
                 0.62f,
+                "cozy-workshop",
+                2,
+                6,
                 screwLayers: new[] { 4 }),
             new LevelSpec(
                 "06-fresh-surface",
@@ -124,7 +139,10 @@ namespace CalmSpace.Editor
                 "Assets/CalmSpace/Content/Levels/06FreshSurface.prefab",
                 "levels/06-fresh-surface",
                 0,
-                0f),
+                0f,
+                "cozy-workshop",
+                3,
+                6),
             new LevelSpec(
                 "07-cabinet-hinge",
                 "Cabinet Hinge",
@@ -134,6 +152,9 @@ namespace CalmSpace.Editor
                 "levels/07-cabinet-hinge",
                 0,
                 0.62f,
+                "cozy-workshop",
+                4,
+                6,
                 screwLayers: new[] { 3, 2 }),
             new LevelSpec(
                 "08-dusty-window",
@@ -144,6 +165,9 @@ namespace CalmSpace.Editor
                 "levels/08-dusty-window",
                 0,
                 0.66f,
+                "cozy-workshop",
+                5,
+                6,
                 stages: DustyWindowStages)
         };
 
@@ -251,6 +275,15 @@ namespace CalmSpace.Editor
                 spec.DisplayName;
             serialized.FindProperty("_levelType").enumValueIndex =
                 (int)spec.Type;
+            serialized.FindProperty(
+                "_restorationChapterId").stringValue =
+                spec.RestorationChapterId;
+            serialized.FindProperty(
+                "_restorationStageIndex").intValue =
+                spec.RestorationStageIndex;
+            serialized.FindProperty(
+                "_restorationStageCount").intValue =
+                spec.RestorationStageCount;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(definition);
             return definition;
@@ -413,8 +446,15 @@ namespace CalmSpace.Editor
                 cleanerSerialized.FindProperty("maskBrushShader")
                     .objectReferenceValue =
                         Shader.Find("Hidden/CalmSpace/MaskBrush");
+                cleanerSerialized
+                    .FindProperty("coverageDownsampleShader")
+                    .objectReferenceValue =
+                        Shader.Find(
+                            "Hidden/CalmSpace/CoverageDownsample");
                 cleanerSerialized.FindProperty("maskResolution")
                     .vector2IntValue = new Vector2Int(256, 256);
+                cleanerSerialized.FindProperty("coverageResolution")
+                    .vector2IntValue = new Vector2Int(64, 64);
                 cleanerSerialized.FindProperty("brushRadiusUv")
                     .floatValue = 0.095f;
                 cleanerSerialized.FindProperty("brushHardness")
@@ -422,6 +462,9 @@ namespace CalmSpace.Editor
                 cleanerSerialized
                     .FindProperty("progressSampleIntervalSeconds")
                     .floatValue = 0.28f;
+                cleanerSerialized
+                    .FindProperty("progressSampleFrameInterval")
+                    .intValue = 10;
                 cleanerSerialized.ApplyModifiedPropertiesWithoutUndo();
 
                 CleaningInputController input =
@@ -636,8 +679,14 @@ namespace CalmSpace.Editor
             serialized.FindProperty("maskBrushShader")
                 .objectReferenceValue =
                     Shader.Find("Hidden/CalmSpace/MaskBrush");
+            serialized.FindProperty("coverageDownsampleShader")
+                .objectReferenceValue =
+                    Shader.Find(
+                        "Hidden/CalmSpace/CoverageDownsample");
             serialized.FindProperty("maskResolution")
                 .vector2IntValue = new Vector2Int(256, 256);
+            serialized.FindProperty("coverageResolution")
+                .vector2IntValue = new Vector2Int(64, 64);
             serialized.FindProperty("brushRadiusUv").floatValue =
                 stageSpec.BrushRadiusUv;
             serialized.FindProperty("brushHardness").floatValue =
@@ -645,6 +694,9 @@ namespace CalmSpace.Editor
             serialized
                 .FindProperty("progressSampleIntervalSeconds")
                 .floatValue = 0.28f;
+            serialized
+                .FindProperty("progressSampleFrameInterval")
+                .intValue = 10;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             return cleaner;
         }
@@ -1657,6 +1709,9 @@ namespace CalmSpace.Editor
                 string address,
                 int itemCount,
                 float snapThreshold,
+                string restorationChapterId,
+                int restorationStageIndex,
+                int restorationStageCount,
                 int[] screwLayers = null,
                 CleaningStageSpec[] stages = null)
             {
@@ -1668,6 +1723,10 @@ namespace CalmSpace.Editor
                 Address = address;
                 ItemCount = itemCount;
                 SnapThreshold = snapThreshold;
+                RestorationChapterId =
+                    restorationChapterId ?? string.Empty;
+                RestorationStageIndex = restorationStageIndex;
+                RestorationStageCount = restorationStageCount;
                 _screwLayers = screwLayers ?? Array.Empty<int>();
                 _stages = stages ??
                     Array.Empty<CleaningStageSpec>();
@@ -1695,6 +1754,12 @@ namespace CalmSpace.Editor
             public int ItemCount { get; }
 
             public float SnapThreshold { get; }
+
+            public string RestorationChapterId { get; }
+
+            public int RestorationStageIndex { get; }
+
+            public int RestorationStageCount { get; }
         }
     }
 }

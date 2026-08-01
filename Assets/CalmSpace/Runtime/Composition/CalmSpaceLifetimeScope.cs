@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using CalmSpace.Analytics;
 using CalmSpace.Audio;
 using CalmSpace.Core;
 using CalmSpace.Demo;
@@ -24,10 +25,18 @@ namespace CalmSpace.Core
             "com.calmspace.tidyrestore.noads.v1";
         private const string StateFileName =
             "monetization-state-v1.bin";
+        private const string DevelopmentKeyFileName =
+            "development-auth-key-v1.bin";
+        private const string PlayerProfileFileName =
+            "player-profile-v1.bin";
 
         private static readonly byte[] StateAssociatedData =
             Encoding.UTF8.GetBytes(
                 "CalmSpace.MonetizationState.v1");
+
+        private static readonly byte[] ProfileAssociatedData =
+            Encoding.UTF8.GetBytes(
+                "CalmSpace.PlayerProfile.v1");
 
         [SerializeField]
         private LevelCatalog _levelCatalog;
@@ -83,12 +92,33 @@ namespace CalmSpace.Core
                     Lifetime.Singleton)
                 .As<IMonotonicClock>();
             builder
-                .Register<AndroidHapticManager>(
-                    resolver =>
-                        new AndroidHapticManager(
-                            resolver.Resolve<IMonotonicClock>()),
+                .Register<DevelopmentProductAnalyticsSink>(
+                    _ => new DevelopmentProductAnalyticsSink(),
                     Lifetime.Singleton)
-                .As<IHapticService>();
+                .As<IProductAnalyticsSink>();
+            builder
+                .Register<SafeProductAnalyticsService>(
+                    resolver =>
+                        new SafeProductAnalyticsService(
+                            resolver.Resolve<IProductAnalyticsSink>()),
+                    Lifetime.Singleton)
+                .As<IProductAnalytics>();
+            builder
+                .Register<LevelSessionUndoHistory>(
+                    _ => new LevelSessionUndoHistory(),
+                    Lifetime.Singleton)
+                .As<IUndoHistory>();
+            builder
+                .Register<PlatformHapticServiceFactory>(
+                    _ => new PlatformHapticServiceFactory(),
+                    Lifetime.Singleton)
+                .As<IHapticServiceFactory>();
+            builder.Register<IHapticService>(
+                resolver =>
+                    resolver.Resolve<IHapticServiceFactory>().Create(
+                        Application.platform,
+                        resolver.Resolve<IMonotonicClock>()),
+                Lifetime.Singleton);
 
             builder
                 .RegisterComponentInHierarchy<AsmrAudioService>()
@@ -101,11 +131,17 @@ namespace CalmSpace.Core
 
             RegisterMonetization(builder);
 
-            builder
-                .Register<PlayerPrefsDemoProgressStore>(
-                    _ => new PlayerPrefsDemoProgressStore(),
-                    Lifetime.Singleton)
-                .As<IDemoProgressStore>();
+            var profilePath = Path.Combine(
+                Application.persistentDataPath,
+                PlayerProfileFileName);
+            builder.Register<IDemoProgressStore>(
+                resolver =>
+                    new EncryptedFileDemoProgressStore(
+                        profilePath,
+                        resolver.Resolve<
+                            IAuthenticatedDataProtector>(),
+                        ProfileAssociatedData),
+                Lifetime.Singleton);
             builder
                 .Register<DemoThemeService>(
                     resolver =>
@@ -125,7 +161,7 @@ namespace CalmSpace.Core
                     new AddressableLevelFlowController(
                         _levelCatalog,
                         resolver,
-                        resolver.Resolve<IMonetizationManager>(),
+                        resolver.Resolve<IUndoHistory>(),
                         _levelRoot),
                 Lifetime.Singleton);
 
@@ -146,48 +182,52 @@ namespace CalmSpace.Core
             IContainerBuilder builder)
         {
             builder
-                .Register<NoOpAdProvider>(
-                    _ => new NoOpAdProvider(),
+                .Register<NoOpRewardedAdProvider>(
+                    _ => new NoOpRewardedAdProvider(),
                     Lifetime.Singleton)
-                .As<IAdProvider>();
+                .As<IRewardedAdProvider>();
             builder
-                .Register<NoOpNoAdsEntitlementProvider>(
-                    _ => new NoOpNoAdsEntitlementProvider(),
+                .Register<NoOpRelaxPassEntitlementProvider>(
+                    _ => new NoOpRelaxPassEntitlementProvider(),
                     Lifetime.Singleton)
-                .As<INoAdsEntitlementProvider>();
+                .As<IRelaxPassEntitlementProvider>();
 
-            var protector =
-                new AndroidKeystoreAuthenticatedDataProtector(
-                    KeystoreAlias);
-            builder.RegisterInstance<IAuthenticatedDataProtector>(
-                protector);
+            var developmentKeyPath = Path.Combine(
+                Application.persistentDataPath,
+                DevelopmentKeyFileName);
+            builder.Register<IAuthenticatedDataProtector>(
+                _ =>
+                    PlatformAuthenticatedDataProtectorFactory.Create(
+                        Application.platform,
+                        KeystoreAlias,
+                        developmentKeyPath),
+                Lifetime.Singleton);
 
             var statePath = Path.Combine(
                 Application.persistentDataPath,
                 StateFileName);
-            var stateStore =
-                new EncryptedFileMonetizationStateStore(
-                    statePath,
-                    protector,
-                    StateAssociatedData);
-            builder.RegisterInstance<IMonetizationStateStore>(
-                stateStore);
+            builder.Register<IMonetizationStateStore>(
+                resolver =>
+                    new EncryptedFileMonetizationStateStore(
+                        statePath,
+                        resolver.Resolve<
+                            IAuthenticatedDataProtector>(),
+                        StateAssociatedData),
+                Lifetime.Singleton);
 
             builder.RegisterInstance(
                 new MonetizationOptions(
-                    TimeSpan.FromSeconds(180d),
-                    allowRewardedForNoAdsOwners: true));
+                    allowRewardedForRelaxPassOwners: false));
             builder
                 .Register<MonetizationManager>(
                     resolver =>
                         new MonetizationManager(
-                            resolver.Resolve<IAdProvider>(),
+                            resolver.Resolve<IRewardedAdProvider>(),
                             resolver.Resolve<
-                                INoAdsEntitlementProvider>(),
+                                IRelaxPassEntitlementProvider>(),
                             resolver.Resolve<IMonetizationStateStore>(),
                             resolver.Resolve<
                                 IPresentationActivityCoordinator>(),
-                            resolver.Resolve<IMonotonicClock>(),
                             resolver.Resolve<MonetizationOptions>()),
                     Lifetime.Singleton)
                 .As<IMonetizationManager>();
