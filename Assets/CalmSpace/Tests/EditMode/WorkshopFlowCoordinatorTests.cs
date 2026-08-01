@@ -14,6 +14,8 @@ namespace CalmSpace.Tests.EditMode
             "Assets/CalmSpace/Config/LevelCatalog.asset";
         private const string WorkshopCatalogPath =
             "Assets/CalmSpace/Config/LivingWorkshopCatalog.asset";
+        private const string WorkshopTextCatalogPath =
+            "Assets/CalmSpace/Config/WorkshopTextCatalog.asset";
 
         [Test]
         public void StartActionCreatesTypedWorkshopLaunchRequest()
@@ -43,6 +45,9 @@ namespace CalmSpace.Tests.EditMode
             LivingWorkshopCatalog workshop =
                 AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
                     WorkshopCatalogPath);
+            WorkshopTextCatalog text =
+                AssetDatabase.LoadAssetAtPath<WorkshopTextCatalog>(
+                    WorkshopTextCatalogPath);
             var store = new InMemoryProgressStore(
                 DemoProgressRules.CreateDefault(8, "sage"), 8);
 
@@ -53,7 +58,11 @@ namespace CalmSpace.Tests.EditMode
                     levels,
                     workshop,
                     store,
-                    projector);
+                    projector,
+                    new WorkshopRuntimeAvailability(
+                        levels,
+                        workshop,
+                        text));
 
             Assert.That(coordinator.GetRecommendedAction()?.Kind,
                 Is.EqualTo(WorkshopRecommendedActionKind.StartLevel));
@@ -144,13 +153,20 @@ namespace CalmSpace.Tests.EditMode
                     LivingWorkshopCatalog>();
             var store = new InMemoryProgressStore(
                 DemoProgressRules.CreateDefault(8, "sage"), 8);
+            WorkshopTextCatalog text =
+                AssetDatabase.LoadAssetAtPath<WorkshopTextCatalog>(
+                    WorkshopTextCatalogPath);
             try
             {
                 var coordinator = new WorkshopFlowCoordinator(
                     levels,
                     invalid,
                     store,
-                    new WorkshopProgressProjector(levels, invalid));
+                    new WorkshopProgressProjector(levels, invalid),
+                    new WorkshopRuntimeAvailability(
+                        levels,
+                        invalid,
+                        text));
 
                 ProfileMutationResult<LevelCompletionMutation> valid =
                     coordinator.CompleteLevel("01-soft-blocks", 0, 5);
@@ -175,6 +191,58 @@ namespace CalmSpace.Tests.EditMode
             }
         }
 
+        [Test]
+        public void InvalidWorkshopTextSuppressesAllMetaPresentations()
+        {
+            LevelCatalog levels = AssetDatabase.LoadAssetAtPath<
+                LevelCatalog>(LevelCatalogPath);
+            LivingWorkshopCatalog workshop =
+                AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
+                    WorkshopCatalogPath);
+            WorkshopTextCatalog emptyText =
+                UnityEngine.ScriptableObject.CreateInstance<
+                    WorkshopTextCatalog>();
+            var store = new InMemoryProgressStore(
+                DemoProgressRules.CreateDefault(8, "sage"), 8);
+            try
+            {
+                var availability = new WorkshopRuntimeAvailability(
+                    levels,
+                    workshop,
+                    emptyText);
+                Assert.That(availability.MetaAvailable, Is.True);
+                Assert.That(availability.TextAvailable, Is.False);
+                Assert.That(availability.HomeMetaAvailable, Is.False);
+                var coordinator = new WorkshopFlowCoordinator(
+                    levels,
+                    workshop,
+                    store,
+                    new WorkshopProgressProjector(levels, workshop),
+                    availability);
+
+                ProfileMutationResult<LevelCompletionMutation> valid =
+                    coordinator.CompleteLevel("08-dusty-window", 7, 5);
+                ProfileMutationResult<LevelCompletionMutation> wrongId =
+                    coordinator.CompleteLevel("not-the-level", 0, 5);
+                ProfileMutationResult<LevelCompletionMutation> wrongIndex =
+                    coordinator.CompleteLevel("01-soft-blocks", 7, 5);
+
+                Assert.That(valid.Status,
+                    Is.EqualTo(ProfileMutationStatus.Applied));
+                Assert.That(store.CompleteCallCount, Is.EqualTo(1));
+                Assert.That(store.LastCommand.PresentationCount, Is.Zero,
+                    "Invalid workshop text must suppress every optional meta presentation.");
+                Assert.That(wrongId.Status,
+                    Is.EqualTo(ProfileMutationStatus.Invalid));
+                Assert.That(wrongIndex.Status,
+                    Is.EqualTo(ProfileMutationStatus.Invalid));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(emptyText);
+            }
+        }
+
         private static void AssertPresentation(
             CompleteLevelCommand command,
             int index,
@@ -196,11 +264,18 @@ namespace CalmSpace.Tests.EditMode
             LivingWorkshopCatalog workshop =
                 AssetDatabase.LoadAssetAtPath<LivingWorkshopCatalog>(
                     WorkshopCatalogPath);
+            WorkshopTextCatalog text =
+                AssetDatabase.LoadAssetAtPath<WorkshopTextCatalog>(
+                    WorkshopTextCatalogPath);
             return new WorkshopFlowCoordinator(
                 levels,
                 workshop,
                 store,
-                new WorkshopProgressProjector(levels, workshop));
+                new WorkshopProgressProjector(levels, workshop),
+                new WorkshopRuntimeAvailability(
+                    levels,
+                    workshop,
+                    text));
         }
 
         private sealed class InMemoryProgressStore : IDemoProgressStore

@@ -461,6 +461,16 @@ namespace CalmSpace.Tests.PlayMode
             SetPrivateField(experience, "_levelFlow", failing);
             var analytics = new RecordingAnalytics();
             SetPrivateField(experience, "_analytics", analytics);
+            IWorkshopHomeRecovery realRecovery =
+                GetPrivateField<IWorkshopHomeRecovery>(
+                    experience,
+                    "_workshopHomeRecovery");
+            var capturingRecovery =
+                new CapturingWorkshopHomeRecovery(realRecovery);
+            SetPrivateField(
+                experience,
+                "_workshopHomeRecovery",
+                capturingRecovery);
             var request = new LevelLaunchRequest(
                 "01-soft-blocks",
                 0,
@@ -478,10 +488,11 @@ namespace CalmSpace.Tests.PlayMode
                 Is.True);
             Assert.That(home.View.VisibleActionControlsHaveBindings, Is.True);
             Assert.That(CountInteractiveScreens(), Is.EqualTo(1));
-            Transform recovery =
+            Transform recoveryRoot =
                 home.View.BottomSheet.transform.Find("Recovery Content");
-            Assert.That(recovery, Is.Not.Null);
-            Text title = recovery.Find("Failure Title").GetComponent<Text>();
+            Assert.That(recoveryRoot, Is.Not.Null);
+            Text title = recoveryRoot.Find("Failure Title")
+                .GetComponent<Text>();
             Text actionLabel = home.View.BottomSheet.ActionButton
                 .GetComponentInChildren<Text>(true);
             Assert.That(title.text,
@@ -523,6 +534,17 @@ namespace CalmSpace.Tests.PlayMode
             yield return WaitForLoadCalls(failing, 2);
             Assert.That(failing.LoadCallCount, Is.EqualTo(2),
                 "Replacing the recovery action must not multiply listeners.");
+            Assert.That(capturingRecovery.RetryCount, Is.EqualTo(1));
+            Assert.That(capturingRecovery.LastRetry.LevelId,
+                Is.EqualTo(request.LevelId));
+            Assert.That(capturingRecovery.LastRetry.LevelIndex,
+                Is.EqualTo(request.LevelIndex));
+            Assert.That(capturingRecovery.LastRetry.Source,
+                Is.EqualTo(request.Source));
+            Assert.That(capturingRecovery.LastRetry.ChapterId,
+                Is.EqualTo(request.ChapterId));
+            Assert.That(capturingRecovery.LastRetry.BeatId,
+                Is.EqualTo(request.BeatId));
             yield return WaitForOpenSheet(home.View.BottomSheet);
             yield return WaitForNavigationIdle(experience);
 
@@ -650,6 +672,109 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(chapter.ChapterId, Is.EqualTo("cozy-workshop"));
             Assert.That(chapter.BeatId,
                 Is.EqualTo("cozy-workshop.open-window"));
+        }
+
+        [UnityTest]
+        public IEnumerator InvalidWorkshopTextSuppressesCompletionMetaAnalytics()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            yield return LoadLevelAt(experience, 7);
+            LevelCatalog levels = GetPrivateField<LevelCatalog>(
+                experience,
+                "_levelCatalog");
+            LivingWorkshopCatalog workshop =
+                GetPrivateField<LivingWorkshopCatalog>(
+                    experience,
+                    "_livingWorkshopCatalog");
+            WorkshopTextCatalog emptyText =
+                ScriptableObject.CreateInstance<WorkshopTextCatalog>();
+            var availability = new WorkshopRuntimeAvailability(
+                levels,
+                workshop,
+                emptyText);
+            SetAvailabilityIfSupported(experience, availability);
+            var coordinator = new ScriptedWorkshopFlow(
+                ProfileMutationStatus.Applied);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
+            SetPrivateField(experience, "_analytics", analytics);
+
+            InvokeCompletion(experience);
+            yield return WaitForCompletionStatus(
+                experience,
+                ProfileMutationStatus.Applied);
+
+            Assert.That(coordinator.CompleteCallCount, Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.LevelCompleted),
+                Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.Zero);
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
+            Object.Destroy(emptyText);
+        }
+
+        [UnityTest]
+        public IEnumerator PartialInvalidWorkshopSuppressesResolvableBeatAnalytics()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            yield return LoadLevelAt(experience, 7);
+            LevelCatalog levels = GetPrivateField<LevelCatalog>(
+                experience,
+                "_levelCatalog");
+            LivingWorkshopCatalog validWorkshop =
+                GetPrivateField<LivingWorkshopCatalog>(
+                    experience,
+                    "_livingWorkshopCatalog");
+            Assert.That(validWorkshop.TryFindBeat(
+                "cozy-workshop",
+                7,
+                out WorkshopBeatDefinition finaleBeat), Is.True);
+            var partial =
+                ScriptableObject.CreateInstance<LivingWorkshopCatalog>();
+            SetPrivateField(
+                partial,
+                "_beats",
+                new[] { finaleBeat });
+            IWorkshopTextService textService =
+                GetPrivateField<IWorkshopTextService>(
+                    experience,
+                    "_workshopText");
+            WorkshopTextCatalog text =
+                GetPrivateField<WorkshopTextCatalog>(
+                    textService,
+                    "_catalog");
+            var availability = new WorkshopRuntimeAvailability(
+                levels,
+                partial,
+                text);
+            Assert.That(availability.HomeMetaAvailable, Is.False);
+            SetPrivateField(experience, "_livingWorkshopCatalog", partial);
+            SetAvailabilityIfSupported(experience, availability);
+            var coordinator = new ScriptedWorkshopFlow(
+                ProfileMutationStatus.Applied);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
+            SetPrivateField(experience, "_analytics", analytics);
+
+            InvokeCompletion(experience);
+            yield return WaitForCompletionStatus(
+                experience,
+                ProfileMutationStatus.Applied);
+
+            Assert.That(coordinator.CompleteCallCount, Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.LevelCompleted),
+                Is.EqualTo(1));
+            Assert.That(analytics.Count(ProductEventKind.MemoryUnlocked),
+                Is.Zero,
+                "A locally resolvable beat cannot override invalid authoring policy.");
+            Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
+                Is.Zero);
+            Object.Destroy(partial);
         }
 
         [UnityTest]
@@ -1003,6 +1128,16 @@ namespace CalmSpace.Tests.PlayMode
             field.SetValue(target, value);
         }
 
+        private static void SetAvailabilityIfSupported(
+            DemoExperienceController experience,
+            WorkshopRuntimeAvailability availability)
+        {
+            FieldInfo field = typeof(DemoExperienceController).GetField(
+                "_workshopAvailability",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            field?.SetValue(experience, availability);
+        }
+
         private sealed class RecordingAnalytics : IProductAnalytics
         {
             private readonly List<ProductAnalyticsEvent> _events =
@@ -1067,6 +1202,35 @@ namespace CalmSpace.Tests.PlayMode
             public UniTask UnloadCurrentLevelAsync(
                 System.Threading.CancellationToken cancellationToken = default)
                 => UniTask.CompletedTask;
+        }
+
+        private sealed class CapturingWorkshopHomeRecovery :
+            IWorkshopHomeRecovery
+        {
+            private readonly IWorkshopHomeRecovery _inner;
+
+            public CapturingWorkshopHomeRecovery(
+                IWorkshopHomeRecovery inner)
+            {
+                _inner = inner;
+            }
+
+            public int RetryCount { get; private set; }
+            public LevelLaunchRequest LastRetry { get; private set; }
+
+            public void ShowLoadFailure(
+                LevelLaunchRequest request,
+                System.Action<LevelLaunchRequest> retry)
+            {
+                _inner.ShowLoadFailure(
+                    request,
+                    retried =>
+                    {
+                        RetryCount++;
+                        LastRetry = retried;
+                        retry(retried);
+                    });
+            }
         }
 
         private sealed class CancellingUnloadLevelFlow : ILevelFlowController

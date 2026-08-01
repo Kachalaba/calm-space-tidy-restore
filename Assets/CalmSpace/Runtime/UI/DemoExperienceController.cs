@@ -188,6 +188,7 @@ namespace CalmSpace.UI
         private IWorkshopTextService _workshopText;
         private LivingWorkshopCatalog _livingWorkshopCatalog;
         private WorkshopAnalyticsSessionState _workshopAnalyticsSession;
+        private WorkshopRuntimeAvailability _workshopAvailability;
 
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
@@ -247,7 +248,8 @@ namespace CalmSpace.UI
             IWorkshopFlowCoordinator workshopFlowCoordinator,
             IWorkshopTextService workshopText,
             LivingWorkshopCatalog livingWorkshopCatalog,
-            WorkshopAnalyticsSessionState workshopAnalyticsSession)
+            WorkshopAnalyticsSessionState workshopAnalyticsSession,
+            WorkshopRuntimeAvailability workshopAvailability)
         {
             _levelFlow = levelFlow ??
                 throw new ArgumentNullException(nameof(levelFlow));
@@ -287,6 +289,9 @@ namespace CalmSpace.UI
             _workshopAnalyticsSession = workshopAnalyticsSession ??
                 throw new ArgumentNullException(
                     nameof(workshopAnalyticsSession));
+            _workshopAvailability = workshopAvailability ??
+                throw new ArgumentNullException(
+                    nameof(workshopAvailability));
         }
 
         private void Awake()
@@ -1030,7 +1035,8 @@ namespace CalmSpace.UI
             _pendingCompletionMemoryId = string.Empty;
             _pendingCompletionChapterId = string.Empty;
             _pendingCompletionIsFinale = false;
-            if (_livingWorkshopCatalog == null ||
+            if (!_workshopAvailability.HomeMetaAvailable ||
+                _livingWorkshopCatalog == null ||
                 !_levelCatalog.TryGetRestorationStage(
                     _pendingCompletionLevelIndex,
                     out RestorationStageInfo stage) ||
@@ -2292,7 +2298,8 @@ namespace CalmSpace.UI
                 _workshopFlowCoordinator == null ||
                 _workshopText == null ||
                 _livingWorkshopCatalog == null ||
-                _workshopAnalyticsSession == null)
+                _workshopAnalyticsSession == null ||
+                _workshopAvailability == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController was not injected.");

@@ -29,16 +29,20 @@ namespace CalmSpace.Workshop
         private readonly LevelCatalog _levels;
         private readonly IDemoProgressStore _store;
         private readonly IWorkshopProgressProjector _projector;
+        private readonly WorkshopRuntimeAvailability _availability;
 
         public WorkshopFlowCoordinator(
             LevelCatalog levels,
             LivingWorkshopCatalog workshop,
             IDemoProgressStore store,
-            IWorkshopProgressProjector projector)
+            IWorkshopProgressProjector projector,
+            WorkshopRuntimeAvailability availability)
         {
             _levels = levels;
             _store = store;
             _projector = projector;
+            _availability = availability ??
+                throw new ArgumentNullException(nameof(availability));
         }
 
         public WorkshopRecommendedAction? GetRecommendedAction()
@@ -111,7 +115,8 @@ namespace CalmSpace.Workshop
             }
 
             PendingPresentationEntry[] presentations;
-            if (_projector != null &&
+            if (_availability.HomeMetaAvailable &&
+                _projector != null &&
                 _projector.TryResolveCompletion(
                     levelId,
                     levelIndex,

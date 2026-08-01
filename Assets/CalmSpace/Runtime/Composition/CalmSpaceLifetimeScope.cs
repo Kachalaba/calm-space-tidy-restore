@@ -207,7 +207,8 @@ namespace CalmSpace.Core
                         _levelCatalog,
                         runtimeWorkshop,
                         resolver.Resolve<IDemoProgressStore>(),
-                        resolver.Resolve<IWorkshopProgressProjector>()),
+                        resolver.Resolve<IWorkshopProgressProjector>(),
+                        resolver.Resolve<WorkshopRuntimeAvailability>()),
                     Lifetime.Singleton)
                 .As<IWorkshopFlowCoordinator>();
 
