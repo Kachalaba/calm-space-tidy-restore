@@ -607,6 +607,237 @@ namespace CalmSpace.Tests.EditMode
             Assert.That(serialized, Does.Not.Contain("advertising"));
         }
 
+        [Test]
+        public void RequiredStableIdsRejectBlankAndWhitespaceAtEachParameter()
+        {
+            var invalidIds = new[] { string.Empty, " \t" };
+            for (var index = 0; index < invalidIds.Length; index++)
+            {
+                string invalidId = invalidIds[index];
+
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.WorkshopViewed(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RestorationTaskSelected(
+                        new LevelLaunchRequest(
+                            invalidId,
+                            2,
+                            LevelLaunchSource.Workshop,
+                            "cozy-workshop",
+                            "tea-drawer")));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RestorationTaskSelected(
+                        new LevelLaunchRequest(
+                            "03-tea-drawer",
+                            2,
+                            LevelLaunchSource.Workshop,
+                            invalidId,
+                            "tea-drawer")));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RestorationTaskSelected(
+                        new LevelLaunchRequest(
+                            "03-tea-drawer",
+                            2,
+                            LevelLaunchSource.Workshop,
+                            "cozy-workshop",
+                            invalidId)));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RestorationRevealStarted(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RestorationRevealCompleted(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.MemoryUnlocked(
+                        invalidId,
+                        "tea-postcard"));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.MemoryUnlocked(
+                        "tea-drawer",
+                        invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.MemoryViewed(invalidId, true));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.WorkshopChoiceShown(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DecorSlotOpened(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DailyCareAvailable(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DailyCareCompleted(
+                        invalidId,
+                        5,
+                        45));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.ChapterCompleted(
+                        invalidId,
+                        "dusty-window"));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.ChapterCompleted(
+                        "cozy-workshop",
+                        invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.NextRoomTeaserViewed(invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DecorationSelected(
+                        invalidId,
+                        "shelf-lamp",
+                        DecorationSelectionSource.Owned,
+                        45));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DecorationSelected(
+                        "shelf",
+                        invalidId,
+                        DecorationSelectionSource.Owned,
+                        45));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DecorationSelected(
+                        invalidId,
+                        "shelf-lamp",
+                        DecorationGrantSource.Rewarded,
+                        45));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.DecorationSelected(
+                        "shelf",
+                        invalidId,
+                        DecorationGrantSource.Rewarded,
+                        45));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RewardedOfferOpened(
+                        invalidId,
+                        "shelf-lamp"));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RewardedOfferOpened(
+                        "shelf",
+                        invalidId));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RewardedOfferOutcome(
+                        invalidId,
+                        "shelf-lamp",
+                        AdShowOutcome.Completed));
+                AssertMissingStableId(
+                    () => ProductAnalyticsEvent.RewardedOfferOutcome(
+                        "shelf",
+                        invalidId,
+                        AdShowOutcome.Completed));
+            }
+        }
+
+        [Test]
+        public void PublicTypedContractMatchesAllowlistWithoutFields()
+        {
+            var expectedProperties = new[]
+            {
+                "Kind",
+                "EventName",
+                "LevelId",
+                "LevelType",
+                "LevelIndex",
+                "ChapterId",
+                "StageIndex",
+                "StageCount",
+                "DurationSeconds",
+                "UndoCount",
+                "ProgressCurrent",
+                "ProgressTotal",
+                "TokenDelta",
+                "TokenBalance",
+                "ItemId",
+                "Source",
+                "Locale",
+                "AppVersion",
+                "BeatId",
+                "SlotId",
+                "VariantId",
+                "CareId",
+                "LaunchSource",
+                "Outcome",
+                "DecorationSource",
+                "FirstView",
+                "Flag"
+            };
+            PropertyInfo[] properties = typeof(ProductAnalyticsEvent).GetProperties(
+                BindingFlags.Public | BindingFlags.Instance);
+
+            Assert.That(properties, Has.Length.EqualTo(expectedProperties.Length));
+            for (var expectedIndex = 0;
+                expectedIndex < expectedProperties.Length;
+                expectedIndex++)
+            {
+                Assert.That(
+                    Array.Exists(
+                        properties,
+                        property => property.Name == expectedProperties[expectedIndex]),
+                    Is.True,
+                    expectedProperties[expectedIndex] + " property is required.");
+            }
+
+            FieldInfo[] fields = typeof(ProductAnalyticsEvent).GetFields(
+                BindingFlags.Public | BindingFlags.Instance);
+            Assert.That(fields, Is.Empty);
+        }
+
+        [Test]
+        public void NewFactorySerializationNeverContainsForbiddenKeys()
+        {
+            var events = new[]
+            {
+                ProductAnalyticsEvent.WorkshopViewed("cozy-workshop"),
+                ProductAnalyticsEvent.RestorationTaskSelected(
+                    new LevelLaunchRequest(
+                        "03-tea-drawer",
+                        2,
+                        LevelLaunchSource.Workshop,
+                        "cozy-workshop",
+                        "tea-drawer")),
+                ProductAnalyticsEvent.RestorationRevealStarted("tea-drawer"),
+                ProductAnalyticsEvent.RestorationRevealCompleted("tea-drawer"),
+                ProductAnalyticsEvent.MemoryUnlocked(
+                    "tea-drawer",
+                    "tea-postcard"),
+                ProductAnalyticsEvent.MemoryViewed("tea-postcard", true),
+                ProductAnalyticsEvent.AlbumOpened(),
+                ProductAnalyticsEvent.WorkshopChoiceShown("shelf"),
+                ProductAnalyticsEvent.DecorSlotOpened("shelf"),
+                ProductAnalyticsEvent.DailyCareAvailable("tea-care"),
+                ProductAnalyticsEvent.DailyCareCompleted("tea-care", 5, 45),
+                ProductAnalyticsEvent.ChapterCompleted(
+                    "cozy-workshop",
+                    "dusty-window"),
+                ProductAnalyticsEvent.NextRoomTeaserViewed("cozy-workshop"),
+                ProductAnalyticsEvent.RewardedOfferOpened(
+                    "shelf",
+                    "shelf-lamp"),
+                ProductAnalyticsEvent.RewardedOfferOutcome(
+                    "shelf",
+                    "shelf-lamp",
+                    AdShowOutcome.Completed),
+                ProductAnalyticsEvent.RelaxPassScreenOpened()
+            };
+            var forbiddenKeys = new[]
+            {
+                "player_name",
+                "user_text",
+                "free_text",
+                "device_id",
+                "advertising_id",
+                "ad_id",
+                "provider",
+                "provider_message"
+            };
+
+            for (var eventIndex = 0; eventIndex < events.Length; eventIndex++)
+            {
+                string serialized = events[eventIndex].ToDebugString();
+                for (var keyIndex = 0;
+                    keyIndex < forbiddenKeys.Length;
+                    keyIndex++)
+                {
+                    Assert.That(
+                        serialized,
+                        Does.Not.Contain(forbiddenKeys[keyIndex]));
+                }
+            }
+        }
+
         private static void AssertDecorSource(
             ProductAnalyticsEvent analyticsEvent,
             DecorationSelectionSource expectedSource,
@@ -622,6 +853,11 @@ namespace CalmSpace.Tests.EditMode
                     "token_balance=" + expectedTokenBalance + " source=" +
                     expectedSerializedSource +
                     " slot_id=shelf variant_id=shelf-lamp"));
+        }
+
+        private static void AssertMissingStableId(TestDelegate factory)
+        {
+            Assert.That(factory, Throws.TypeOf<ArgumentException>());
         }
 
         private static void AssertFactory(
