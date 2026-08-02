@@ -149,6 +149,7 @@ namespace CalmSpace.UI
             }
 
             BeginRoomLoad();
+            DrainUnpresentableQueue();
             _room?.SetVisible(false);
             Refresh();
             _view.CloseBottomSheet();
@@ -200,14 +201,27 @@ namespace CalmSpace.UI
                 !_visible ||
                 _revealPlaying ||
                 _hasLoadFailure ||
-                !string.IsNullOrEmpty(_revealFallbackBeatId) ||
-                !TryGetPendingRevealBeatId(out string beatId))
+                !string.IsNullOrEmpty(_revealFallbackBeatId))
+            {
+                return;
+            }
+
+            DrainUnpresentableQueue();
+            if (!TryGetPendingRevealBeatId(out string beatId))
             {
                 return;
             }
 
             if (_room == null)
             {
+                if (!_roomUnavailable)
+                {
+                    // The room is still arriving. Wait for it rather than
+                    // degrading a recoverable reveal into the skip card;
+                    // LoadRoomAsync retries this once the room is adopted.
+                    return;
+                }
+
                 ShowRevealFallback(beatId);
                 return;
             }
@@ -269,8 +283,17 @@ namespace CalmSpace.UI
         /// </summary>
         private void MarkRevealSeen(string beatId)
         {
+            if (_store == null || !_store.IsInitialized)
+            {
+                return;
+            }
+
             _store.MarkPresentationSeen(
                 PendingPresentationEntry.RoomReveal(beatId));
+            // Retiring a reveal can expose a memory or finale entry that this
+            // build cannot present; leaving it at the head would block the
+            // next level.
+            DrainUnpresentableQueue();
             Refresh();
 
             if (TryGetPendingRevealBeatId(out string next) &&
@@ -280,22 +303,84 @@ namespace CalmSpace.UI
             }
         }
 
+        /// <summary>
+        /// A presentation can only be retired from the head of the persisted
+        /// queue, so the reveal we offer to play must be the head itself.
+        /// </summary>
         private bool TryGetPendingRevealBeatId(out string beatId)
         {
             beatId = string.Empty;
             if (_store == null ||
                 !_store.IsInitialized ||
                 _availability == null ||
-                !_availability.HomeMetaAvailable ||
-                !_projector.TryProject(
-                    _store.Current, out WorkshopProgressProjection projection) ||
-                string.IsNullOrEmpty(projection.PendingRevealBeatId))
+                !_availability.HomeMetaAvailable)
             {
                 return false;
             }
 
-            beatId = projection.PendingRevealBeatId;
+            DemoProgressSnapshot snapshot = _store.Current;
+            if (!snapshot.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry head) ||
+                head.Kind != PendingPresentationKind.RoomReveal ||
+                !_projector.TryProject(
+                    snapshot, out WorkshopProgressProjection projection) ||
+                !string.Equals(
+                    projection.PendingRevealBeatId,
+                    head.StableId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            beatId = head.StableId;
             return true;
+        }
+
+        /// <summary>
+        /// Retires queued presentations this build cannot show. Album cameos
+        /// and the finale sequence are deferred, but a presentation left at
+        /// the head of the queue blocks every later recommendation, including
+        /// the next level, and would strand the player on a home screen with
+        /// no way forward.
+        /// </summary>
+        private void DrainUnpresentableQueue()
+        {
+            if (_store == null || !_store.IsInitialized)
+            {
+                return;
+            }
+
+            // Bounded by the queue length observed on entry: every iteration
+            // must retire one entry or stop, so this cannot spin.
+            int guardLimit = _store.Current.PendingPresentationCount;
+            for (var guard = 0; guard < guardLimit; guard++)
+            {
+                if (!_store.Current.TryGetPendingPresentation(
+                        0, out PendingPresentationEntry head))
+                {
+                    return;
+                }
+
+                ProfileMutationStatus status;
+                switch (head.Kind)
+                {
+                    case PendingPresentationKind.Memory:
+                        status = _store.MarkMemoryViewed(head.StableId).Status;
+                        break;
+                    case PendingPresentationKind.Finale:
+                        // The finale reads as permanent sunlight applied from
+                        // the projection, not as a queued sequence.
+                        status = _store.MarkPresentationSeen(head).Status;
+                        break;
+                    default:
+                        return;
+                }
+
+                if (status != ProfileMutationStatus.Applied)
+                {
+                    return;
+                }
+            }
         }
 
         private void ShowRevealFallback(string beatId)
@@ -392,6 +477,7 @@ namespace CalmSpace.UI
                 _room.HotspotPressed += HandleRoomHotspotPressed;
                 _room.SetVisible(_visible);
                 Refresh();
+                BeginPendingReveal();
             }
             catch (OperationCanceledException)
             {

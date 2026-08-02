@@ -147,8 +147,75 @@ namespace CalmSpace.Tests.PlayMode
                 "Replaying a completed level must not pay out again.");
         }
 
+        /// <summary>
+        /// Stage 2 (`pebble-shelf`) also queues a Memory presentation, and
+        /// stage 8 queues a Finale. This build ships neither the Album nor a
+        /// finale sequence, so those entries must still leave the queue: a
+        /// presentation stuck at the head blocks every later recommendation
+        /// and would strand the player on a home screen with no next level.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ProgressionSurvivesTheMemoryBeat()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+
+            for (var levelIndex = 0; levelIndex < 3; levelIndex++)
+            {
+                yield return CompleteLevel(experience, levelIndex);
+                yield return ReturnHome(experience, home);
+                yield return WaitForRevealEnd(home, 14f);
+
+                Assert.That(
+                    PendingRevealCount(store),
+                    Is.Zero,
+                    "Stage " + levelIndex +
+                    " left a room reveal stuck in the queue.");
+
+                WorkshopRecommendedAction? action =
+                    Flow(experience).GetRecommendedAction();
+                Assert.That(
+                    action.HasValue,
+                    Is.True,
+                    "Stage " + levelIndex + " left the home with no action.");
+                Assert.That(
+                    action.Value.Kind,
+                    Is.EqualTo(WorkshopRecommendedActionKind.StartLevel),
+                    "After stage " + levelIndex +
+                    " the home must still offer the next level, not a " +
+                    "presentation this build cannot show.");
+                Assert.That(
+                    home.View.PrimaryButton.gameObject.activeSelf,
+                    Is.True,
+                    "The Start action must stay available after stage " +
+                    levelIndex + ".");
+            }
+
+            Assert.That(
+                store.Current.CompletedLevelMask & 0b111,
+                Is.EqualTo(0b111),
+                "The first three levels must all be recorded complete.");
+        }
+
+        private static IWorkshopFlowCoordinator Flow(
+            DemoExperienceController experience)
+        {
+            return GetPrivateField<IWorkshopFlowCoordinator>(
+                experience, "_workshopFlowCoordinator");
+        }
+
         private static IEnumerator CompleteFirstLevel(
             DemoExperienceController experience)
+        {
+            yield return CompleteLevel(experience, 0);
+        }
+
+        private static IEnumerator CompleteLevel(
+            DemoExperienceController experience,
+            int levelIndex)
         {
             // Navigation may still be settling from the previous transition,
             // so ask until the level actually opens.
@@ -156,7 +223,7 @@ namespace CalmSpace.Tests.PlayMode
             float startTimeout = Time.realtimeSinceStartup + 20f;
             while (!started && Time.realtimeSinceStartup < startTimeout)
             {
-                UniTask<bool> play = experience.PlayLevelAsync(0);
+                UniTask<bool> play = experience.PlayLevelAsync(levelIndex);
                 yield return Await(play);
                 started = play.GetAwaiter().GetResult();
                 if (!started)
@@ -165,7 +232,10 @@ namespace CalmSpace.Tests.PlayMode
                 }
             }
 
-            Assert.That(started, Is.True, "Level 01 never opened.");
+            Assert.That(
+                started,
+                Is.True,
+                "Level " + levelIndex + " never opened.");
 
             LevelBase level = GetPrivateField<LevelBase>(
                 experience, "_boundLevel");

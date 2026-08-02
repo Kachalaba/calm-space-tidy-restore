@@ -38,6 +38,8 @@ namespace CalmSpace.Workshop
         private string _chapterId = string.Empty;
         private Transform _parent;
         private UniTask<WorkshopRoomPresenter> _inFlight;
+        private CancellationTokenSource _loadCancellation;
+        private int _loadGeneration;
         private bool _loading;
         private bool _disposed;
 
@@ -97,12 +99,23 @@ namespace CalmSpace.Workshop
                     "The workshop room loader is already loading a different " +
                     "chapter or parent.");
             }
+            else
+            {
+                // Retarget: the previous room must be released before another
+                // handle is taken, or the first one leaks.
+                ReleaseCurrent();
+            }
 
             _loading = true;
             _chapterId = normalizedChapterId;
             _parent = parent;
+            _loadCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
             _inFlight = LoadCoreAsync(
-                normalizedChapterId, parent, cancellationToken).Preserve();
+                normalizedChapterId,
+                parent,
+                _loadCancellation.Token).Preserve();
             return _inFlight;
         }
 
@@ -111,6 +124,9 @@ namespace CalmSpace.Workshop
             Transform parent,
             CancellationToken cancellationToken)
         {
+            // A load that has been superseded by unload, dispose, or a
+            // retarget must never write back into loader state.
+            int generation = ++_loadGeneration;
             AsyncOperationHandle<GameObject> handle =
                 Addressables.InstantiateAsync(
                     BuildAddress(chapterId), parent, false);
@@ -126,13 +142,13 @@ namespace CalmSpace.Workshop
                 // gives up, so wait for it and release the late instance
                 // instead of leaking it.
                 await ReleaseLateAsync(handle);
-                _loading = false;
+                ClearLoading(generation);
                 throw;
             }
             catch
             {
                 ReleaseHandle(ref handle);
-                _loading = false;
+                ClearLoading(generation);
                 throw;
             }
 
@@ -142,15 +158,17 @@ namespace CalmSpace.Workshop
             if (presenter == null)
             {
                 ReleaseHandle(ref handle);
-                _loading = false;
+                ClearLoading(generation);
                 throw new InvalidOperationException(
                     "The workshop room prefab has no WorkshopRoomPresenter.");
             }
 
-            if (cancellationToken.IsCancellationRequested || _disposed)
+            if (cancellationToken.IsCancellationRequested ||
+                _disposed ||
+                generation != _loadGeneration)
             {
                 ReleaseHandle(ref handle);
-                _loading = false;
+                ClearLoading(generation);
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new ObjectDisposedException(
                     nameof(AddressableWorkshopRoomLoader));
@@ -163,6 +181,14 @@ namespace CalmSpace.Workshop
             _parent = parent;
             _loading = false;
             return presenter;
+        }
+
+        private void ClearLoading(int generation)
+        {
+            if (generation == _loadGeneration)
+            {
+                _loading = false;
+            }
         }
 
         public UniTask UnloadAsync(CancellationToken cancellationToken)
@@ -192,6 +218,16 @@ namespace CalmSpace.Workshop
 
         private void ReleaseCurrent()
         {
+            // Stop any in-flight load first, otherwise it can land afterwards
+            // and quietly re-adopt a handle this loader no longer owns.
+            _loadGeneration++;
+            if (_loadCancellation != null)
+            {
+                _loadCancellation.Cancel();
+                _loadCancellation.Dispose();
+                _loadCancellation = null;
+            }
+
             _presenter = null;
             _parent = null;
             _chapterId = string.Empty;
