@@ -3,7 +3,7 @@
 Device: Pixel 8 (`shiba`), serial `39131FDJH0005Q`
 Package: `com.calmspace.tidyrestore`
 Build: `Builds/Android/CalmSpace-Demo-debug.apk`
-SHA-256: `a16f0ac0a6bb980bde0b667fe811c555b38c3169e687de099cc435922ba65edf`
+SHA-256 (APK used for these passes): `a16f0ac0a6bb980bde0b667fe811c555b38c3169e687de099cc435922ba65edf`
 Size: 41 142 378 bytes
 Installed with: `adb install -r` (no uninstall, no `pm clear`)
 Date: 2026-08-02
@@ -64,3 +64,17 @@ no Addressables load failure. The only exceptions in the buffers come from
 unrelated system and third-party packages already running on the phone (Google
 Play Services, WhatsApp/Facebook networking) and never from
 `com.calmspace.tidyrestore`.
+
+## Re-verification after the review fixes
+
+Independent review found that the demo dead-ended after two levels: a Memory
+presentation queued by stage 2 was never drained, so the home stopped offering
+a next level. Both device passes above predate that fix, and neither reached
+stage 3, which is exactly why they did not catch it.
+
+The fix is covered on desktop by
+`WorkshopPresentationPlayModeTests.ProgressionSurvivesTheMemoryBeat`, which
+plays stages 1-3 in sequence and fails on the pre-fix code. The shipped APK
+(`12ce841f118f92eb37255b5f43c63c80b68770bb57ba8f26bc68cacc9a7744ea`) has **not**
+been re-run on the Pixel 8. Before release, repeat the pass B journey through at
+least stage 3 and confirm the Start action survives the pebble-shelf beat.
