@@ -30,11 +30,17 @@ namespace CalmSpace.Tests.PlayMode
         [SetUp]
         public void ResetPersistedProfile()
         {
+            // The store restores from its .bak companion, so a partial reset
+            // would silently carry a completed chapter into the next test.
             string path = System.IO.Path.Combine(
                 Application.persistentDataPath, ProfileFileName);
-            if (System.IO.File.Exists(path))
+            foreach (string suffix in new[] { "", ".bak", ".tmp" })
             {
-                System.IO.File.Delete(path);
+                string candidate = path + suffix;
+                if (System.IO.File.Exists(candidate))
+                {
+                    System.IO.File.Delete(candidate);
+                }
             }
         }
 
@@ -148,14 +154,14 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         /// <summary>
-        /// Stage 2 (`pebble-shelf`) also queues a Memory presentation, and
-        /// stage 8 queues a Finale. This build ships neither the Album nor a
-        /// finale sequence, so those entries must still leave the queue: a
+        /// Walks the whole chapter. Stages 2 and 5 also queue a Memory and
+        /// stage 8 queues a Finale; this build ships neither the Album nor a
+        /// finale sequence, so those entries must still leave the queue. A
         /// presentation stuck at the head blocks every later recommendation
         /// and would strand the player on a home screen with no next level.
         /// </summary>
         [UnityTest]
-        public IEnumerator ProgressionSurvivesTheMemoryBeat()
+        public IEnumerator EveryStageKeepsTheChapterPlayable()
         {
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
@@ -163,7 +169,8 @@ namespace CalmSpace.Tests.PlayMode
             IDemoProgressStore store = Store(experience);
             yield return WaitForRoom(home);
 
-            for (var levelIndex = 0; levelIndex < 3; levelIndex++)
+            int stages = WorkshopContentIds.CozyWorkshopBeatCount;
+            for (var levelIndex = 0; levelIndex < stages; levelIndex++)
             {
                 yield return CompleteLevel(experience, levelIndex);
                 yield return ReturnHome(experience, home);
@@ -174,7 +181,14 @@ namespace CalmSpace.Tests.PlayMode
                     Is.Zero,
                     "Stage " + levelIndex +
                     " left a room reveal stuck in the queue.");
+                Assert.That(
+                    store.Current.PendingPresentationCount,
+                    Is.Zero,
+                    "Stage " + levelIndex +
+                    " left a presentation this build cannot show at the " +
+                    "head of the queue.");
 
+                bool isLast = levelIndex == stages - 1;
                 WorkshopRecommendedAction? action =
                     Flow(experience).GetRecommendedAction();
                 Assert.That(
@@ -183,21 +197,25 @@ namespace CalmSpace.Tests.PlayMode
                     "Stage " + levelIndex + " left the home with no action.");
                 Assert.That(
                     action.Value.Kind,
-                    Is.EqualTo(WorkshopRecommendedActionKind.StartLevel),
-                    "After stage " + levelIndex +
-                    " the home must still offer the next level, not a " +
-                    "presentation this build cannot show.");
+                    Is.EqualTo(isLast
+                        ? WorkshopRecommendedActionKind.OpenCompletedWorkshop
+                        : WorkshopRecommendedActionKind.StartLevel),
+                    "Unexpected home action after stage " + levelIndex + ".");
                 Assert.That(
                     home.View.PrimaryButton.gameObject.activeSelf,
-                    Is.True,
-                    "The Start action must stay available after stage " +
-                    levelIndex + ".");
+                    Is.EqualTo(!isLast),
+                    "Start availability is wrong after stage " + levelIndex +
+                    ".");
             }
 
             Assert.That(
-                store.Current.CompletedLevelMask & 0b111,
-                Is.EqualTo(0b111),
-                "The first three levels must all be recorded complete.");
+                store.Current.CompletedLevelMask & 0xFF,
+                Is.EqualTo(0xFF),
+                "All eight stages must be recorded complete.");
+            Assert.That(
+                GetPrivateField<int>(experience, "_currentLevelIndex"),
+                Is.LessThan(0),
+                "The chapter finale must not auto-start another level.");
         }
 
         private static IWorkshopFlowCoordinator Flow(
