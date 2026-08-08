@@ -47,6 +47,8 @@ namespace CalmSpace.Editor
             "Builds/Android/CalmSpace-Tidy-Restore-release.aab";
         public const string TestApkOutputPath =
             "Builds/Android/CalmSpace-Demo-debug.apk";
+        public const string VerificationApkOutputPath =
+            "Builds/Android/CalmSpace-Release-verify.apk";
 
         private const string DemoLevelDefinitionPath =
             "Assets/CalmSpace/Config/DemoFitting.asset";
@@ -205,6 +207,21 @@ namespace CalmSpace.Editor
                 buildAppBundle: true);
         }
 
+        /// <summary>
+        /// A release-signed APK carrying exactly the settings of the uploaded
+        /// bundle. An app bundle cannot be installed directly, so this is how
+        /// release managed stripping and IL2CPP get verified on a device
+        /// before the bundle goes to Google Play.
+        /// </summary>
+        [MenuItem("Calm Space/Release/Build Signed Verification APK")]
+        public static void BuildSignedVerificationApk()
+        {
+            BuildAndroidPlayer(
+                VerificationApkOutputPath,
+                requireReleaseSigning: true,
+                buildAppBundle: false);
+        }
+
         private static void BuildAndroidPlayer(
             string buildOutputPath,
             bool requireReleaseSigning,
@@ -359,10 +376,19 @@ namespace CalmSpace.Editor
             PlayerSettings.Android.keyaliasPass = keyAliasPass;
         }
 
+        /// <summary>
+        /// Signing configuration belongs to the build machine, not the
+        /// repository: passwords must never be serialized, and the keystore
+        /// path and alias would otherwise be committed and break every other
+        /// machine.
+        /// </summary>
         private static void ClearSigningSecrets()
         {
             PlayerSettings.Android.keystorePass = string.Empty;
             PlayerSettings.Android.keyaliasPass = string.Empty;
+            PlayerSettings.Android.keystoreName = string.Empty;
+            PlayerSettings.Android.keyaliasName = string.Empty;
+            PlayerSettings.Android.useCustomKeystore = false;
         }
 
         private static void ValidateGooglePlayReleaseSettings()
