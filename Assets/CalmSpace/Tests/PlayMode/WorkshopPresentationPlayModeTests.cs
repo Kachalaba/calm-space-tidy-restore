@@ -210,6 +210,7 @@ namespace CalmSpace.Tests.PlayMode
                 yield return CompleteLevel(experience, levelIndex);
                 yield return ReturnHome(experience, home);
                 yield return WaitForRevealEnd(home, 14f);
+                yield return CloseMemoryCardIfOpen(home);
 
                 Assert.That(
                     PendingRevealCount(store),
@@ -251,6 +252,107 @@ namespace CalmSpace.Tests.PlayMode
                 GetPrivateField<int>(experience, "_currentLevelIndex"),
                 Is.LessThan(0),
                 "The chapter finale must not auto-start another level.");
+        }
+
+        /// <summary>
+        /// Stage 2 uncovers the trail-stones memory. It must be shown, must
+        /// survive leaving the workshop without closing it, and must retire
+        /// only when the player closes the card.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator RestoredZoneShowsItsFamilyMemory()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+
+            yield return CompleteLevel(experience, 0);
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealEnd(home, 14f);
+            yield return CloseMemoryCardIfOpen(home);
+
+            // Stage 2 is the first beat that carries a memory.
+            yield return CompleteLevel(experience, 1);
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealEnd(home, 14f);
+
+            Assert.That(
+                MemoryCardId(home),
+                Is.EqualTo(WorkshopContentIds.SummerTrailStonesMemoryId),
+                "Restoring the pebble shelf must show its family memory.");
+            Assert.That(
+                home.View.BottomSheet.IsOpen,
+                Is.True,
+                "The memory card must be on screen.");
+            Assert.That(
+                home.View.PrimaryButton.gameObject.activeSelf,
+                Is.False,
+                "The primary action must be suppressed behind the card.");
+
+            var text = GetPrivateField<IWorkshopTextService>(
+                experience, "_workshopText");
+            WorkshopContentIds.TryGetMemoryTextKey(
+                WorkshopContentIds.SummerTrailStonesMemoryId,
+                out string key);
+            Assert.That(
+                text.Get(key),
+                Is.Not.EqualTo(key),
+                "The memory must resolve to authored copy.");
+
+            // Leaving without closing keeps the memory pending.
+            home.NotifyHidden();
+            Assert.That(
+                store.Current.HasViewedMemory(
+                    WorkshopContentIds.SummerTrailStonesMemoryId),
+                Is.False,
+                "Leaving the workshop must not consume the memory.");
+
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel, default));
+            yield return null;
+            Assert.That(
+                MemoryCardId(home),
+                Is.EqualTo(WorkshopContentIds.SummerTrailStonesMemoryId),
+                "The unclosed memory must be offered again.");
+
+            yield return CloseMemoryCardIfOpen(home);
+
+            Assert.That(
+                store.Current.HasViewedMemory(
+                    WorkshopContentIds.SummerTrailStonesMemoryId),
+                Is.True,
+                "Closing the card must retire the memory exactly once.");
+            Assert.That(
+                store.Current.PendingPresentationCount,
+                Is.Zero,
+                "The queue must be empty after the memory is closed.");
+            Assert.That(
+                home.View.PrimaryButton.gameObject.activeSelf,
+                Is.True,
+                "The next level must be offered again.");
+        }
+
+        private static string MemoryCardId(WorkshopHomeController home)
+        {
+            return GetPrivateField<string>(home, "_memoryCardId");
+        }
+
+        private static IEnumerator CloseMemoryCardIfOpen(
+            WorkshopHomeController home)
+        {
+            for (var guard = 0; guard < 4; guard++)
+            {
+                if (string.IsNullOrEmpty(MemoryCardId(home)))
+                {
+                    yield break;
+                }
+
+                home.View.BottomSheet.ActionButton.onClick.Invoke();
+                yield return null;
+                yield return null;
+            }
         }
 
         private static IWorkshopFlowCoordinator Flow(

@@ -61,6 +61,7 @@ namespace CalmSpace.UI
         private bool _roomLoading;
         private bool _revealPlaying;
         private string _revealFallbackBeatId = string.Empty;
+        private string _memoryCardId = string.Empty;
         private IDemoProgressStore _store;
         private IWorkshopFlowCoordinator _flow;
         private IWorkshopProgressProjector _projector;
@@ -185,6 +186,7 @@ namespace CalmSpace.UI
             _retryLoad = null;
             CancelReveal();
             _revealFallbackBeatId = string.Empty;
+            _memoryCardId = string.Empty;
             _room?.SetVisible(false);
             _view?.CloseBottomSheet();
         }
@@ -201,7 +203,8 @@ namespace CalmSpace.UI
                 !_visible ||
                 _revealPlaying ||
                 _hasLoadFailure ||
-                !string.IsNullOrEmpty(_revealFallbackBeatId))
+                !string.IsNullOrEmpty(_revealFallbackBeatId) ||
+                !string.IsNullOrEmpty(_memoryCardId))
             {
                 return;
             }
@@ -209,6 +212,8 @@ namespace CalmSpace.UI
             DrainUnpresentableQueue();
             if (!TryGetPendingRevealBeatId(out string beatId))
             {
+                // A restored zone may have uncovered a family memory.
+                TryShowPendingMemory();
                 return;
             }
 
@@ -297,10 +302,15 @@ namespace CalmSpace.UI
             Refresh();
 
             if (TryGetPendingRevealBeatId(out string next) &&
-                !string.Equals(next, beatId, StringComparison.Ordinal))
+                string.Equals(next, beatId, StringComparison.Ordinal))
             {
-                BeginPendingReveal();
+                // The same reveal is still at the head, so retiring it did
+                // not take. Stop rather than replay it forever.
+                return;
             }
+
+            // The queue may now offer another reveal or a family memory.
+            BeginPendingReveal();
         }
 
         /// <summary>
@@ -365,6 +375,13 @@ namespace CalmSpace.UI
                 switch (head.Kind)
                 {
                     case PendingPresentationKind.Memory:
+                        if (CanPresentMemory(head.StableId))
+                        {
+                            // Presentable: the caller shows the card and the
+                            // player retires it by closing.
+                            return;
+                        }
+
                         status = _store.MarkMemoryViewed(head.StableId).Status;
                         break;
                     case PendingPresentationKind.Finale:
@@ -381,6 +398,72 @@ namespace CalmSpace.UI
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// Shows the family memory a restored zone uncovered. The memory is
+        /// only retired when the player closes the card, so leaving the
+        /// workshop first simply shows it again next time.
+        /// </summary>
+        private bool TryShowPendingMemory()
+        {
+            if (!string.IsNullOrEmpty(_memoryCardId))
+            {
+                return true;
+            }
+
+            if (_store == null ||
+                !_store.IsInitialized ||
+                !_store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry head) ||
+                head.Kind != PendingPresentationKind.Memory ||
+                !CanPresentMemory(head.StableId) ||
+                !WorkshopContentIds.TryGetMemoryTextKey(
+                    head.StableId, out string textKey))
+            {
+                return false;
+            }
+
+            _memoryCardId = head.StableId;
+            Refresh();
+            _view.ShowRetry(
+                _text.Get(textKey),
+                GetTextOrFallback(
+                    "common.close", "Close", "Закрити", "Закрыть"),
+                CloseMemoryCard);
+            return true;
+        }
+
+        private void CloseMemoryCard()
+        {
+            string memoryId = _memoryCardId;
+            _memoryCardId = string.Empty;
+            _view.CloseBottomSheet();
+            if (!string.IsNullOrEmpty(memoryId) &&
+                _store != null &&
+                _store.IsInitialized)
+            {
+                _store.MarkMemoryViewed(memoryId);
+            }
+
+            Refresh();
+            BeginPendingReveal();
+        }
+
+        private bool CanPresentMemory(string memoryId)
+        {
+            if (_availability == null ||
+                !_availability.TextAvailable ||
+                _text == null ||
+                !WorkshopContentIds.TryGetMemoryTextKey(
+                    memoryId, out string textKey))
+            {
+                return false;
+            }
+
+            string copy = _text.Get(textKey);
+            return !string.IsNullOrWhiteSpace(copy) &&
+                !string.Equals(copy, textKey, StringComparison.Ordinal);
         }
 
         private void ShowRevealFallback(string beatId)
@@ -603,6 +686,7 @@ namespace CalmSpace.UI
             _hasLoadFailure = false;
             _retryLoad = null;
             _revealFallbackBeatId = string.Empty;
+            _memoryCardId = string.Empty;
             _view.OpenSettings();
         }
 
@@ -624,6 +708,19 @@ namespace CalmSpace.UI
         private void HandleLocaleChanged(DemoLocale locale)
         {
             Refresh();
+            if (!string.IsNullOrEmpty(_memoryCardId) &&
+                _view.BottomSheet != null &&
+                _view.BottomSheet.IsOpen &&
+                WorkshopContentIds.TryGetMemoryTextKey(
+                    _memoryCardId, out string memoryTextKey))
+            {
+                _view.RenderRecoveryCopy(
+                    _text.Get(memoryTextKey),
+                    GetTextOrFallback(
+                        "common.close", "Close", "Закрити", "Закрыть"));
+                return;
+            }
+
             if (!string.IsNullOrEmpty(_revealFallbackBeatId) &&
                 _view.BottomSheet != null &&
                 _view.BottomSheet.IsOpen)
@@ -705,10 +802,13 @@ namespace CalmSpace.UI
                 taskTitle,
                 _text.Get("home.start"),
                 progress,
-                hasLevel && !_revealPlaying,
+                hasLevel && !_revealPlaying &&
+                    string.IsNullOrEmpty(_memoryCardId),
                 // The illustrated room owns the real hotspot when it is
                 // present, so exactly one hotspot is ever actionable.
-                hasLevel && !_revealPlaying && _room == null));
+                hasLevel && !_revealPlaying &&
+                    string.IsNullOrEmpty(_memoryCardId) &&
+                    _room == null));
         }
 
         private string ResolveTaskTitle(WorkshopRecommendedAction? action)

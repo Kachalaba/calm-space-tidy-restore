@@ -191,6 +191,32 @@ namespace CalmSpace.Workshop
             return true;
         }
 
+        /// <summary>
+        /// Resolves the authored text key for a family memory. Only memories
+        /// this build can actually present have a key; anything else is left
+        /// for a later chapter and must not be shown.
+        /// </summary>
+        public static bool TryGetMemoryTextKey(
+            string memoryId,
+            out string textKey)
+        {
+            switch (memoryId)
+            {
+                case SummerTrailStonesMemoryId:
+                    textKey = "memory.summer-trail-stones";
+                    return true;
+                case FixEverythingMemoryId:
+                    textKey = "memory.fix-everything";
+                    return true;
+                case OpenWindowsMemoryId:
+                    textKey = "memory.open-windows";
+                    return true;
+                default:
+                    textKey = string.Empty;
+                    return false;
+            }
+        }
+
         internal static bool IsKnownMemoryId(string memoryId)
         {
             return
