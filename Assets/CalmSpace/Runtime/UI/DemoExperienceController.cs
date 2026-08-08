@@ -211,6 +211,7 @@ namespace CalmSpace.UI
         private int _pendingCompletionReward;
         private string _pendingCompletionBeatId = string.Empty;
         private string _pendingCompletionMemoryId = string.Empty;
+        private string _pendingCompletionResultTextKey = string.Empty;
         private string _pendingCompletionChapterId = string.Empty;
         private bool _pendingCompletionIsFinale;
         private ProfileMutationStatus _lastCompletionStatus =
@@ -1029,11 +1030,42 @@ namespace CalmSpace.UI
             CompleteCapturedLevel();
         }
 
+        /// <summary>
+        /// Prefers the authored result line for the restored beat, e.g. "The
+        /// way to the workbench is clear." It is already localized in every
+        /// shipped language, so a missing catalog is the only reason to fall
+        /// back to the generic completion sentence.
+        /// </summary>
+        private string ResolveCompletionBody()
+        {
+            if (!string.IsNullOrEmpty(_pendingCompletionResultTextKey) &&
+                _workshopAvailability != null &&
+                _workshopAvailability.TextAvailable &&
+                _workshopText != null)
+            {
+                string authored =
+                    _workshopText.Get(_pendingCompletionResultTextKey);
+                if (!string.IsNullOrWhiteSpace(authored) &&
+                    !string.Equals(
+                        authored,
+                        _pendingCompletionResultTextKey,
+                        StringComparison.Ordinal))
+                {
+                    return authored;
+                }
+            }
+
+            return _localization.FormatCompletionBody(
+                _boundLevel.Definition,
+                HasValidRestorationChapter(_boundLevel.Definition));
+        }
+
         private void CapturePendingWorkshopBeat()
         {
             _pendingCompletionBeatId = string.Empty;
             _pendingCompletionMemoryId = string.Empty;
             _pendingCompletionChapterId = string.Empty;
+            _pendingCompletionResultTextKey = string.Empty;
             _pendingCompletionIsFinale = false;
             if (!_workshopAvailability.HomeMetaAvailable ||
                 _livingWorkshopCatalog == null ||
@@ -1051,6 +1083,7 @@ namespace CalmSpace.UI
             _pendingCompletionBeatId = beat.BeatId;
             _pendingCompletionMemoryId = beat.MemoryId;
             _pendingCompletionChapterId = beat.ChapterId;
+            _pendingCompletionResultTextKey = beat.ResultTextKey;
             _pendingCompletionIsFinale = beat.IsFinale;
         }
 
@@ -1137,11 +1170,11 @@ namespace CalmSpace.UI
 
             if (_completionBodyText != null)
             {
-                _completionBodyText.text =
-                    _localization.FormatCompletionBody(
-                        _boundLevel.Definition,
-                        HasValidRestorationChapter(
-                            _boundLevel.Definition));
+                // The authored beat line is the story payoff for restoring
+                // this zone; the generic progress sentence is the fallback
+                // when workshop text is unavailable or the level is not part
+                // of a chapter.
+                _completionBodyText.text = ResolveCompletionBody();
             }
 
             if (_completionHomeButton != null)

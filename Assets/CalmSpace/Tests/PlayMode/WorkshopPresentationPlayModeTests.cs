@@ -154,6 +154,41 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         /// <summary>
+        /// Every restored beat has an authored, localized result line. It is
+        /// the only story the shipped demo tells, so the completion screen
+        /// must show it rather than the generic progress sentence.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator CompletionShowsTheAuthoredBeatLine()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            yield return WaitForRoom(home);
+
+            yield return CompleteLevel(experience, 0);
+
+            var body = GetPrivateField<UnityEngine.UI.Text>(
+                experience, "_completionBodyText");
+            Assert.That(body, Is.Not.Null);
+
+            var text = GetPrivateField<IWorkshopTextService>(
+                experience, "_workshopText");
+            WorkshopContentIds.TryGetCozyWorkshopBeat(
+                0, out WorkshopBeatContract beat);
+            string expected = text.Get(beat.ResultTextKey);
+
+            Assert.That(
+                expected,
+                Is.Not.EqualTo(beat.ResultTextKey),
+                "The beat result key must resolve to authored copy.");
+            Assert.That(
+                body.text,
+                Is.EqualTo(expected),
+                "The completion screen must show the authored beat line.");
+        }
+
+        /// <summary>
         /// Walks the whole chapter. Stages 2 and 5 also queue a Memory and
         /// stage 8 queues a Finale; this build ships neither the Album nor a
         /// finale sequence, so those entries must still leave the queue. A

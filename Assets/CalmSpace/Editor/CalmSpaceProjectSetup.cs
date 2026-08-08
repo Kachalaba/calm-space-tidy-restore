@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -61,6 +62,27 @@ namespace CalmSpace.Editor
             "levels/demo-fitting";
         private const string AddressableLabel =
             "calm-space-level";
+        /// <summary>
+        /// Pinned Google Play target level. Google requires new uploads to
+        /// target a recent API, and "Auto" would silently ship whatever SDK
+        /// the build machine happens to have installed.
+        /// </summary>
+        private const AndroidSdkVersions TargetSdkVersion =
+            AndroidSdkVersions.AndroidApiLevel36;
+
+        private const string KeystorePathVariable =
+            "CALMSPACE_KEYSTORE_PATH";
+        private const string KeystorePassVariable =
+            "CALMSPACE_KEYSTORE_PASS";
+        private const string KeyAliasVariable =
+            "CALMSPACE_KEY_ALIAS";
+        private const string KeyAliasPassVariable =
+            "CALMSPACE_KEY_ALIAS_PASS";
+        private const string VersionCodeVariable =
+            "CALMSPACE_VERSION_CODE";
+        private const string VersionNameVariable =
+            "CALMSPACE_VERSION_NAME";
+
         private const string GeneratedSceneMarkerPrefix =
             "CalmSpace Generated Scene · ";
         private static readonly string[] GeneratedSceneSourcePaths =
@@ -196,8 +218,10 @@ namespace CalmSpace.Editor
             }
 
             ConfigureProject();
+            ApplyVersionOverrides();
             if (requireReleaseSigning)
             {
+                ApplyReleaseSigningFromEnvironment();
                 ValidateGooglePlayReleaseSettings();
             }
 
@@ -237,7 +261,18 @@ namespace CalmSpace.Editor
                 options = buildOptions
             };
 
-            BuildReport report = BuildPipeline.BuildPlayer(options);
+            BuildReport report;
+            try
+            {
+                report = BuildPipeline.BuildPlayer(options);
+            }
+            finally
+            {
+                // Never let signing secrets settle into ProjectSettings.asset,
+                // which is tracked in git.
+                ClearSigningSecrets();
+            }
+
             if (report.summary.result != BuildResult.Succeeded)
             {
                 throw new BuildFailedException(
@@ -247,7 +282,87 @@ namespace CalmSpace.Editor
 
             Debug.Log(
                 $"CALMSPACE_ANDROID_BUILD_COMPLETE {outputPath} " +
-                $"{report.summary.totalSize} bytes");
+                $"{report.summary.totalSize} bytes " +
+                $"versionCode={PlayerSettings.Android.bundleVersionCode} " +
+                $"versionName={PlayerSettings.bundleVersion} " +
+                $"targetSdk={PlayerSettings.Android.targetSdkVersion}");
+        }
+
+        /// <summary>
+        /// Version name and code come from the environment so a release can be
+        /// re-cut without editing tracked project settings. Play rejects an
+        /// upload whose version code is not higher than the previous one.
+        /// </summary>
+        private static void ApplyVersionOverrides()
+        {
+            string versionName = Environment.GetEnvironmentVariable(
+                VersionNameVariable);
+            if (!string.IsNullOrWhiteSpace(versionName))
+            {
+                PlayerSettings.bundleVersion = versionName.Trim();
+            }
+
+            string versionCode = Environment.GetEnvironmentVariable(
+                VersionCodeVariable);
+            if (string.IsNullOrWhiteSpace(versionCode))
+            {
+                return;
+            }
+
+            if (!int.TryParse(
+                    versionCode.Trim(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out int parsed) ||
+                parsed < 1)
+            {
+                throw new BuildFailedException(
+                    VersionCodeVariable + " must be a positive integer.");
+            }
+
+            PlayerSettings.Android.bundleVersionCode = parsed;
+        }
+
+        /// <summary>
+        /// Reads the upload key from the environment. Secrets are never stored
+        /// in the repository and are cleared again once the build finishes.
+        /// </summary>
+        private static void ApplyReleaseSigningFromEnvironment()
+        {
+            string keystorePath = Environment.GetEnvironmentVariable(
+                KeystorePathVariable);
+            string keystorePass = Environment.GetEnvironmentVariable(
+                KeystorePassVariable);
+            string keyAlias = Environment.GetEnvironmentVariable(
+                KeyAliasVariable);
+            string keyAliasPass = Environment.GetEnvironmentVariable(
+                KeyAliasPassVariable);
+
+            if (string.IsNullOrWhiteSpace(keystorePath) ||
+                string.IsNullOrWhiteSpace(keystorePass) ||
+                string.IsNullOrWhiteSpace(keyAlias) ||
+                string.IsNullOrWhiteSpace(keyAliasPass))
+            {
+                throw new BuildFailedException(
+                    "Google Play release blocked: set " +
+                    KeystorePathVariable + ", " + KeystorePassVariable + ", " +
+                    KeyAliasVariable + " and " + KeyAliasPassVariable +
+                    " before building. Create the upload key with keytool; " +
+                    "it is never stored in this repository.");
+            }
+
+            PlayerSettings.Android.useCustomKeystore = true;
+            PlayerSettings.Android.keystoreName =
+                Path.GetFullPath(keystorePath.Trim());
+            PlayerSettings.Android.keystorePass = keystorePass;
+            PlayerSettings.Android.keyaliasName = keyAlias.Trim();
+            PlayerSettings.Android.keyaliasPass = keyAliasPass;
+        }
+
+        private static void ClearSigningSecrets()
+        {
+            PlayerSettings.Android.keystorePass = string.Empty;
+            PlayerSettings.Android.keyaliasPass = string.Empty;
         }
 
         private static void ValidateGooglePlayReleaseSettings()
@@ -385,8 +500,11 @@ namespace CalmSpace.Editor
             }
             PlayerSettings.Android.minSdkVersion =
                 AndroidSdkVersions.AndroidApiLevel24;
+            // Pinned, not Auto: "highest installed" makes the shipped API
+            // level depend on the build machine, and Google Play rejects a
+            // bundle that targets an API level below the current floor.
             PlayerSettings.Android.targetSdkVersion =
-                AndroidSdkVersions.AndroidApiLevelAuto;
+                TargetSdkVersion;
             PlayerSettings.Android.targetArchitectures =
                 AndroidArchitecture.ARM64;
             PlayerSettings.SetScriptingBackend(
