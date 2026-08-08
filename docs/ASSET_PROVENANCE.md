@@ -51,6 +51,14 @@ generated scene, captured by `CalmSpaceRoomScreenshot`.
 - `Assets/CalmSpace/Audio/QuietAtelierLoop.wav` — original procedural ambient
   composition synthesized for this project. It contains no third-party audio
   samples.
+- `Assets/CalmSpace/Audio/Tactile/*.wav` — six original placement sounds
+  (SoftCloth, WarmWood, RiverStone, GlazedClay, SmallMetal, HeavyBench)
+  synthesized by `Assets/CalmSpace/Editor/CalmSpaceTactileAudioBuilder.cs` on
+  2026-08-08. Each is a short filtered-noise contact transient shaped by a few
+  damped sine partials, written directly to PCM by project-owned editor code.
+  They contain no third-party audio sample and regenerate byte-identically
+  from source. The pooled audio service picks one at random per placement so
+  repeated tidying reads as physical rather than looped.
 - `Assets/CalmSpace/Audio/SnapSoft.wav` — original procedural interaction sound
   synthesized for this project. It contains no third-party audio samples.
 

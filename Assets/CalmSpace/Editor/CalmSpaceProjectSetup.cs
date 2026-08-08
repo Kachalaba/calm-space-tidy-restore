@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -100,7 +101,8 @@ namespace CalmSpace.Editor
             "Assets/CalmSpace/Runtime/Composition/CalmSpaceLifetimeScope.cs",
             "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs",
             "Assets/CalmSpace/Runtime/Workshop/AddressableWorkshopRoomLoader.cs",
-            "Assets/CalmSpace/Editor/CalmSpaceWorkshopAssetBuilder.cs"
+            "Assets/CalmSpace/Editor/CalmSpaceWorkshopAssetBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceTactileAudioBuilder.cs"
         };
 
         private static readonly Color BackgroundColor =
@@ -983,11 +985,30 @@ namespace CalmSpace.Editor
             var audioSerialized = new SerializedObject(audioService);
             SerializedProperty clips =
                 audioSerialized.FindProperty("_snapClips");
-            clips.arraySize = snapClip == null ? 0 : 1;
+
+            // The pooled service picks a clip at random per placement, so the
+            // whole tactile palette goes in: one repeated click is what makes
+            // a tidying game feel mechanical.
+            var snapClips = new List<AudioClip>();
             if (snapClip != null)
             {
-                clips.GetArrayElementAtIndex(0).objectReferenceValue =
-                    snapClip;
+                snapClips.Add(snapClip);
+            }
+
+            foreach (AudioClip tactile in
+                     CalmSpaceTactileAudioBuilder.CreateOrUpdate())
+            {
+                if (tactile != null)
+                {
+                    snapClips.Add(tactile);
+                }
+            }
+
+            clips.arraySize = snapClips.Count;
+            for (var index = 0; index < snapClips.Count; index++)
+            {
+                clips.GetArrayElementAtIndex(index).objectReferenceValue =
+                    snapClips[index];
             }
 
             audioSerialized.FindProperty("_outputMixerGroup")
