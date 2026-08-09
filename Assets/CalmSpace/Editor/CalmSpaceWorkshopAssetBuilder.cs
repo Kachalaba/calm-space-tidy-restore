@@ -6,6 +6,7 @@ using CalmSpace.Workshop;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEditor.U2D;
 using UnityEngine;
 using UnityEngine.U2D;
@@ -36,6 +37,8 @@ namespace CalmSpace.Editor
             "workshop/cozy-workshop/room";
         public const string RoomLabel =
             "calm-space-workshop-cozy-workshop";
+
+        private const string WorkshopGroupName = "Workshop Local";
 
         private const int ReferenceWidth = 1080;
         private const int ReferenceHeight = 2400;
@@ -522,9 +525,11 @@ namespace CalmSpace.Editor
 
             string guid = AssetDatabase.AssetPathToGUID(
                 AssetDatabase.GetAssetPath(prefab));
+            AddressableAssetGroup workshopGroup =
+                EnsureWorkshopGroup(settings, guid);
             AddressableAssetEntry entry = settings.CreateOrMoveEntry(
                 guid,
-                settings.DefaultGroup,
+                workshopGroup,
                 false,
                 false);
             entry.address = RoomAddress;
@@ -534,6 +539,128 @@ namespace CalmSpace.Editor
                 entry,
                 true,
                 false);
+        }
+
+        private static AddressableAssetGroup EnsureWorkshopGroup(
+            AddressableAssetSettings settings,
+            string roomGuid)
+        {
+            AddressableAssetGroup defaultGroup = settings.DefaultGroup;
+            if (defaultGroup == null)
+            {
+                throw new InvalidOperationException(
+                    "Addressables has no default local group to copy.");
+            }
+
+            BundledAssetGroupSchema defaultBundle =
+                defaultGroup.GetSchema<BundledAssetGroupSchema>();
+            if (defaultBundle == null)
+            {
+                throw new InvalidOperationException(
+                    "The default local group has no bundled schema.");
+            }
+
+            AddressableAssetGroup workshopGroup =
+                settings.FindGroup(WorkshopGroupName);
+            if (workshopGroup == null)
+            {
+                workshopGroup = settings.CreateGroup(
+                    WorkshopGroupName,
+                    false,
+                    false,
+                    false,
+                    new List<AddressableAssetGroupSchema>(
+                        defaultGroup.Schemas));
+            }
+
+            ValidateWorkshopGroup(
+                workshopGroup,
+                defaultGroup,
+                defaultBundle,
+                roomGuid);
+            return workshopGroup;
+        }
+
+        private static void ValidateWorkshopGroup(
+            AddressableAssetGroup workshopGroup,
+            AddressableAssetGroup defaultGroup,
+            BundledAssetGroupSchema defaultBundle,
+            string roomGuid)
+        {
+            foreach (AddressableAssetEntry entry in workshopGroup.entries)
+            {
+                if (!string.Equals(
+                        entry.guid,
+                        roomGuid,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        WorkshopGroupName +
+                        " already contains an unrelated Addressable entry: " +
+                        entry.address + ".");
+                }
+            }
+
+            if (workshopGroup.entries.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    WorkshopGroupName +
+                    " must contain at most the single workshop room entry.");
+            }
+
+            if (workshopGroup.Schemas.Count != defaultGroup.Schemas.Count)
+            {
+                throw new InvalidOperationException(
+                    WorkshopGroupName +
+                    " schema set has drifted from the default local group.");
+            }
+
+            foreach (AddressableAssetGroupSchema expected in
+                     defaultGroup.Schemas)
+            {
+                int matches = 0;
+                foreach (AddressableAssetGroupSchema actual in
+                         workshopGroup.Schemas)
+                {
+                    if (actual != null &&
+                        expected != null &&
+                        actual.GetType() == expected.GetType())
+                    {
+                        matches++;
+                    }
+                }
+
+                if (matches != 1)
+                {
+                    throw new InvalidOperationException(
+                        WorkshopGroupName +
+                        " schema set has drifted from the default local group.");
+                }
+            }
+
+            BundledAssetGroupSchema workshopBundle =
+                workshopGroup.GetSchema<BundledAssetGroupSchema>();
+            bool bundleContractMatches =
+                workshopBundle != null &&
+                workshopBundle.IsEnabled &&
+                workshopBundle.IncludeInBuild &&
+                workshopBundle.BundleMode ==
+                    BundledAssetGroupSchema.BundlePackingMode.PackTogether &&
+                string.Equals(
+                    workshopBundle.BuildPath.Id,
+                    defaultBundle.BuildPath.Id,
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    workshopBundle.LoadPath.Id,
+                    defaultBundle.LoadPath.Id,
+                    StringComparison.Ordinal);
+            if (!bundleContractMatches)
+            {
+                throw new InvalidOperationException(
+                    WorkshopGroupName +
+                    " must remain an enabled local PackTogether group with " +
+                    "the default local build and load profile variables.");
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Settings;
+using UnityEditor.AddressableAssets.Settings.GroupSchemas;
 using UnityEngine;
 
 namespace CalmSpace.Tests.EditMode
@@ -20,8 +21,11 @@ namespace CalmSpace.Tests.EditMode
         private const string RoomAddress = "workshop/cozy-workshop/room";
         private const string RoomLabel =
             "calm-space-workshop-cozy-workshop";
+        private const string RoomGuid =
+            "c4caa204aabee4dfbbd6705bd97b4168";
         private const string PrefabPath =
             "Assets/CalmSpace/Content/Workshop/CozyWorkshopRoom.prefab";
+        private const string WorkshopGroupName = "Workshop Local";
         private static readonly string[] StableLevelAddresses =
         {
             "levels/01-soft-blocks",
@@ -79,6 +83,10 @@ namespace CalmSpace.Tests.EditMode
                 Is.EqualTo(1),
                 "Exactly one Addressable entry must publish the room.");
             Assert.That(
+                matches[0].guid,
+                Is.EqualTo(RoomGuid),
+                "The stable room prefab GUID must not change.");
+            Assert.That(
                 AssetDatabase.GUIDToAssetPath(matches[0].guid),
                 Is.EqualTo(PrefabPath));
             Assert.That(
@@ -91,6 +99,67 @@ namespace CalmSpace.Tests.EditMode
             Assert.That(
                 prefab.GetComponent<WorkshopRoomPresenter>(),
                 Is.Not.Null);
+        }
+
+        [Test]
+        public void RoomEntryBelongsToWorkshopLocalGroup()
+        {
+            AddressableAssetSettings settings =
+                AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
+
+            AddressableAssetGroup group = settings.FindGroup(WorkshopGroupName);
+            Assert.That(group, Is.Not.Null, WorkshopGroupName + " is missing.");
+            Assert.That(
+                group.entries.Count,
+                Is.EqualTo(1),
+                WorkshopGroupName + " must contain only the resident room.");
+            AddressableAssetEntry room = group.entries.Single();
+            Assert.That(room.guid, Is.EqualTo(RoomGuid));
+            Assert.That(room.address, Is.EqualTo(RoomAddress));
+        }
+
+        [Test]
+        public void WorkshopLocalGroupIsBundledAndLocal()
+        {
+            AddressableAssetSettings settings =
+                AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
+
+            AddressableAssetGroup workshop =
+                settings.FindGroup(WorkshopGroupName);
+            Assert.That(workshop, Is.Not.Null, WorkshopGroupName + " is missing.");
+
+            BundledAssetGroupSchema workshopSchema =
+                workshop.GetSchema<BundledAssetGroupSchema>();
+            BundledAssetGroupSchema defaultSchema =
+                settings.DefaultGroup.GetSchema<BundledAssetGroupSchema>();
+            Assert.That(workshopSchema, Is.Not.Null);
+            Assert.That(defaultSchema, Is.Not.Null);
+            Assert.That(workshopSchema.IsEnabled, Is.True);
+            Assert.That(workshopSchema.IncludeInBuild, Is.True);
+            Assert.That(
+                workshopSchema.BundleMode,
+                Is.EqualTo(BundledAssetGroupSchema.BundlePackingMode.PackTogether));
+            Assert.That(
+                workshopSchema.BuildPath.Id,
+                Is.EqualTo(defaultSchema.BuildPath.Id));
+            Assert.That(
+                workshopSchema.LoadPath.Id,
+                Is.EqualTo(defaultSchema.LoadPath.Id));
+        }
+
+        [Test]
+        public void DefaultLocalGroupContainsNoWorkshopAddress()
+        {
+            AddressableAssetSettings settings =
+                AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
+            Assert.That(
+                settings.DefaultGroup.entries.Any(entry =>
+                    string.Equals(
+                        entry.address, RoomAddress, StringComparison.Ordinal)),
+                Is.False);
         }
 
         [Test]
