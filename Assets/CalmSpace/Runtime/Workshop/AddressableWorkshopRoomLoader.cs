@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using CalmSpace.UI;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
@@ -8,6 +9,31 @@ using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace CalmSpace.Workshop
 {
+    internal interface IWorkshopRoomOperationAdapter
+    {
+        AsyncOperationHandle<GameObject> InstantiateAsync(
+            string address,
+            Transform parent);
+
+        void ReleaseInstance(AsyncOperationHandle<GameObject> handle);
+    }
+
+    internal sealed class AddressablesWorkshopRoomOperationAdapter :
+        IWorkshopRoomOperationAdapter
+    {
+        public AsyncOperationHandle<GameObject> InstantiateAsync(
+            string address,
+            Transform parent)
+        {
+            return Addressables.InstantiateAsync(address, parent, false);
+        }
+
+        public void ReleaseInstance(AsyncOperationHandle<GameObject> handle)
+        {
+            Addressables.ReleaseInstance(handle);
+        }
+    }
+
     public interface IWorkshopRoomLoader : IDisposable
     {
         bool IsLoaded { get; }
@@ -32,12 +58,13 @@ namespace CalmSpace.Workshop
     {
         public const string AddressFormat = "workshop/{0}/room";
 
+        private readonly IWorkshopRoomOperationAdapter _operationAdapter;
         private AsyncOperationHandle<GameObject> _handle;
         private bool _hasHandle;
         private WorkshopRoomPresenter _presenter;
         private string _chapterId = string.Empty;
         private Transform _parent;
-        private UniTask<WorkshopRoomPresenter> _inFlight;
+        private Task<WorkshopRoomPresenter> _inFlight;
         private CancellationTokenSource _loadCancellation;
         private int _loadGeneration;
         private bool _loading;
@@ -46,6 +73,18 @@ namespace CalmSpace.Workshop
         public bool IsLoaded => _presenter != null;
 
         public WorkshopRoomPresenter Presenter => _presenter;
+
+        public AddressableWorkshopRoomLoader()
+            : this(new AddressablesWorkshopRoomOperationAdapter())
+        {
+        }
+
+        internal AddressableWorkshopRoomLoader(
+            IWorkshopRoomOperationAdapter operationAdapter)
+        {
+            _operationAdapter = operationAdapter ??
+                throw new ArgumentNullException(nameof(operationAdapter));
+        }
 
         public static string BuildAddress(string chapterId)
         {
@@ -90,7 +129,7 @@ namespace CalmSpace.Workshop
 
                 if (_loading)
                 {
-                    return _inFlight;
+                    return AwaitForCaller(_inFlight, cancellationToken);
                 }
             }
             else if (_loading)
@@ -109,92 +148,113 @@ namespace CalmSpace.Workshop
             _loading = true;
             _chapterId = normalizedChapterId;
             _parent = parent;
-            _loadCancellation =
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken);
+            var cancellationOwner = new CancellationTokenSource();
+            CancellationToken operationToken = cancellationOwner.Token;
+            _loadCancellation = cancellationOwner;
+            int generation = ++_loadGeneration;
             _inFlight = LoadCoreAsync(
                 normalizedChapterId,
                 parent,
-                _loadCancellation.Token).Preserve();
-            return _inFlight;
+                generation,
+                cancellationOwner,
+                operationToken).AsTask();
+            return AwaitForCaller(_inFlight, cancellationToken);
+        }
+
+        private static UniTask<WorkshopRoomPresenter> AwaitForCaller(
+            Task<WorkshopRoomPresenter> inFlight,
+            CancellationToken cancellationToken)
+        {
+            UniTask<WorkshopRoomPresenter> waiter = inFlight.AsUniTask();
+            return cancellationToken.CanBeCanceled
+                ? waiter.AttachExternalCancellation(cancellationToken)
+                : waiter;
         }
 
         private async UniTask<WorkshopRoomPresenter> LoadCoreAsync(
             string chapterId,
             Transform parent,
-            CancellationToken cancellationToken)
+            int generation,
+            CancellationTokenSource cancellationOwner,
+            CancellationToken operationToken)
         {
             // A load that has been superseded by unload, dispose, or a
             // retarget must never write back into loader state.
-            int generation = ++_loadGeneration;
-            AsyncOperationHandle<GameObject> handle =
-                Addressables.InstantiateAsync(
-                    BuildAddress(chapterId), parent, false);
-            GameObject instance;
+            AsyncOperationHandle<GameObject> handle = default;
             try
             {
-                instance = await handle.ToUniTask(
-                    cancellationToken: cancellationToken);
+                handle = _operationAdapter.InstantiateAsync(
+                    BuildAddress(chapterId), parent);
+                GameObject instance = await handle.ToUniTask(
+                    cancellationToken: operationToken);
+                WorkshopRoomPresenter presenter = instance == null
+                    ? null
+                    : instance.GetComponent<WorkshopRoomPresenter>();
+                if (presenter == null)
+                {
+                    throw new InvalidOperationException(
+                        "The workshop room prefab has no " +
+                        "WorkshopRoomPresenter.");
+                }
+
+                if (cancellationOwner.IsCancellationRequested ||
+                    _disposed ||
+                    generation != _loadGeneration)
+                {
+                    operationToken.ThrowIfCancellationRequested();
+                    throw new ObjectDisposedException(
+                        nameof(AddressableWorkshopRoomLoader));
+                }
+
+                _handle = handle;
+                _hasHandle = true;
+                handle = default;
+                _presenter = presenter;
+                _chapterId = chapterId;
+                _parent = parent;
+                return presenter;
             }
             catch (OperationCanceledException)
             {
-                // The Addressables operation keeps running after the caller
-                // gives up, so wait for it and release the late instance
-                // instead of leaking it.
+                // Addressables keeps running after lifecycle cancellation, so
+                // release the operation-owned late instance exactly once.
                 await ReleaseLateAsync(handle);
-                ClearLoading(generation);
+                handle = default;
                 throw;
             }
             catch
             {
                 ReleaseHandle(ref handle);
-                ClearLoading(generation);
                 throw;
             }
-
-            WorkshopRoomPresenter presenter = instance == null
-                ? null
-                : instance.GetComponent<WorkshopRoomPresenter>();
-            if (presenter == null)
+            finally
             {
-                ReleaseHandle(ref handle);
-                ClearLoading(generation);
-                throw new InvalidOperationException(
-                    "The workshop room prefab has no WorkshopRoomPresenter.");
+                CompleteLoadAttempt(generation, cancellationOwner);
             }
-
-            if (cancellationToken.IsCancellationRequested ||
-                _disposed ||
-                generation != _loadGeneration)
-            {
-                ReleaseHandle(ref handle);
-                ClearLoading(generation);
-                cancellationToken.ThrowIfCancellationRequested();
-                throw new ObjectDisposedException(
-                    nameof(AddressableWorkshopRoomLoader));
-            }
-
-            _handle = handle;
-            _hasHandle = true;
-            _presenter = presenter;
-            _chapterId = chapterId;
-            _parent = parent;
-            _loading = false;
-            return presenter;
         }
 
-        private void ClearLoading(int generation)
+        private void CompleteLoadAttempt(
+            int generation,
+            CancellationTokenSource cancellationOwner)
         {
             if (generation == _loadGeneration)
             {
                 _loading = false;
             }
+
+            if (!ReferenceEquals(_loadCancellation, cancellationOwner))
+            {
+                return;
+            }
+
+            _loadCancellation = null;
+            cancellationOwner.Dispose();
         }
 
         public UniTask UnloadAsync(CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             ReleaseCurrent();
+            cancellationToken.ThrowIfCancellationRequested();
             return UniTask.CompletedTask;
         }
 
@@ -223,9 +283,11 @@ namespace CalmSpace.Workshop
             _loadGeneration++;
             if (_loadCancellation != null)
             {
-                _loadCancellation.Cancel();
-                _loadCancellation.Dispose();
+                CancellationTokenSource cancellationOwner =
+                    _loadCancellation;
                 _loadCancellation = null;
+                cancellationOwner.Cancel();
+                cancellationOwner.Dispose();
             }
 
             _presenter = null;
@@ -243,7 +305,7 @@ namespace CalmSpace.Workshop
             ReleaseHandle(ref handle);
         }
 
-        private static async UniTask ReleaseLateAsync(
+        private async UniTask ReleaseLateAsync(
             AsyncOperationHandle<GameObject> handle)
         {
             if (!handle.IsValid())
@@ -263,7 +325,7 @@ namespace CalmSpace.Workshop
             ReleaseHandle(ref handle);
         }
 
-        private static void ReleaseHandle(
+        private void ReleaseHandle(
             ref AsyncOperationHandle<GameObject> handle)
         {
             if (!handle.IsValid())
@@ -273,7 +335,7 @@ namespace CalmSpace.Workshop
 
             AsyncOperationHandle<GameObject> released = handle;
             handle = default;
-            Addressables.ReleaseInstance(released);
+            _operationAdapter.ReleaseInstance(released);
         }
     }
 }
