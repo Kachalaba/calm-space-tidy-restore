@@ -58,6 +58,56 @@ namespace CalmSpace.Tests.EditMode
                 Is.EqualTo("Workshop Local"));
         }
 
+        [Test]
+        public void DuplicateDisplayOrientationsNormalizeToOneFinding()
+        {
+            const string assetPath =
+                "Assets/CalmSpace/UI/Workshop/Art/Room/shared.png";
+            CalmSpaceAddressablesAudit.AnalyzeClassification result =
+                CalmSpaceAddressablesAudit.ClassifyAnalyzeResults(
+                    new List<AnalyzeRule.AnalyzeResult>
+                    {
+                        Result(
+                            "Workshop Local:workshop_bundle:" + assetPath,
+                            MessageType.Warning),
+                        Result(
+                            assetPath +
+                            ":Workshop Local:workshop_bundle",
+                            MessageType.Warning)
+                    });
+
+            Assert.That(result.Errors, Is.Empty);
+            Assert.That(result.Duplicates.Count, Is.EqualTo(1));
+            Assert.That(result.Duplicates[0].Group, Is.EqualTo("Workshop Local"));
+            Assert.That(result.Duplicates[0].Bundle, Is.EqualTo("workshop_bundle"));
+            Assert.That(result.Duplicates[0].AssetPath, Is.EqualTo(assetPath));
+        }
+
+        [TestCase(
+            "Assets/CalmSpace/first.asset:Group:" +
+            "Assets/CalmSpace/second.asset")]
+        [TestCase("/Users/private.asset:Group:bundle")]
+        [TestCase("Group:bundle:/Users/private.asset")]
+        [TestCase(
+            "/Users/private-group:bundle:" +
+            "Assets/CalmSpace/valid.asset")]
+        [TestCase(
+            "Assets/CalmSpace/valid.asset:Group:" +
+            "/Users/private-bundle")]
+        public void AmbiguousAndAbsoluteDisplayShapesFailClosed(
+            string resultName)
+        {
+            CalmSpaceAddressablesAudit.AnalyzeClassification result =
+                CalmSpaceAddressablesAudit.ClassifyAnalyzeResults(
+                    new List<AnalyzeRule.AnalyzeResult>
+                    {
+                        Result(resultName, MessageType.Warning)
+                    });
+
+            Assert.That(result.Errors, Is.Not.Empty);
+            Assert.That(result.Duplicates, Is.Empty);
+        }
+
         [TestCase(
             "Check Duplicate Bundle DependenciesAnalyze build failed. Error")]
         [TestCase(

@@ -238,75 +238,75 @@ namespace CalmSpace.Editor
                     "Run this method with Android as the active build target.");
             }
 
-            ConfigureProject();
-            ApplyVersionOverrides();
-            if (requireReleaseSigning)
+            using (var signingCleanup = new AndroidSigningCleanupScope())
             {
-                ApplyReleaseSigningFromEnvironment();
-                ValidateGooglePlayReleaseSettings();
+                ConfigureProject();
+                ApplyVersionOverrides();
+                if (requireReleaseSigning)
+                {
+                    // Arm before applying anything so even a partial setter
+                    // failure cannot leave release state serialized.
+                    signingCleanup.Arm();
+                    ApplyReleaseSigningFromEnvironment();
+                    ValidateGooglePlayReleaseSettings();
+                }
+
+                EditorUserBuildSettings.buildAppBundle = buildAppBundle;
+
+                AddressableAssetSettings.BuildPlayerContent(
+                    out AddressablesPlayerBuildResult addressablesResult);
+                if (!string.IsNullOrEmpty(addressablesResult.Error))
+                {
+                    throw new BuildFailedException(
+                        "Addressables build failed: " +
+                        addressablesResult.Error);
+                }
+
+                string outputPath = Path.GetFullPath(buildOutputPath);
+                string outputDirectory = Path.GetDirectoryName(outputPath);
+                if (string.IsNullOrEmpty(outputDirectory))
+                {
+                    throw new BuildFailedException(
+                        "Could not resolve the Android build directory.");
+                }
+
+                Directory.CreateDirectory(outputDirectory);
+
+                BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
+                if (!requireReleaseSigning)
+                {
+                    buildOptions |= BuildOptions.Development;
+                }
+
+                var options = new BuildPlayerOptions
+                {
+                    scenes = new[] { MainScenePath },
+                    locationPathName = outputPath,
+                    target = BuildTarget.Android,
+                    targetGroup = BuildTargetGroup.Android,
+                    options = buildOptions
+                };
+
+                // Debug builds historically clear custom signing only once
+                // they reach the player build. Preserve that behavior while
+                // release builds arm immediately before signing is applied.
+                signingCleanup.Arm();
+                BuildReport report = BuildPipeline.BuildPlayer(options);
+
+                if (report.summary.result != BuildResult.Succeeded)
+                {
+                    throw new BuildFailedException(
+                        $"Android build ended with {report.summary.result}. " +
+                        $"Errors: {report.summary.totalErrors}.");
+                }
+
+                Debug.Log(
+                    $"CALMSPACE_ANDROID_BUILD_COMPLETE {outputPath} " +
+                    $"{report.summary.totalSize} bytes " +
+                    $"versionCode={PlayerSettings.Android.bundleVersionCode} " +
+                    $"versionName={PlayerSettings.bundleVersion} " +
+                    $"targetSdk={PlayerSettings.Android.targetSdkVersion}");
             }
-
-            EditorUserBuildSettings.buildAppBundle = buildAppBundle;
-
-            AddressableAssetSettings.BuildPlayerContent(
-                out AddressablesPlayerBuildResult addressablesResult);
-            if (!string.IsNullOrEmpty(addressablesResult.Error))
-            {
-                throw new BuildFailedException(
-                    "Addressables build failed: " +
-                    addressablesResult.Error);
-            }
-
-            string outputPath = Path.GetFullPath(buildOutputPath);
-            string outputDirectory = Path.GetDirectoryName(outputPath);
-            if (string.IsNullOrEmpty(outputDirectory))
-            {
-                throw new BuildFailedException(
-                    "Could not resolve the Android build directory.");
-            }
-
-            Directory.CreateDirectory(outputDirectory);
-
-            BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
-            if (!requireReleaseSigning)
-            {
-                buildOptions |= BuildOptions.Development;
-            }
-
-            var options = new BuildPlayerOptions
-            {
-                scenes = new[] { MainScenePath },
-                locationPathName = outputPath,
-                target = BuildTarget.Android,
-                targetGroup = BuildTargetGroup.Android,
-                options = buildOptions
-            };
-
-            BuildReport report;
-            try
-            {
-                report = BuildPipeline.BuildPlayer(options);
-            }
-            finally
-            {
-                // Never let signing secrets settle into ProjectSettings.asset,
-                // which is tracked in git.
-                ClearSigningSecrets();
-            }
-
-            if (report.summary.result != BuildResult.Succeeded)
-            {
-                throw new BuildFailedException(
-                    $"Android build ended with {report.summary.result}. " +
-                    $"Errors: {report.summary.totalErrors}.");
-            }
-
-            Debug.Log(
-                $"CALMSPACE_ANDROID_BUILD_COMPLETE {outputPath} " +
-                $"{report.summary.totalSize} bytes " +
-                $"versionCode={PlayerSettings.Android.bundleVersionCode} " +
-                $"versionName={PlayerSettings.bundleVersion} " +
-                $"targetSdk={PlayerSettings.Android.targetSdkVersion}");
         }
 
         /// <summary>
@@ -393,6 +393,37 @@ namespace CalmSpace.Editor
             PlayerSettings.Android.keystoreName = string.Empty;
             PlayerSettings.Android.keyaliasName = string.Empty;
             PlayerSettings.Android.useCustomKeystore = false;
+        }
+
+        internal sealed class AndroidSigningCleanupScope : IDisposable
+        {
+            private bool _armed;
+            private bool _disposed;
+
+            internal void Arm()
+            {
+                if (_disposed)
+                {
+                    throw new ObjectDisposedException(
+                        nameof(AndroidSigningCleanupScope));
+                }
+
+                _armed = true;
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                if (_armed)
+                {
+                    ClearSigningSecrets();
+                }
+            }
         }
 
         private static void ValidateGooglePlayReleaseSettings()

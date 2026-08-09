@@ -182,7 +182,6 @@ namespace CalmSpace.Editor
 
                 string[] parts = name.Split(
                     new[] { AnalyzeRule.kDelimiter },
-                    3,
                     StringSplitOptions.None);
                 if (parts.Length != 3 ||
                     string.IsNullOrEmpty(parts[0]) ||
@@ -193,24 +192,46 @@ namespace CalmSpace.Editor
                     continue;
                 }
 
-                string assetPath = parts[2].Replace('\\', '/');
-                if (Path.IsPathRooted(assetPath) ||
-                    !assetPath.StartsWith("Assets/", StringComparison.Ordinal))
+                bool firstIsAsset = TryNormalizeAssetPath(
+                    parts[0], out string firstAssetPath);
+                bool thirdIsAsset = TryNormalizeAssetPath(
+                    parts[2], out string thirdAssetPath);
+                if (firstIsAsset == thirdIsAsset)
+                {
+                    bool hasUnsafePath =
+                        LooksLikeUnsafeAssetPath(parts[0]) ||
+                        LooksLikeUnsafeAssetPath(parts[2]);
+                    string error = firstIsAsset
+                        ? "analyzeResultAmbiguous"
+                        : hasUnsafePath
+                            ? "analyzeResultUnsafeAssetPath"
+                            : "analyzeResultMalformed";
+                    classification.Errors.Add(error);
+                    continue;
+                }
+
+                string group = firstIsAsset ? parts[1] : parts[0];
+                string bundle = firstIsAsset ? parts[2] : parts[1];
+                string assetPath = firstIsAsset
+                    ? firstAssetPath
+                    : thirdAssetPath;
+                if (LooksLikeUnsafeAssetPath(group) ||
+                    LooksLikeUnsafeAssetPath(bundle))
                 {
                     classification.Errors.Add(
                         "analyzeResultUnsafeAssetPath");
                     continue;
                 }
 
-                string key = parts[0] + "\n" + parts[1] + "\n" + assetPath;
+                string key = group + "\n" + bundle + "\n" + assetPath;
                 if (!uniqueFindings.ContainsKey(key))
                 {
                     uniqueFindings.Add(
                         key,
                         new DuplicateDependencyFinding
                         {
-                            Group = parts[0],
-                            Bundle = parts[1],
+                            Group = group,
+                            Bundle = bundle,
                             AssetPath = assetPath
                         });
                 }
@@ -220,6 +241,42 @@ namespace CalmSpace.Editor
             classification.Duplicates.Sort(CompareDuplicateFindings);
             SortAndDeduplicate(classification.Errors);
             return classification;
+        }
+
+        private static bool TryNormalizeAssetPath(
+            string value,
+            out string normalized)
+        {
+            normalized = value?.Replace('\\', '/');
+            if (string.IsNullOrEmpty(normalized) ||
+                Path.IsPathRooted(normalized) ||
+                !normalized.StartsWith("Assets/", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string[] segments = normalized.Split('/');
+            for (var index = 0; index < segments.Length; index++)
+            {
+                if (string.IsNullOrEmpty(segments[index]) ||
+                    string.Equals(
+                        segments[index], ".", StringComparison.Ordinal) ||
+                    string.Equals(
+                        segments[index], "..", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool LooksLikeUnsafeAssetPath(string value)
+        {
+            string normalized = value?.Replace('\\', '/');
+            return !string.IsNullOrEmpty(normalized) &&
+                (Path.IsPathRooted(normalized) ||
+                 normalized.StartsWith("Assets/", StringComparison.Ordinal));
         }
 
         private static void ExecuteAudit(AuditSummary summary)
