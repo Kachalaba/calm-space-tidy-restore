@@ -98,6 +98,8 @@ namespace CalmSpace.Editor
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs",
             "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopRoomPresenter.cs",
             "Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs",
+            "Assets/CalmSpace/Runtime/Audio/IAsmrAudioService.cs",
+            "Assets/CalmSpace/Runtime/Audio/AsmrAudioService.cs",
             "Assets/CalmSpace/Runtime/Composition/CalmSpaceLifetimeScope.cs",
             "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs",
             "Assets/CalmSpace/Runtime/Workshop/AddressableWorkshopRoomLoader.cs",
@@ -951,6 +953,8 @@ namespace CalmSpace.Editor
             LivingWorkshopCatalog workshopCatalog,
             WorkshopTextCatalog workshopTextCatalog)
         {
+            CalmSpaceTactileAudioBuilder.GeneratedAudioPalette audioPalette =
+                CalmSpaceTactileAudioBuilder.CreateOrUpdatePalette();
             string generatedSceneMarker = GetGeneratedSceneMarker();
             if (TryReuseCurrentGeneratedScene(generatedSceneMarker))
             {
@@ -983,8 +987,6 @@ namespace CalmSpace.Editor
                 services.AddComponent<CalmSpaceLifetimeScope>();
 
             var audioSerialized = new SerializedObject(audioService);
-            SerializedProperty clips =
-                audioSerialized.FindProperty("_snapClips");
 
             // The pooled service picks a clip at random per placement, so the
             // whole tactile palette goes in: one repeated click is what makes
@@ -995,8 +997,7 @@ namespace CalmSpace.Editor
                 snapClips.Add(snapClip);
             }
 
-            foreach (AudioClip tactile in
-                     CalmSpaceTactileAudioBuilder.CreateOrUpdate())
+            foreach (AudioClip tactile in audioPalette.Placement)
             {
                 if (tactile != null)
                 {
@@ -1004,12 +1005,25 @@ namespace CalmSpace.Editor
                 }
             }
 
-            clips.arraySize = snapClips.Count;
-            for (var index = 0; index < snapClips.Count; index++)
-            {
-                clips.GetArrayElementAtIndex(index).objectReferenceValue =
-                    snapClips[index];
-            }
+            SetAudioClipBank(audioSerialized, "_snapClips", snapClips);
+            SetAudioClipBank(
+                audioSerialized, "_screwTurnClips", audioPalette.ScrewTurn);
+            SetAudioClipBank(
+                audioSerialized, "_screwReleaseClips", audioPalette.ScrewRelease);
+            SetAudioClipBank(
+                audioSerialized, "_cleaningClothClips", audioPalette.CleaningCloth);
+            SetAudioClipBank(
+                audioSerialized, "_cleaningSpongeClips", audioPalette.CleaningSponge);
+            SetAudioClipBank(
+                audioSerialized,
+                "_cleaningSqueegeeClips",
+                audioPalette.CleaningSqueegee);
+            SetAudioClipBank(
+                audioSerialized, "_levelCompleteClips", audioPalette.LevelComplete);
+            SetAudioClipBank(
+                audioSerialized, "_roomRevealClips", audioPalette.RoomReveal);
+            SetAudioClipBank(
+                audioSerialized, "_uiTapClips", audioPalette.UiTap);
 
             audioSerialized.FindProperty("_outputMixerGroup")
                 .objectReferenceValue = mixerGroup;
@@ -1132,8 +1146,11 @@ namespace CalmSpace.Editor
             CalmSpaceLifetimeScope scope =
                 Object.FindFirstObjectByType<CalmSpaceLifetimeScope>(
                     FindObjectsInactive.Include);
+            AsmrAudioService audio =
+                Object.FindFirstObjectByType<AsmrAudioService>(
+                    FindObjectsInactive.Include);
             if (home == null || home.View == null || experience == null ||
-                scope == null)
+                scope == null || audio == null)
             {
                 return false;
             }
@@ -1186,11 +1203,62 @@ namespace CalmSpace.Editor
                 return false;
             }
 
+            var audioData = new SerializedObject(audio);
+            foreach (string field in new[]
+                     {
+                         "_snapClips",
+                         "_screwTurnClips",
+                         "_screwReleaseClips",
+                         "_cleaningClothClips",
+                         "_cleaningSpongeClips",
+                         "_cleaningSqueegeeClips",
+                         "_levelCompleteClips",
+                         "_roomRevealClips",
+                         "_uiTapClips"
+                     })
+            {
+                SerializedProperty bank = audioData.FindProperty(field);
+                if (bank == null || bank.arraySize == 0)
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < bank.arraySize; index++)
+                {
+                    if (bank.GetArrayElementAtIndex(index)
+                            .objectReferenceValue == null)
+                    {
+                        return false;
+                    }
+                }
+            }
+
             DemoRoomPresenter room =
                 Object.FindFirstObjectByType<DemoRoomPresenter>(
                     FindObjectsInactive.Include);
             return room != null && room.RoomRoot != null &&
                 room.RoomRoot.GetComponentsInChildren<Graphic>(true).Length >= 4;
+        }
+
+        private static void SetAudioClipBank(
+            SerializedObject serialized,
+            string fieldName,
+            IReadOnlyList<AudioClip> clips)
+        {
+            SerializedProperty bank = serialized.FindProperty(fieldName);
+            if (bank == null)
+            {
+                throw new InvalidOperationException(
+                    "Missing ASMR audio bank " + fieldName + ".");
+            }
+
+            int count = clips?.Count ?? 0;
+            bank.arraySize = count;
+            for (var index = 0; index < count; index++)
+            {
+                bank.GetArrayElementAtIndex(index).objectReferenceValue =
+                    clips[index];
+            }
         }
 
         private static string GetGeneratedSceneMarker()

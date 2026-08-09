@@ -179,6 +179,7 @@ namespace CalmSpace.UI
         private IDemoThemeService _themeService;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _musicService;
+        private IAsmrAudioService _audioService;
         private IUndoHistory _undoHistory;
         private IProductAnalytics _analytics;
         private IMonotonicClock _clock;
@@ -214,6 +215,7 @@ namespace CalmSpace.UI
         private string _pendingCompletionResultTextKey = string.Empty;
         private string _pendingCompletionChapterId = string.Empty;
         private bool _pendingCompletionIsFinale;
+        private bool _completionCuePlayed;
         private ProfileMutationStatus _lastCompletionStatus =
             ProfileMutationStatus.Invalid;
         private bool _invalidCompletionLogged;
@@ -241,6 +243,7 @@ namespace CalmSpace.UI
             IDemoThemeService themeService,
             IDemoLocalizationService localization,
             IBackgroundMusicService musicService,
+            IAsmrAudioService audioService,
             IUndoHistory undoHistory,
             IProductAnalytics analytics,
             IMonotonicClock clock,
@@ -267,6 +270,8 @@ namespace CalmSpace.UI
                 throw new ArgumentNullException(nameof(localization));
             _musicService = musicService ??
                 throw new ArgumentNullException(nameof(musicService));
+            _audioService = audioService ??
+                throw new ArgumentNullException(nameof(audioService));
             _undoHistory = undoHistory ??
                 throw new ArgumentNullException(nameof(undoHistory));
             _analytics = analytics ??
@@ -883,6 +888,7 @@ namespace CalmSpace.UI
         {
             UnbindLevel();
             _boundLevel = level;
+            _completionCuePlayed = false;
             if (_boundLevel == null)
             {
                 return;
@@ -1131,6 +1137,11 @@ namespace CalmSpace.UI
             _lastCompletionReward = Mathf.Max(
                 0,
                 completion.RewardAmount);
+            if (!_completionCuePlayed)
+            {
+                _completionCuePlayed = true;
+                PlayAudioCue(AsmrAudioCue.LevelComplete);
+            }
             SetCompletionRecoveryVisible(false);
             _analytics.Track(
                 ProductAnalyticsEvent.LevelCompleted(
@@ -2107,6 +2118,12 @@ namespace CalmSpace.UI
 
         private void HandlePlayPressed()
         {
+            if (!CanNavigate() || !HasRecommendedLevelAction())
+            {
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
             PlayRecommendedLevelAsync(
                 _lifetimeCancellation.Token).Forget();
         }
@@ -2131,6 +2148,12 @@ namespace CalmSpace.UI
 
         private void HandleNextPressed()
         {
+            if (!CanNavigate())
+            {
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
             ReturnToWorkshopAsync(
                 WorkshopHomeEntryReason.ReturnFromLevel,
                 _lifetimeCancellation.Token).Forget();
@@ -2142,6 +2165,7 @@ namespace CalmSpace.UI
                 _lastCompletionStatus ==
                     ProfileMutationStatus.PersistFailed)
             {
+                PlayAudioCue(AsmrAudioCue.UiTap);
                 CompleteCapturedLevel();
             }
         }
@@ -2314,6 +2338,36 @@ namespace CalmSpace.UI
             }
         }
 
+        private bool HasRecommendedLevelAction()
+        {
+            WorkshopRecommendedAction? action =
+                _workshopFlowCoordinator.GetRecommendedAction();
+            if (action.HasValue)
+            {
+                return _workshopFlowCoordinator.TryCreateLaunchRequest(
+                    action.Value,
+                    out _);
+            }
+
+            int recommended = DemoProgressRules.GetRecommendedLevel(
+                _progressStore.Current,
+                _levelCatalog.Count);
+            return _progressStore.IsLevelUnlocked(recommended) &&
+                _levelCatalog.TryGetEntry(recommended, out _);
+        }
+
+        private void PlayAudioCue(AsmrAudioCue cue)
+        {
+            try
+            {
+                _audioService.PlayCue(cue);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
+        }
+
         private void ValidateDependencies()
         {
             if (_levelFlow == null ||
@@ -2323,6 +2377,7 @@ namespace CalmSpace.UI
                 _themeService == null ||
                 _localization == null ||
                 _musicService == null ||
+                _audioService == null ||
                 _undoHistory == null ||
                 _analytics == null ||
                 _clock == null ||

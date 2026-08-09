@@ -4,6 +4,9 @@ This demo does not include third-party stock art, music, or sound samples.
 
 ## Generated visual assets
 
+- The menu background and app icon remain the two OpenAI ImageGen assets in
+  this repository; the later workshop-room art is generated locally as
+  documented below.
 - `Assets/CalmSpace/UI/Art/CalmSpaceMenuBackground.png` — created specifically
   for Calm Space with OpenAI ImageGen on 2026-07-28.
 - `Assets/CalmSpace/UI/Art/CalmSpaceAppIcon.png` — created specifically for
@@ -59,6 +62,12 @@ generated scene, captured by `CalmSpaceRoomScreenshot`.
   They contain no third-party audio sample and regenerate byte-identically
   from source. The pooled audio service picks one at random per placement so
   repeated tidying reads as physical rather than looped.
+- `Assets/CalmSpace/Audio/Tactile/Cues/*.wav` — eight original interaction
+  banks for screw turns/releases, cloth/sponge/squeegee cleaning, level
+  completion, workshop reveals, and accepted UI taps. They are synthesized by
+  the same project-owned `CalmSpaceTactileAudioBuilder.cs` from deterministic
+  filtered noise and damped sine partials, contain no recorded or third-party
+  sample, and regenerate byte-identically from source.
 - `Assets/CalmSpace/Audio/SnapSoft.wav` — original procedural interaction sound
   synthesized for this project. It contains no third-party audio samples.
 

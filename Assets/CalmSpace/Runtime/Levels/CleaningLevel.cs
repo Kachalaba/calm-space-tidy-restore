@@ -189,7 +189,7 @@ namespace CalmSpace.Levels
         {
             if (_cleaningInput != null)
             {
-                _cleaningInput.SetActiveCleaner(cleaner);
+                _cleaningInput.SetActiveCleaner(cleaner, ActiveTool);
             }
 
             var handler = ActiveCleanerChanged;

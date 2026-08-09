@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using CalmSpace.Audio;
 using CalmSpace.Demo;
 using CalmSpace.Levels;
 using CalmSpace.UI;
@@ -87,12 +88,17 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
             IDemoProgressStore store = Store(experience);
             yield return WaitForRoom(home);
 
             yield return CompleteFirstLevel(experience);
             yield return ReturnHome(experience, home);
             yield return WaitForRevealStart(home);
+            Assert.That(
+                audio.Count(AsmrAudioCue.RoomReveal),
+                Is.EqualTo(1));
 
             // Leaving the workshop mid-reveal persists nothing.
             home.NotifyHidden();
@@ -117,12 +123,60 @@ namespace CalmSpace.Tests.PlayMode
                 default));
             yield return WaitForRevealStart(home);
             Assert.That(
+                audio.Count(AsmrAudioCue.RoomReveal),
+                Is.EqualTo(2),
+                "Replaying an interrupted visual starts one fresh cue.");
+            Assert.That(
                 Room(home).IsRevealPlaying,
                 Is.True,
                 "The next entry must replay the unfinished reveal.");
 
             yield return WaitForRevealEnd(home, 12f);
             Assert.That(PendingRevealCount(store), Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator MissingRevealVisualStaysSilentAndShowsFallback()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+            yield return CompleteFirstLevel(experience);
+
+            var missingRoomObject = new GameObject("Missing reveal room");
+            var missingRoom =
+                missingRoomObject.AddComponent<WorkshopRoomPresenter>();
+            missingRoom.Configure(
+                WorkshopContentIds.CozyWorkshopChapterId,
+                missingRoomObject,
+                null,
+                null,
+                Array.Empty<WorkshopRoomBeatBinding>());
+            SetPrivateField(home, "_room", missingRoom);
+
+            LogAssert.Expect(
+                LogType.Warning,
+                "Workshop room has no authored visual for beat " +
+                "cozy-workshop.clear-passage; the room stays usable.");
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealEnd(home, 2f);
+
+            Assert.That(
+                audio.Count(AsmrAudioCue.RoomReveal),
+                Is.Zero,
+                "A missing visual is a fallback, not a reveal playback.");
+            Assert.That(
+                GetPrivateField<string>(home, "_revealFallbackBeatId"),
+                Is.EqualTo("cozy-workshop.clear-passage"));
+            Assert.That(home.View.BottomSheet.IsOpen, Is.True);
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "Skipping an available reveal fallback emits one UI cue.");
         }
 
         [UnityTest]
@@ -265,6 +319,8 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
             IDemoProgressStore store = Store(experience);
             yield return WaitForRoom(home);
 
@@ -332,6 +388,12 @@ namespace CalmSpace.Tests.PlayMode
                 home.View.PrimaryButton.gameObject.activeSelf,
                 Is.True,
                 "The next level must be offered again.");
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "Closing an offered memory is one accepted primary action.");
+
+            yield return CloseMemoryCardIfOpen(home);
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "No memory card means no accepted action and no extra cue.");
         }
 
         private static string MemoryCardId(WorkshopHomeController home)
@@ -546,6 +608,50 @@ namespace CalmSpace.Tests.PlayMode
 
             Assert.That(field, Is.Not.Null, "Missing field " + name);
             return (T)field.GetValue(target);
+        }
+
+        private static void SetPrivateField(
+            object target,
+            string name,
+            object value)
+        {
+            FieldInfo field = target.GetType().GetField(
+                name,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, "Missing field " + name);
+            field.SetValue(target, value);
+        }
+
+        private sealed class RecordingAudio : ICategorizedAsmrAudioService
+        {
+            private readonly System.Collections.Generic.List<AsmrAudioCue>
+                _cues = new System.Collections.Generic.List<AsmrAudioCue>();
+
+            public bool IsAvailable => true;
+
+            public void PlaySnap(Vector3 worldPosition)
+            {
+                PlayCue(AsmrAudioCue.Placement, worldPosition);
+            }
+
+            public void PlayCue(AsmrAudioCue cue, Vector3 worldPosition)
+            {
+                _cues.Add(cue);
+            }
+
+            public int Count(AsmrAudioCue cue)
+            {
+                var count = 0;
+                for (var index = 0; index < _cues.Count; index++)
+                {
+                    if (_cues[index] == cue)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
         }
 
         private static IEnumerator LoadMain()

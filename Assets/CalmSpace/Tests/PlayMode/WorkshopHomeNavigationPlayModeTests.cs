@@ -43,6 +43,8 @@ namespace CalmSpace.Tests.PlayMode
         {
             yield return LoadMain();
             WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
             var requestCount = 0;
             LevelLaunchRequest captured = default;
             home.LevelLaunchRequested += request =>
@@ -60,6 +62,21 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(captured.LevelIndex, Is.Zero);
             Assert.That(captured.ChapterId, Is.EqualTo("cozy-workshop"));
             Assert.That(captured.BeatId, Is.EqualTo("cozy-workshop.clear-passage"));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
+
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            IDemoProgressStore store = GetPrivateField<IDemoProgressStore>(
+                experience,
+                "_progressStore");
+            for (var index = 0; index < 8; index++)
+            {
+                store.MarkLevelCompleted(index);
+            }
+
+            home.View.PrimaryButton.onClick.Invoke();
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "An unavailable primary action must stay silent.");
         }
 
         [UnityTest]
@@ -482,6 +499,8 @@ namespace CalmSpace.Tests.PlayMode
             yield return Await(play);
 
             WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
             Assert.That(play.GetAwaiter().GetResult(), Is.False);
             Assert.That(home.View.BottomSheet.IsOpen, Is.True);
             Assert.That(home.View.BottomSheet.ActionButton.gameObject.activeSelf,
@@ -532,6 +551,7 @@ namespace CalmSpace.Tests.PlayMode
 
             home.View.BottomSheet.ActionButton.onClick.Invoke();
             yield return WaitForLoadCalls(failing, 2);
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
             Assert.That(failing.LoadCallCount, Is.EqualTo(2),
                 "Replacing the recovery action must not multiply listeners.");
             Assert.That(capturingRecovery.RetryCount, Is.EqualTo(1));
@@ -551,6 +571,8 @@ namespace CalmSpace.Tests.PlayMode
             SetPrivateField(experience, "_levelFlow", realFlow);
             home.View.BottomSheet.ActionButton.onClick.Invoke();
             yield return WaitForCurrentLevel(experience, 0);
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(2),
+                "Each accepted recovery retry emits one UI cue.");
             ProductAnalyticsEvent started =
                 analytics.Find(ProductEventKind.LevelStarted);
             Assert.That(started.LevelId, Is.EqualTo(request.LevelId));
@@ -569,8 +591,10 @@ namespace CalmSpace.Tests.PlayMode
                 ProfileMutationStatus.PersistFailed,
                 ProfileMutationStatus.Applied);
             var analytics = new RecordingAnalytics();
+            var audio = new RecordingAudio();
             SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
             SetPrivateField(experience, "_analytics", analytics);
+            SetPrivateField(experience, "_audioService", audio);
 
             InvokeCompletion(experience);
             yield return WaitForCompletionStatus(
@@ -591,6 +615,8 @@ namespace CalmSpace.Tests.PlayMode
                 Is.Zero);
             Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
                 Is.Zero);
+            Assert.That(audio.Count(AsmrAudioCue.LevelComplete), Is.Zero,
+                "A completion that did not persist must stay silent.");
 
             yield return WaitForButton(retry);
 
@@ -607,6 +633,15 @@ namespace CalmSpace.Tests.PlayMode
                 Is.EqualTo(1));
             Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
                 Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.LevelComplete), Is.EqualTo(1),
+                "The successful retry emits completion once.");
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "The accepted save retry emits one UI cue.");
+
+            retry.onClick.Invoke();
+            yield return null;
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
+                "A stale retry callback is rejected and stays silent.");
         }
 
         [UnityTest]
@@ -819,8 +854,10 @@ namespace CalmSpace.Tests.PlayMode
             var coordinator = new ScriptedWorkshopFlow(
                 ProfileMutationStatus.AlreadyApplied);
             var analytics = new RecordingAnalytics();
+            var audio = new RecordingAudio();
             SetPrivateField(experience, "_workshopFlowCoordinator", coordinator);
             SetPrivateField(experience, "_analytics", analytics);
+            SetPrivateField(experience, "_audioService", audio);
 
             InvokeCompletion(experience);
             yield return WaitForCompletionStatus(
@@ -838,6 +875,8 @@ namespace CalmSpace.Tests.PlayMode
                 Is.Zero);
             Assert.That(analytics.Count(ProductEventKind.ChapterCompleted),
                 Is.Zero);
+            Assert.That(audio.Count(AsmrAudioCue.LevelComplete), Is.EqualTo(1),
+                "A successful replay still receives one completion cue.");
         }
 
         [UnityTest]
@@ -1177,6 +1216,38 @@ namespace CalmSpace.Tests.PlayMode
 
                 Assert.Fail("Missing analytics event " + kind + ".");
                 return default;
+            }
+        }
+
+        private sealed class RecordingAudio : ICategorizedAsmrAudioService
+        {
+            private readonly List<AsmrAudioCue> _cues =
+                new List<AsmrAudioCue>();
+
+            public bool IsAvailable => true;
+
+            public void PlaySnap(Vector3 worldPosition)
+            {
+                PlayCue(AsmrAudioCue.Placement, worldPosition);
+            }
+
+            public void PlayCue(AsmrAudioCue cue, Vector3 worldPosition)
+            {
+                _cues.Add(cue);
+            }
+
+            public int Count(AsmrAudioCue cue)
+            {
+                var count = 0;
+                for (var index = 0; index < _cues.Count; index++)
+                {
+                    if (_cues[index] == cue)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
             }
         }
 

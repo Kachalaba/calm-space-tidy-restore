@@ -70,6 +70,7 @@ namespace CalmSpace.UI
         private IHapticService _haptics;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _music;
+        private IAsmrAudioService _audioService;
         private WorkshopRuntimeAvailability _availability;
         private bool _initialized;
         private bool _eventsBound;
@@ -94,6 +95,7 @@ namespace CalmSpace.UI
             IHapticService haptics,
             IDemoLocalizationService localization,
             IBackgroundMusicService music,
+            IAsmrAudioService audioService,
             WorkshopRuntimeAvailability availability,
             IWorkshopRoomLoader roomLoader)
         {
@@ -111,6 +113,8 @@ namespace CalmSpace.UI
             _localization = localization ??
                 throw new ArgumentNullException(nameof(localization));
             _music = music ?? throw new ArgumentNullException(nameof(music));
+            _audioService = audioService ??
+                throw new ArgumentNullException(nameof(audioService));
             _availability = availability ??
                 throw new ArgumentNullException(nameof(availability));
         }
@@ -126,7 +130,8 @@ namespace CalmSpace.UI
             if (_view == null || _store == null || _flow == null ||
                 _projector == null || _text == null || _analytics == null ||
                 _haptics == null || _localization == null || _music == null ||
-                _availability == null || _roomLoader == null)
+                _audioService == null || _availability == null ||
+                _roomLoader == null)
             {
                 throw new InvalidOperationException(
                     "WorkshopHomeController is not fully configured.");
@@ -245,7 +250,14 @@ namespace CalmSpace.UI
             var result = WorkshopRevealPlaybackResult.Cancelled;
             try
             {
-                result = await _room.PlayRevealAsync(beatId, cancellationToken);
+                UniTask<WorkshopRevealPlaybackResult> playback =
+                    _room.PlayRevealAsync(beatId, cancellationToken);
+                if (_room.IsRevealPlaying)
+                {
+                    PlayAudioCue(AsmrAudioCue.RoomReveal);
+                }
+
+                result = await playback;
             }
             catch (OperationCanceledException)
             {
@@ -439,6 +451,11 @@ namespace CalmSpace.UI
             string memoryId = _memoryCardId;
             _memoryCardId = string.Empty;
             _view.CloseBottomSheet();
+            if (!string.IsNullOrEmpty(memoryId))
+            {
+                PlayAudioCue(AsmrAudioCue.UiTap);
+            }
+
             if (!string.IsNullOrEmpty(memoryId) &&
                 _store != null &&
                 _store.IsInitialized)
@@ -482,6 +499,7 @@ namespace CalmSpace.UI
             _view.CloseBottomSheet();
             if (!string.IsNullOrEmpty(beatId))
             {
+                PlayAudioCue(AsmrAudioCue.UiTap);
                 MarkRevealSeen(beatId);
             }
         }
@@ -673,7 +691,20 @@ namespace CalmSpace.UI
 
             _analytics.Track(
                 ProductAnalyticsEvent.RestorationTaskSelected(request));
+            PlayAudioCue(AsmrAudioCue.UiTap);
             LevelLaunchRequested?.Invoke(request);
+        }
+
+        private void PlayAudioCue(AsmrAudioCue cue)
+        {
+            try
+            {
+                _audioService.PlayCue(cue);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
         }
 
         private void HandleCatalogRequested()
@@ -866,9 +897,16 @@ namespace CalmSpace.UI
         {
             Action<LevelLaunchRequest> retry = _retryLoad;
             LevelLaunchRequest request = _failedRequest;
+            bool accepted = _hasLoadFailure && retry != null;
             _hasLoadFailure = false;
             _retryLoad = null;
-            retry?.Invoke(request);
+            if (!accepted)
+            {
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
+            retry.Invoke(request);
         }
 
         private string GetTextOrFallback(

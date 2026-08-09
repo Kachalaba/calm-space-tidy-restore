@@ -2,6 +2,7 @@ using System.Threading;
 using System;
 using CalmSpace.Cleaning;
 using CalmSpace.Core;
+using CalmSpace.Audio;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -27,6 +28,8 @@ namespace CalmSpace.Input
         private RenderTextureCleaner _cleaner;
 
         private IPresentationActivityCoordinator _activityCoordinator;
+        private CleaningAudioFeedback _audioFeedback;
+        private CleaningToolKind _activeTool = CleaningToolKind.Cloth;
         private IDisposable _dragLease;
         private int _activeTouchId = NoTouchId;
         private bool _mouseOwnsStroke;
@@ -42,6 +45,20 @@ namespace CalmSpace.Input
 
         [Inject]
         public void Construct(
+            IPresentationActivityCoordinator activityCoordinator,
+            IAsmrAudioService audioService,
+            IMonotonicClock clock)
+        {
+            _activityCoordinator = activityCoordinator ??
+                throw new ArgumentNullException(
+                    nameof(activityCoordinator));
+            _audioFeedback = new CleaningAudioFeedback(
+                audioService,
+                clock,
+                CleaningAudioFeedback.DefaultMinimumIntervalSeconds);
+        }
+
+        public void Construct(
             IPresentationActivityCoordinator activityCoordinator)
         {
             _activityCoordinator = activityCoordinator ??
@@ -56,13 +73,21 @@ namespace CalmSpace.Input
         /// </summary>
         public void SetActiveCleaner(RenderTextureCleaner cleaner)
         {
-            if (_cleaner == cleaner)
+            SetActiveCleaner(cleaner, _activeTool);
+        }
+
+        public void SetActiveCleaner(
+            RenderTextureCleaner cleaner,
+            CleaningToolKind tool)
+        {
+            if (_cleaner == cleaner && _activeTool == tool)
             {
                 return;
             }
 
             CancelStroke();
             _cleaner = cleaner;
+            _activeTool = tool;
         }
 
         private void OnEnable()
@@ -193,8 +218,11 @@ namespace CalmSpace.Input
             _dragLease = lease;
             _cleaner.BeginStroke();
 
-            if (_cleaner.PaintFromScreenPoint(screenPosition))
+            if (_cleaner.PaintFromScreenPoint(
+                    screenPosition,
+                    out Vector3 paintedPosition))
             {
+                PlaySuccessfulPaintFeedback(paintedPosition);
                 RequestProgressEvaluation();
                 return true;
             }
@@ -262,9 +290,24 @@ namespace CalmSpace.Input
         private void Paint(Vector2 screenPosition)
         {
             if (_cleaner != null &&
-                _cleaner.PaintFromScreenPoint(screenPosition))
+                _cleaner.PaintFromScreenPoint(
+                    screenPosition,
+                    out Vector3 paintedPosition))
             {
+                PlaySuccessfulPaintFeedback(paintedPosition);
                 RequestProgressEvaluation();
+            }
+        }
+
+        private void PlaySuccessfulPaintFeedback(Vector3 worldPosition)
+        {
+            try
+            {
+                _audioFeedback?.TryPlay(_activeTool, worldPosition);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
             }
         }
 

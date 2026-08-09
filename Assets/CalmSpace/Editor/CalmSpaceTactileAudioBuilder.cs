@@ -19,6 +19,8 @@ namespace CalmSpace.Editor
     public static class CalmSpaceTactileAudioBuilder
     {
         public const string AudioRoot = "Assets/CalmSpace/Audio/Tactile";
+        public const string CueAudioRoot =
+            "Assets/CalmSpace/Audio/Tactile/Cues";
 
         private const int SampleRate = 44100;
         private const short Channels = 1;
@@ -37,7 +39,8 @@ namespace CalmSpace.Editor
                 float noiseDecay,
                 float noiseMix,
                 float brightness,
-                uint seed)
+                uint seed,
+                float durationSeconds = 0.42f)
             {
                 Name = name;
                 Partials = partials;
@@ -46,6 +49,7 @@ namespace CalmSpace.Editor
                 NoiseMix = noiseMix;
                 Brightness = brightness;
                 Seed = seed;
+                DurationSeconds = durationSeconds;
             }
 
             public string Name { get; }
@@ -55,6 +59,7 @@ namespace CalmSpace.Editor
             public float NoiseMix { get; }
             public float Brightness { get; }
             public uint Seed { get; }
+            public float DurationSeconds { get; }
         }
 
         private static readonly Material[] Materials =
@@ -91,6 +96,55 @@ namespace CalmSpace.Editor
                 14f, 100f, 0.34f, 0.10f, 0x5EED06u)
         };
 
+        private static readonly Material[] CueMaterials =
+        {
+            new Material(
+                "ScrewTurn",
+                new[] { 940f, 1760f, 3260f },
+                42f, 310f, 0.30f, 0.82f, 0x5EED11u, 0.13f),
+            new Material(
+                "ScrewRelease",
+                new[] { 420f, 1180f, 2540f, 4110f },
+                20f, 210f, 0.28f, 0.72f, 0x5EED12u, 0.28f),
+            new Material(
+                "CleaningCloth",
+                new[] { 96f, 214f, 382f },
+                35f, 52f, 0.82f, 0.10f, 0x5EED13u, 0.20f),
+            new Material(
+                "CleaningSponge",
+                new[] { 122f, 286f, 520f },
+                30f, 46f, 0.72f, 0.24f, 0x5EED14u, 0.22f),
+            new Material(
+                "CleaningSqueegee",
+                new[] { 188f, 544f, 1160f },
+                28f, 68f, 0.64f, 0.42f, 0x5EED15u, 0.24f),
+            new Material(
+                "LevelComplete",
+                new[] { 392f, 588f, 784f, 1176f },
+                7.5f, 150f, 0.12f, 0.58f, 0x5EED16u, 0.58f),
+            new Material(
+                "RoomReveal",
+                new[] { 174f, 348f, 522f, 870f },
+                5.8f, 44f, 0.42f, 0.20f, 0x5EED17u, 0.72f),
+            new Material(
+                "UiTap",
+                new[] { 760f, 1520f, 3040f },
+                54f, 340f, 0.25f, 0.76f, 0x5EED18u, 0.10f)
+        };
+
+        public sealed class GeneratedAudioPalette
+        {
+            public AudioClip[] Placement { get; internal set; }
+            public AudioClip[] ScrewTurn { get; internal set; }
+            public AudioClip[] ScrewRelease { get; internal set; }
+            public AudioClip[] CleaningCloth { get; internal set; }
+            public AudioClip[] CleaningSponge { get; internal set; }
+            public AudioClip[] CleaningSqueegee { get; internal set; }
+            public AudioClip[] LevelComplete { get; internal set; }
+            public AudioClip[] RoomReveal { get; internal set; }
+            public AudioClip[] UiTap { get; internal set; }
+        }
+
         /// <summary>
         /// Regenerates the palette and returns the clips in a stable order.
         /// Safe to run repeatedly: identical input produces identical bytes,
@@ -99,11 +153,35 @@ namespace CalmSpace.Editor
         /// </summary>
         public static AudioClip[] CreateOrUpdate()
         {
-            EnsureFolder(AudioRoot);
-            var clips = new List<AudioClip>(Materials.Length);
-            foreach (Material material in Materials)
+            return CreateClips(Materials, AudioRoot);
+        }
+
+        public static GeneratedAudioPalette CreateOrUpdatePalette()
+        {
+            AudioClip[] cues = CreateClips(CueMaterials, CueAudioRoot);
+            return new GeneratedAudioPalette
             {
-                string path = AudioRoot + "/" + material.Name + ".wav";
+                Placement = CreateOrUpdate(),
+                ScrewTurn = Bank(cues[0]),
+                ScrewRelease = Bank(cues[1]),
+                CleaningCloth = Bank(cues[2]),
+                CleaningSponge = Bank(cues[3]),
+                CleaningSqueegee = Bank(cues[4]),
+                LevelComplete = Bank(cues[5]),
+                RoomReveal = Bank(cues[6]),
+                UiTap = Bank(cues[7])
+            };
+        }
+
+        private static AudioClip[] CreateClips(
+            Material[] materials,
+            string root)
+        {
+            EnsureFolder(root);
+            var clips = new List<AudioClip>(materials.Length);
+            foreach (Material material in materials)
+            {
+                string path = root + "/" + material.Name + ".wav";
                 byte[] wave = BuildStrike(material);
                 WriteIfChanged(path, wave);
 
@@ -122,10 +200,18 @@ namespace CalmSpace.Editor
             return clips.ToArray();
         }
 
+        private static AudioClip[] Bank(AudioClip clip)
+        {
+            return clip == null
+                ? Array.Empty<AudioClip>()
+                : new[] { clip };
+        }
+
         private static byte[] BuildStrike(Material material)
         {
             // Long enough for the slowest body to fall silent.
-            int sampleCount = Mathf.CeilToInt(SampleRate * 0.42f);
+            int sampleCount = Mathf.CeilToInt(
+                SampleRate * Mathf.Max(0.05f, material.DurationSeconds));
             int dataLength = sampleCount * Channels * (BitsPerSample / 8);
 
             using (var stream = new MemoryStream(44 + dataLength))
@@ -220,6 +306,7 @@ namespace CalmSpace.Editor
                 importer.forceToMono != true ||
                 importer.loadInBackground ||
                 settings.loadType != AudioClipLoadType.DecompressOnLoad ||
+                !settings.preloadAudioData ||
                 settings.compressionFormat !=
                     AudioCompressionFormat.PCM;
 
@@ -233,6 +320,7 @@ namespace CalmSpace.Editor
             importer.forceToMono = true;
             importer.loadInBackground = false;
             settings.loadType = AudioClipLoadType.DecompressOnLoad;
+            settings.preloadAudioData = true;
             settings.compressionFormat = AudioCompressionFormat.PCM;
             importer.defaultSampleSettings = settings;
             importer.SaveAndReimport();
