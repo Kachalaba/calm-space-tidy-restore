@@ -53,6 +53,8 @@ namespace CalmSpace.UI
         [SerializeField] private WorkshopHomeView _view;
         [SerializeField] private RectTransform _roomParent;
 
+        [NonSerialized] private TimeSpan _roomLoadTimeout =
+            TimeSpan.FromSeconds(8);
         private IWorkshopRoomLoader _roomLoader;
         private WorkshopRoomPresenter _room;
         private CancellationTokenSource _roomCancellation;
@@ -61,6 +63,7 @@ namespace CalmSpace.UI
         private bool _roomLoading;
         private bool _revealPlaying;
         private string _revealFallbackBeatId = string.Empty;
+        private string _invalidRevealDiagnosticBeatId = string.Empty;
         private string _memoryCardId = string.Empty;
         private IDemoProgressStore _store;
         private IWorkshopFlowCoordinator _flow;
@@ -305,24 +308,79 @@ namespace CalmSpace.UI
                 return;
             }
 
-            _store.MarkPresentationSeen(
-                PendingPresentationEntry.RoomReveal(beatId));
-            // Retiring a reveal can expose a memory or finale entry that this
-            // build cannot present; leaving it at the head would block the
-            // next level.
-            DrainUnpresentableQueue();
-            Refresh();
-
-            if (TryGetPendingRevealBeatId(out string next) &&
-                string.Equals(next, beatId, StringComparison.Ordinal))
+            ProfileMutationStatus status = _store.MarkPresentationSeen(
+                PendingPresentationEntry.RoomReveal(beatId)).Status;
+            switch (status)
             {
-                // The same reveal is still at the head, so retiring it did
-                // not take. Stop rather than replay it forever.
+                case ProfileMutationStatus.Applied:
+                case ProfileMutationStatus.AlreadyApplied:
+                    if (string.Equals(
+                            _invalidRevealDiagnosticBeatId,
+                            beatId,
+                            StringComparison.Ordinal))
+                    {
+                        _invalidRevealDiagnosticBeatId = string.Empty;
+                    }
+
+                    // Retiring a reveal can expose a memory or a static
+                    // non-explicit finale. Always re-read the persisted store
+                    // before deciding what the home can present next.
+                    DrainUnpresentableQueue();
+                    Refresh();
+                    if (TryGetPendingRevealBeatId(out string next) &&
+                        string.Equals(
+                            next,
+                            beatId,
+                            StringComparison.Ordinal))
+                    {
+                        // A success result cannot overrule the fresh persisted
+                        // head. Fail closed instead of replay-looping a visual.
+                        ShowRevealFallback(next);
+                        return;
+                    }
+
+                    BeginPendingReveal();
+                    return;
+                case ProfileMutationStatus.PersistFailed:
+                    ShowFreshRevealRecovery();
+                    return;
+                case ProfileMutationStatus.Invalid:
+                    LogInvalidRevealOnce(beatId);
+                    ShowFreshRevealRecovery();
+                    return;
+            }
+        }
+
+        private void ShowFreshRevealRecovery()
+        {
+            Refresh();
+            if (TryGetPendingRevealBeatId(out string freshBeatId))
+            {
+                ShowRevealFallback(freshBeatId);
                 return;
             }
 
-            // The queue may now offer another reveal or a family memory.
-            BeginPendingReveal();
+            // The store is authoritative even when it changed independently
+            // during the failed command. Do not replay the attempted visual.
+            TryShowPendingMemory();
+        }
+
+        private void LogInvalidRevealOnce(string beatId)
+        {
+            if (string.Equals(
+                    _invalidRevealDiagnosticBeatId,
+                    beatId,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _invalidRevealDiagnosticBeatId = beatId;
+            Debug.LogWarning(
+                "Workshop reveal " + beatId + " could not be retired " +
+                "because its persisted presentation state is invalid; " +
+                "the reveal remains queued for recovery.",
+                this);
         }
 
         /// <summary>
@@ -397,6 +455,13 @@ namespace CalmSpace.UI
                         status = _store.MarkMemoryViewed(head.StableId).Status;
                         break;
                     case PendingPresentationKind.Finale:
+                        if (head.RequiresExplicitLaunch)
+                        {
+                            // Migrated finales are deliberate workshop-entry
+                            // actions and must survive automatic preparation.
+                            return;
+                        }
+
                         // The finale reads as permanent sunlight applied from
                         // the projection, not as a queued sequence.
                         status = _store.MarkPresentationSeen(head).Status;
@@ -405,8 +470,17 @@ namespace CalmSpace.UI
                         return;
                 }
 
-                if (status != ProfileMutationStatus.Applied)
+                if (status != ProfileMutationStatus.Applied &&
+                    status != ProfileMutationStatus.AlreadyApplied)
                 {
+                    return;
+                }
+
+                if (_store.Current.TryGetPendingPresentation(
+                        0, out PendingPresentationEntry freshHead) &&
+                    freshHead == head)
+                {
+                    // Mutation status never overrides the persisted queue.
                     return;
                 }
             }
@@ -557,12 +631,22 @@ namespace CalmSpace.UI
         private async UniTaskVoid LoadRoomAsync(
             CancellationToken cancellationToken)
         {
+            IWorkshopRoomLoader loader = _roomLoader;
+            CancellationTokenSource timeoutCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+            IDisposable timeoutRegistration =
+                timeoutCancellation.CancelAfterSlim(
+                    _roomLoadTimeout,
+                    DelayType.Realtime);
             try
             {
-                WorkshopRoomPresenter room = await _roomLoader.LoadAsync(
-                    WorkshopContentIds.CozyWorkshopChapterId,
-                    _roomParent,
-                    cancellationToken);
+                UniTask<WorkshopRoomPresenter> load = loader.LoadAsync(
+                        WorkshopContentIds.CozyWorkshopChapterId,
+                        _roomParent,
+                        timeoutCancellation.Token)
+                    .AttachExternalCancellation(timeoutCancellation.Token);
+                WorkshopRoomPresenter room = await load;
                 if (cancellationToken.IsCancellationRequested || this == null)
                 {
                     return;
@@ -570,7 +654,7 @@ namespace CalmSpace.UI
 
                 if (room == null)
                 {
-                    _roomUnavailable = true;
+                    MarkRoomUnavailable();
                     return;
                 }
 
@@ -582,20 +666,58 @@ namespace CalmSpace.UI
             }
             catch (OperationCanceledException)
             {
-                // The home was torn down while the room was loading.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    await StopTimedOutRoomLoadAsync(loader);
+                    Debug.LogWarning(
+                        "The illustrated workshop room did not become " +
+                        "available in time; reveal recovery remains in use.",
+                        this);
+                    MarkRoomUnavailable();
+                }
             }
             catch (Exception exception)
             {
-                _roomUnavailable = true;
                 Debug.LogWarning(
                     "The illustrated workshop room is unavailable; the " +
                     "localized task card remains in use. " + exception.Message,
                     this);
+                MarkRoomUnavailable();
             }
             finally
             {
+                timeoutRegistration.Dispose();
+                timeoutCancellation.Dispose();
                 _roomLoading = false;
             }
+        }
+
+        private async UniTask StopTimedOutRoomLoadAsync(
+            IWorkshopRoomLoader loader)
+        {
+            try
+            {
+                await loader.UnloadAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "The timed-out workshop room load could not complete its " +
+                    "lifecycle cleanup. " + exception.Message,
+                    this);
+            }
+        }
+
+        private void MarkRoomUnavailable()
+        {
+            _roomUnavailable = true;
+            if (this == null || !_initialized)
+            {
+                return;
+            }
+
+            Refresh();
+            BeginPendingReveal();
         }
 
         private void HandleRoomHotspotPressed(string beatId)

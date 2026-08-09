@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using System.Threading;
 using CalmSpace.Audio;
 using CalmSpace.Demo;
 using CalmSpace.Levels;
@@ -23,6 +24,14 @@ namespace CalmSpace.Tests.PlayMode
     public sealed class WorkshopPresentationPlayModeTests
     {
         private const string ProfileFileName = "player-profile-v1.bin";
+        private const string FirstRevealBeatId =
+            "cozy-workshop.clear-passage";
+        private const string InvalidRevealDiagnostic =
+            "Workshop reveal cozy-workshop.clear-passage could not be " +
+            "retired because its persisted presentation state is invalid; " +
+            "the reveal remains queued for recovery.";
+
+        private int _invalidRevealDiagnosticCount;
 
         /// <summary>
         /// The reveal queue lives in the persisted profile, so each test needs
@@ -43,6 +52,15 @@ namespace CalmSpace.Tests.PlayMode
                     System.IO.File.Delete(candidate);
                 }
             }
+
+            _invalidRevealDiagnosticCount = 0;
+            Application.logMessageReceived += CountInvalidRevealDiagnostic;
+        }
+
+        [TearDown]
+        public void StopRecordingDiagnostics()
+        {
+            Application.logMessageReceived -= CountInvalidRevealDiagnostic;
         }
 
         [UnityTest]
@@ -180,6 +198,185 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator NullRoomLoadOffersRevealFallbackWithoutConsumingQueue()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+            yield return CompleteFirstLevel(experience);
+
+            var loader = new ControlledRoomLoader();
+            ReplaceRoomLoader(home, loader);
+            yield return ReturnHome(experience, home);
+
+            loader.CompleteWithNull();
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, store);
+            yield return RetireRevealFallbackAndExposeNextLevel(
+                experience, home, store);
+        }
+
+        [UnityTest]
+        public IEnumerator FailedRoomLoadOffersRevealFallbackWithoutConsumingQueue()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+            yield return CompleteFirstLevel(experience);
+
+            var loader = new ControlledRoomLoader();
+            ReplaceRoomLoader(home, loader);
+            yield return ReturnHome(experience, home);
+
+            LogAssert.Expect(
+                LogType.Warning,
+                "The illustrated workshop room is unavailable; the " +
+                "localized task card remains in use. Controlled room " +
+                "load failure.");
+            loader.Fail(new InvalidOperationException(
+                "Controlled room load failure."));
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, store);
+            yield return RetireRevealFallbackAndExposeNextLevel(
+                experience, home, store);
+        }
+
+        [UnityTest]
+        public IEnumerator TimedOutRoomLoadOffersRevealFallbackWithoutConsumingQueue()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+            yield return CompleteFirstLevel(experience);
+
+            var loader = new ControlledRoomLoader();
+            ReplaceRoomLoader(home, loader);
+            SetPrivateField(
+                home,
+                "_roomLoadTimeout",
+                TimeSpan.FromMilliseconds(50));
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, store);
+            Assert.That(
+                loader.UnloadCallCount,
+                Is.EqualTo(1),
+                "Timeout must await the loader lifecycle boundary so a late " +
+                "physical load cannot be adopted or cached.");
+            Assert.That(loader.PhysicalLoadPending, Is.False);
+            yield return RetireRevealFallbackAndExposeNextLevel(
+                experience, home, store);
+        }
+
+        [UnityTest]
+        public IEnumerator PersistFailedRevealCanBeRetriedInTheSameHomeSession()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore persistedStore = Store(experience);
+            var store = new PresentationRetirementStore(
+                persistedStore,
+                PresentationRetirementBehavior.FailOnce);
+            SetPrivateField(home, "_store", store);
+            yield return WaitForRoom(home);
+
+            yield return CompleteFirstLevel(experience);
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealEnd(home, 14f);
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, persistedStore);
+            yield return RetireRevealFallbackAndExposeNextLevel(
+                experience, home, persistedStore);
+        }
+
+        [UnityTest]
+        public IEnumerator InvalidRevealRetirementRetainsTheHeadAndRecoverySurface()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore persistedStore = Store(experience);
+            var store = new PresentationRetirementStore(
+                persistedStore,
+                PresentationRetirementBehavior.AlwaysInvalid);
+            SetPrivateField(home, "_store", store);
+            yield return WaitForRoom(home);
+
+            yield return CompleteFirstLevel(experience);
+            yield return ReturnHome(experience, home);
+            yield return WaitForRevealEnd(home, 14f);
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, persistedStore);
+            Assert.That(_invalidRevealDiagnosticCount, Is.EqualTo(1));
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            AssertRevealFallbackRetainsHead(home, persistedStore);
+            Assert.That(
+                _invalidRevealDiagnosticCount,
+                Is.EqualTo(1),
+                "Repeated recovery attempts must not spam diagnostics.");
+        }
+
+        [UnityTest]
+        public IEnumerator MigratedExplicitFinaleSurvivesAutomaticHomePreparation()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IWorkshopFlowCoordinator flow = Flow(experience);
+            DemoProgressSnapshot migrated = LegacyProfileV1Migration.Migrate(
+                new SecureProfileV1Dto
+                {
+                    version = 1,
+                    highestUnlockedLevelIndex = 7,
+                    completedLevelMask = 0xFF,
+                    selectedThemeId = "sage",
+                    musicEnabled = true,
+                    ownedDecorationMask = 1,
+                    selectedDecorationIndex = 0
+                },
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                "sage");
+            var store = new InMemoryProgressStore(
+                migrated,
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            SetPrivateField(home, "_store", store);
+            SetPrivateField(flow, "_store", store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ColdStart,
+                default));
+
+            Assert.That(store.Current.PendingPresentationCount, Is.EqualTo(1));
+            Assert.That(
+                store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry finale),
+                Is.True);
+            Assert.That(finale.Kind, Is.EqualTo(PendingPresentationKind.Finale));
+            Assert.That(finale.RequiresExplicitLaunch, Is.True);
+            Assert.That(
+                flow.GetRecommendedAction()?.Kind,
+                Is.EqualTo(
+                    WorkshopRecommendedActionKind.OpenCompletedWorkshop));
+        }
+
+        [UnityTest]
         public IEnumerator ReplayingACompletedLevelQueuesNothingNew()
         {
             yield return LoadMain();
@@ -262,6 +459,24 @@ namespace CalmSpace.Tests.PlayMode
             for (var levelIndex = 0; levelIndex < stages; levelIndex++)
             {
                 yield return CompleteLevel(experience, levelIndex);
+
+                bool isLast = levelIndex == stages - 1;
+                if (isLast)
+                {
+                    Assert.That(
+                        TryGetPendingPresentation(
+                            store,
+                            PendingPresentationKind.Finale,
+                            out PendingPresentationEntry finale),
+                        Is.True,
+                        "Stage 8 must queue its finale before home prepares.");
+                    Assert.That(
+                        finale.RequiresExplicitLaunch,
+                        Is.False,
+                        "A live stage-8 finale must retain the automatic " +
+                        "static-home policy.");
+                }
+
                 yield return ReturnHome(experience, home);
                 yield return WaitForRevealEnd(home, 14f);
                 yield return CloseMemoryCardIfOpen(home);
@@ -278,7 +493,6 @@ namespace CalmSpace.Tests.PlayMode
                     " left a presentation this build cannot show at the " +
                     "head of the queue.");
 
-                bool isLast = levelIndex == stages - 1;
                 WorkshopRecommendedAction? action =
                     Flow(experience).GetRecommendedAction();
                 Assert.That(
@@ -399,6 +613,111 @@ namespace CalmSpace.Tests.PlayMode
         private static string MemoryCardId(WorkshopHomeController home)
         {
             return GetPrivateField<string>(home, "_memoryCardId");
+        }
+
+        private void CountInvalidRevealDiagnostic(
+            string condition,
+            string stackTrace,
+            LogType type)
+        {
+            if (type == LogType.Warning &&
+                string.Equals(
+                    condition,
+                    InvalidRevealDiagnostic,
+                    StringComparison.Ordinal))
+            {
+                _invalidRevealDiagnosticCount++;
+            }
+        }
+
+        private static void ReplaceRoomLoader(
+            WorkshopHomeController home,
+            IWorkshopRoomLoader loader)
+        {
+            SetPrivateField(home, "_room", null);
+            SetPrivateField(home, "_roomUnavailable", false);
+            SetPrivateField(home, "_roomLoading", false);
+            SetPrivateField(home, "_roomLoader", loader);
+        }
+
+        private static IEnumerator WaitForRevealFallback(
+            WorkshopHomeController home,
+            float seconds)
+        {
+            float timeout = Time.realtimeSinceStartup + seconds;
+            while (string.IsNullOrEmpty(GetPrivateField<string>(
+                       home, "_revealFallbackBeatId")) &&
+                   Time.realtimeSinceStartup < timeout)
+            {
+                yield return null;
+            }
+        }
+
+        private static void AssertRevealFallbackRetainsHead(
+            WorkshopHomeController home,
+            IDemoProgressStore store)
+        {
+            Assert.That(
+                GetPrivateField<string>(home, "_revealFallbackBeatId"),
+                Is.EqualTo(FirstRevealBeatId),
+                "The pending reveal must have an immediate recovery action.");
+            Assert.That(home.View.BottomSheet.IsOpen, Is.True);
+            Assert.That(
+                home.View.PrimaryButton.gameObject.activeSelf,
+                Is.False,
+                "Start must stay suppressed while the reveal is pending.");
+            Assert.That(store.Current.PendingPresentationCount, Is.EqualTo(1));
+            Assert.That(
+                store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry head),
+                Is.True);
+            Assert.That(head.Kind, Is.EqualTo(PendingPresentationKind.RoomReveal));
+            Assert.That(head.StableId, Is.EqualTo(FirstRevealBeatId));
+        }
+
+        private static IEnumerator RetireRevealFallbackAndExposeNextLevel(
+            DemoExperienceController experience,
+            WorkshopHomeController home,
+            IDemoProgressStore store)
+        {
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(
+                store.Current.PendingPresentationCount,
+                Is.Zero,
+                "Recovery must retire exactly the persisted queue head.");
+            Assert.That(
+                Flow(experience).GetRecommendedAction()?.Kind,
+                Is.EqualTo(WorkshopRecommendedActionKind.StartLevel));
+            Assert.That(
+                home.View.PrimaryButton.gameObject.activeSelf,
+                Is.True,
+                "The next level must be exposed after recovery succeeds.");
+        }
+
+        private static bool TryGetPendingPresentation(
+            IDemoProgressStore store,
+            PendingPresentationKind kind,
+            out PendingPresentationEntry presentation)
+        {
+            DemoProgressSnapshot snapshot = store.Current;
+            for (var index = 0;
+                 index < snapshot.PendingPresentationCount;
+                 index++)
+            {
+                if (snapshot.TryGetPendingPresentation(
+                        index, out PendingPresentationEntry candidate) &&
+                    candidate.Kind == kind)
+                {
+                    presentation = candidate;
+                    return true;
+                }
+            }
+
+            presentation = default;
+            return false;
         }
 
         private static IEnumerator CloseMemoryCardIfOpen(
@@ -620,6 +939,286 @@ namespace CalmSpace.Tests.PlayMode
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, "Missing field " + name);
             field.SetValue(target, value);
+        }
+
+        private enum PresentationRetirementBehavior
+        {
+            FailOnce,
+            AlwaysInvalid
+        }
+
+        private sealed class PresentationRetirementStore : IDemoProgressStore
+        {
+            private readonly IDemoProgressStore _inner;
+            private readonly PresentationRetirementBehavior _behavior;
+            private bool _hasFailed;
+
+            public PresentationRetirementStore(
+                IDemoProgressStore inner,
+                PresentationRetirementBehavior behavior)
+            {
+                _inner = inner;
+                _behavior = behavior;
+            }
+
+            public event Action<DemoProgressSnapshot> ProgressChanged
+            {
+                add => _inner.ProgressChanged += value;
+                remove => _inner.ProgressChanged -= value;
+            }
+
+            public bool IsInitialized => _inner.IsInitialized;
+            public int LevelCount => _inner.LevelCount;
+            public DemoProgressSnapshot Current => _inner.Current;
+
+            public ProfileInitializationResult Initialize(
+                int levelCount,
+                string defaultThemeId,
+                int completionReward) =>
+                _inner.Initialize(
+                    levelCount, defaultThemeId, completionReward);
+
+            public ProfileMutationResult<LevelCompletionMutation> CompleteLevel(
+                CompleteLevelCommand command) =>
+                _inner.CompleteLevel(command);
+
+            public ProfileMutationResult<PresentationMutation>
+                MarkPresentationSeen(PendingPresentationEntry presentation)
+            {
+                if (_behavior ==
+                    PresentationRetirementBehavior.AlwaysInvalid)
+                {
+                    return new ProfileMutationResult<PresentationMutation>(
+                        ProfileMutationStatus.Invalid,
+                        _inner.Current,
+                        default);
+                }
+
+                if (!_hasFailed)
+                {
+                    _hasFailed = true;
+                    return new ProfileMutationResult<PresentationMutation>(
+                        ProfileMutationStatus.PersistFailed,
+                        _inner.Current,
+                        default);
+                }
+
+                return _inner.MarkPresentationSeen(presentation);
+            }
+
+            public ProfileMutationResult<MemoryMutation> MarkMemoryViewed(
+                string memoryId) =>
+                _inner.MarkMemoryViewed(memoryId);
+
+            public ProfileMutationResult<DecorationMutation>
+                PurchaseAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    int cost) =>
+                _inner.PurchaseAndSelectDecoration(
+                    slotId, decorationId, cost);
+
+            public ProfileMutationResult<DecorationMutation>
+                GrantAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    DecorationGrantSource source) =>
+                _inner.GrantAndSelectDecoration(
+                    slotId, decorationId, source);
+
+            public ProfileMutationResult<DecorationMutation> SelectDecoration(
+                string slotId,
+                string decorationId) =>
+                _inner.SelectDecoration(slotId, decorationId);
+
+            public ProfileMutationResult<DailyCareMutation> CompleteDailyCare(
+                string careId,
+                int utcDayKey,
+                int rewardAmount,
+                string unlockedMemoryId) =>
+                _inner.CompleteDailyCare(
+                    careId,
+                    utcDayKey,
+                    rewardAmount,
+                    unlockedMemoryId);
+
+            public ProfileMutationResult<PreferenceMutation> SetSelectedTheme(
+                string themeId) =>
+                _inner.SetSelectedTheme(themeId);
+
+            public ProfileMutationResult<PreferenceMutation> SetMusicEnabled(
+                bool enabled) =>
+                _inner.SetMusicEnabled(enabled);
+
+            public bool IsLevelUnlocked(int levelIndex) =>
+                _inner.IsLevelUnlocked(levelIndex);
+
+            public bool IsLevelCompleted(int levelIndex) =>
+                _inner.IsLevelCompleted(levelIndex);
+
+            public void MarkLevelCompleted(int levelIndex) =>
+                _inner.MarkLevelCompleted(levelIndex);
+
+            public int CompleteLevelAndReward(
+                int levelIndex,
+                int rewardAmount) =>
+                _inner.CompleteLevelAndReward(levelIndex, rewardAmount);
+
+            public bool TryPurchaseAndSelectDecoration(
+                int decorationIndex,
+                int cost) =>
+                _inner.TryPurchaseAndSelectDecoration(decorationIndex, cost);
+
+            public bool TrySelectDecoration(int decorationIndex) =>
+                _inner.TrySelectDecoration(decorationIndex);
+        }
+
+        private sealed class InMemoryProgressStore : IDemoProgressStore
+        {
+            public InMemoryProgressStore(
+                DemoProgressSnapshot snapshot,
+                int levelCount)
+            {
+                Current = snapshot;
+                LevelCount = levelCount;
+            }
+
+            public event Action<DemoProgressSnapshot> ProgressChanged;
+            public bool IsInitialized => true;
+            public int LevelCount { get; }
+            public DemoProgressSnapshot Current { get; private set; }
+
+            public ProfileMutationResult<PresentationMutation>
+                MarkPresentationSeen(PendingPresentationEntry presentation)
+            {
+                ProfileMutationResult<PresentationMutation> result =
+                    DemoProgressRules.MarkPresentationSeen(
+                        Current, presentation);
+                if (result.IsSuccess)
+                {
+                    Current = result.Snapshot;
+                    ProgressChanged?.Invoke(Current);
+                }
+
+                return result;
+            }
+
+            public ProfileInitializationResult Initialize(
+                int levelCount,
+                string defaultThemeId,
+                int completionReward) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<LevelCompletionMutation> CompleteLevel(
+                CompleteLevelCommand command) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<MemoryMutation> MarkMemoryViewed(
+                string memoryId) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<DecorationMutation>
+                PurchaseAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    int cost) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<DecorationMutation>
+                GrantAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    DecorationGrantSource source) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<DecorationMutation> SelectDecoration(
+                string slotId,
+                string decorationId) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<DailyCareMutation> CompleteDailyCare(
+                string careId,
+                int utcDayKey,
+                int rewardAmount,
+                string unlockedMemoryId) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<PreferenceMutation> SetSelectedTheme(
+                string themeId) =>
+                throw new NotSupportedException();
+
+            public ProfileMutationResult<PreferenceMutation> SetMusicEnabled(
+                bool enabled) =>
+                throw new NotSupportedException();
+
+            public bool IsLevelUnlocked(int levelIndex) =>
+                DemoProgressRules.IsLevelUnlocked(
+                    Current, levelIndex, LevelCount);
+
+            public bool IsLevelCompleted(int levelIndex) =>
+                DemoProgressRules.IsLevelCompleted(
+                    Current, levelIndex, LevelCount);
+
+            public void MarkLevelCompleted(int levelIndex) =>
+                throw new NotSupportedException();
+
+            public int CompleteLevelAndReward(
+                int levelIndex,
+                int rewardAmount) =>
+                throw new NotSupportedException();
+
+            public bool TryPurchaseAndSelectDecoration(
+                int decorationIndex,
+                int cost) =>
+                throw new NotSupportedException();
+
+            public bool TrySelectDecoration(int decorationIndex) =>
+                throw new NotSupportedException();
+        }
+
+        private sealed class ControlledRoomLoader : IWorkshopRoomLoader
+        {
+            private readonly UniTaskCompletionSource<WorkshopRoomPresenter>
+                _completion =
+                    new UniTaskCompletionSource<WorkshopRoomPresenter>();
+
+            public bool IsLoaded => false;
+            public WorkshopRoomPresenter Presenter => null;
+            public int UnloadCallCount { get; private set; }
+            public bool PhysicalLoadPending =>
+                _completion.Task.Status == UniTaskStatus.Pending;
+
+            public UniTask<WorkshopRoomPresenter> LoadAsync(
+                string chapterId,
+                Transform parent,
+                CancellationToken cancellationToken)
+            {
+                // Caller cancellation is intentionally waiter-only. The home
+                // must use UnloadAsync to stop the physical load lifecycle.
+                return _completion.Task;
+            }
+
+            public void CompleteWithNull()
+            {
+                _completion.TrySetResult(null);
+            }
+
+            public void Fail(Exception exception)
+            {
+                _completion.TrySetException(exception);
+            }
+
+            public UniTask UnloadAsync(CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                UnloadCallCount++;
+                _completion.TrySetCanceled(cancellationToken);
+                return UniTask.CompletedTask;
+            }
+
+            public void Dispose()
+            {
+            }
         }
 
         private sealed class RecordingAudio : ICategorizedAsmrAudioService
