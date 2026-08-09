@@ -79,6 +79,8 @@ namespace CalmSpace.UI
         private bool _eventsBound;
         private bool _visible;
         private bool _hasLoadFailure;
+        private bool _hasQueueRecovery;
+        private PendingPresentationEntry _queueRecoveryHead;
         private LevelLaunchRequest _failedRequest;
         private Action<LevelLaunchRequest> _retryLoad;
 
@@ -157,11 +159,11 @@ namespace CalmSpace.UI
                 return UniTask.CompletedTask;
             }
 
+            _view.CloseBottomSheet();
             BeginRoomLoad();
             DrainUnpresentableQueue();
             _room?.SetVisible(false);
             Refresh();
-            _view.CloseBottomSheet();
             return UniTask.CompletedTask;
         }
 
@@ -192,6 +194,7 @@ namespace CalmSpace.UI
             _visible = false;
             _hasLoadFailure = false;
             _retryLoad = null;
+            ClearQueueRecovery();
             CancelReveal();
             _revealFallbackBeatId = string.Empty;
             _memoryCardId = string.Empty;
@@ -211,6 +214,7 @@ namespace CalmSpace.UI
                 !_visible ||
                 _revealPlaying ||
                 _hasLoadFailure ||
+                _hasQueueRecovery ||
                 !string.IsNullOrEmpty(_revealFallbackBeatId) ||
                 !string.IsNullOrEmpty(_memoryCardId))
             {
@@ -218,6 +222,11 @@ namespace CalmSpace.UI
             }
 
             DrainUnpresentableQueue();
+            if (_hasQueueRecovery)
+            {
+                return;
+            }
+
             if (!TryGetPendingRevealBeatId(out string beatId))
             {
                 // A restored zone may have uncovered a family memory.
@@ -430,6 +439,24 @@ namespace CalmSpace.UI
                 return;
             }
 
+            if (_hasQueueRecovery)
+            {
+                if (_store.Current.TryGetPendingPresentation(
+                        0, out PendingPresentationEntry recoveryHead) &&
+                    recoveryHead == _queueRecoveryHead &&
+                    IsAutomaticallyRetirable(recoveryHead))
+                {
+                    // Preparation can run again while a failed persistence
+                    // command is waiting for the player. Reopen the same
+                    // recovery surface without repeating the mutation.
+                    Refresh();
+                    ShowQueueRecovery();
+                    return;
+                }
+
+                ClearQueueRecovery();
+            }
+
             // Bounded by the queue length observed on entry: every iteration
             // must retire one entry or stop, so this cannot spin.
             int guardLimit = _store.Current.PendingPresentationCount;
@@ -441,38 +468,17 @@ namespace CalmSpace.UI
                     return;
                 }
 
-                ProfileMutationStatus status;
-                switch (head.Kind)
+                if (!IsAutomaticallyRetirable(head))
                 {
-                    case PendingPresentationKind.Memory:
-                        if (CanPresentMemory(head.StableId))
-                        {
-                            // Presentable: the caller shows the card and the
-                            // player retires it by closing.
-                            return;
-                        }
-
-                        status = _store.MarkMemoryViewed(head.StableId).Status;
-                        break;
-                    case PendingPresentationKind.Finale:
-                        if (head.RequiresExplicitLaunch)
-                        {
-                            // Migrated finales are deliberate workshop-entry
-                            // actions and must survive automatic preparation.
-                            return;
-                        }
-
-                        // The finale reads as permanent sunlight applied from
-                        // the projection, not as a queued sequence.
-                        status = _store.MarkPresentationSeen(head).Status;
-                        break;
-                    default:
-                        return;
+                    return;
                 }
 
+                ProfileMutationStatus status =
+                    RetireUnpresentableHead(head);
                 if (status != ProfileMutationStatus.Applied &&
                     status != ProfileMutationStatus.AlreadyApplied)
                 {
+                    OfferQueueRecovery(head);
                     return;
                 }
 
@@ -481,9 +487,165 @@ namespace CalmSpace.UI
                     freshHead == head)
                 {
                     // Mutation status never overrides the persisted queue.
+                    OfferQueueRecovery(head);
                     return;
                 }
             }
+        }
+
+        private bool IsAutomaticallyRetirable(
+            PendingPresentationEntry head)
+        {
+            switch (head.Kind)
+            {
+                case PendingPresentationKind.Memory:
+                    // Presentable memories remain player-owned cards. Only a
+                    // memory unavailable in this build is retired here.
+                    return !CanPresentMemory(head.StableId);
+                case PendingPresentationKind.Finale:
+                    // Migrated finales are deliberate workshop-entry actions
+                    // and must survive automatic preparation.
+                    return !head.RequiresExplicitLaunch;
+                default:
+                    return false;
+            }
+        }
+
+        private ProfileMutationStatus RetireUnpresentableHead(
+            PendingPresentationEntry head)
+        {
+            switch (head.Kind)
+            {
+                case PendingPresentationKind.Memory:
+                    return _store.MarkMemoryViewed(head.StableId).Status;
+                case PendingPresentationKind.Finale:
+                    // The finale reads as permanent sunlight applied from the
+                    // projection, not as a queued sequence.
+                    return _store.MarkPresentationSeen(head).Status;
+                default:
+                    return ProfileMutationStatus.Invalid;
+            }
+        }
+
+        private void OfferQueueRecovery(PendingPresentationEntry attempted)
+        {
+            if (_store == null ||
+                !_store.IsInitialized ||
+                !_store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry freshHead) ||
+                freshHead != attempted ||
+                !IsAutomaticallyRetirable(freshHead))
+            {
+                // The command failed against a head that is no longer fresh.
+                // Persisted state wins; never attach a stale retry callback.
+                ClearQueueRecovery();
+                Refresh();
+                BeginPendingReveal();
+                return;
+            }
+
+            HoldQueueRecovery(freshHead);
+        }
+
+        private void ShowQueueRecovery()
+        {
+            _view.ShowRetry(
+                CalmRecoveryTitle(),
+                CalmRecoveryAction(),
+                RetryUnpresentableQueue);
+        }
+
+        private void RetryUnpresentableQueue()
+        {
+            PendingPresentationEntry expected = _queueRecoveryHead;
+            if (!_hasQueueRecovery ||
+                _store == null ||
+                !_store.IsInitialized ||
+                !_store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry freshHead) ||
+                freshHead != expected ||
+                !IsAutomaticallyRetirable(freshHead))
+            {
+                // The bottom sheet closes before invoking this callback. A
+                // stale/rejected action is deliberately silent and follows
+                // only the new persisted head.
+                ClearQueueRecovery();
+                Refresh();
+                BeginPendingReveal();
+                return;
+            }
+
+            ClearQueueRecovery();
+            PlayAudioCue(AsmrAudioCue.UiTap);
+            ProfileMutationStatus status =
+                RetireUnpresentableHead(expected);
+            bool succeeded =
+                status == ProfileMutationStatus.Applied ||
+                status == ProfileMutationStatus.AlreadyApplied;
+            bool retained =
+                _store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry currentHead) &&
+                currentHead == expected;
+            if (!succeeded || retained)
+            {
+                OfferQueueRecovery(expected);
+                return;
+            }
+
+            // A successful retry retires only the fresh head. Hand the next
+            // fresh head back to normal presentation without allowing this
+            // same accepted action to persist a second queue entry.
+            ContinueAfterQueueRetry();
+        }
+
+        private void ContinueAfterQueueRetry()
+        {
+            if (_store != null &&
+                _store.IsInitialized &&
+                _store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry freshHead) &&
+                IsAutomaticallyRetirable(freshHead))
+            {
+                // Consecutive unavailable presentations each require their
+                // own explicit accepted action. One tap mutates one head.
+                HoldQueueRecovery(freshHead);
+                return;
+            }
+
+            Refresh();
+            BeginPendingReveal();
+        }
+
+        private void HoldQueueRecovery(PendingPresentationEntry freshHead)
+        {
+            _hasQueueRecovery = true;
+            _queueRecoveryHead = freshHead;
+            Refresh();
+            ShowQueueRecovery();
+        }
+
+        private void ClearQueueRecovery()
+        {
+            _hasQueueRecovery = false;
+            _queueRecoveryHead = default;
+        }
+
+        private string CalmRecoveryTitle()
+        {
+            return GetTextOrFallback(
+                "load.failure.title",
+                "This space needs one calm moment.",
+                "Цьому простору потрібна спокійна мить.",
+                "Этому пространству нужна спокойная минута.");
+        }
+
+        private string CalmRecoveryAction()
+        {
+            return GetTextOrFallback(
+                "load.failure.retry",
+                "Try again",
+                "Спробувати ще раз",
+                "Попробовать снова");
         }
 
         /// <summary>
@@ -738,16 +900,8 @@ namespace CalmSpace.UI
             _retryLoad = retry;
             _hasLoadFailure = true;
             _view.ShowRetry(
-                GetTextOrFallback(
-                    "load.failure.title",
-                    "This space needs one calm moment.",
-                    "Цьому простору потрібна спокійна мить.",
-                    "Этому пространству нужна спокойная минута."),
-                GetTextOrFallback(
-                    "load.failure.retry",
-                    "Try again",
-                    "Спробувати ще раз",
-                    "Попробовать снова"),
+                CalmRecoveryTitle(),
+                CalmRecoveryAction(),
                 RetryFailedLoad);
         }
 
@@ -836,6 +990,16 @@ namespace CalmSpace.UI
 
         private void HandleSettingsRequested()
         {
+            if (_hasLoadFailure ||
+                _hasQueueRecovery ||
+                !string.IsNullOrEmpty(_revealFallbackBeatId) ||
+                !string.IsNullOrEmpty(_memoryCardId))
+            {
+                // Settings must not replace the only action that can resolve
+                // an active recovery or presentation card.
+                return;
+            }
+
             _hasLoadFailure = false;
             _retryLoad = null;
             _revealFallbackBeatId = string.Empty;
@@ -861,6 +1025,16 @@ namespace CalmSpace.UI
         private void HandleLocaleChanged(DemoLocale locale)
         {
             Refresh();
+            if (_hasQueueRecovery &&
+                _view.BottomSheet != null &&
+                _view.BottomSheet.IsOpen)
+            {
+                _view.RenderRecoveryCopy(
+                    CalmRecoveryTitle(),
+                    CalmRecoveryAction());
+                return;
+            }
+
             if (!string.IsNullOrEmpty(_memoryCardId) &&
                 _view.BottomSheet != null &&
                 _view.BottomSheet.IsOpen &&
@@ -889,16 +1063,8 @@ namespace CalmSpace.UI
                 _view.BottomSheet.IsOpen)
             {
                 _view.RenderRecoveryCopy(
-                    GetTextOrFallback(
-                        "load.failure.title",
-                        "This space needs one calm moment.",
-                        "Цьому простору потрібна спокійна мить.",
-                        "Этому пространству нужна спокойная минута."),
-                    GetTextOrFallback(
-                        "load.failure.retry",
-                        "Try again",
-                        "Спробувати ще раз",
-                        "Попробовать снова"));
+                    CalmRecoveryTitle(),
+                    CalmRecoveryAction());
             }
         }
 
@@ -956,10 +1122,12 @@ namespace CalmSpace.UI
                 _text.Get("home.start"),
                 progress,
                 hasLevel && !_revealPlaying &&
+                    !_hasQueueRecovery &&
                     string.IsNullOrEmpty(_memoryCardId),
                 // The illustrated room owns the real hotspot when it is
                 // present, so exactly one hotspot is ever actionable.
                 hasLevel && !_revealPlaying &&
+                    !_hasQueueRecovery &&
                     string.IsNullOrEmpty(_memoryCardId) &&
                     _room == null));
         }

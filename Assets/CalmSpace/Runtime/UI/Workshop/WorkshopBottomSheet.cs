@@ -90,6 +90,7 @@ namespace CalmSpace.UI
         {
             ClearAction();
             SetContentMode(settings: true);
+            SetCloseAvailable(true);
             if (_actionButton != null)
             {
                 _actionButton.gameObject.SetActive(false);
@@ -107,6 +108,7 @@ namespace CalmSpace.UI
             ClearAction();
             RenderRecoveryCopy(title, actionLabel);
             SetContentMode(settings: false);
+            SetCloseAvailable(false);
             if (_actionButton != null)
             {
                 _action = () =>
@@ -191,6 +193,20 @@ namespace CalmSpace.UI
             if (_recoveryContent != null)
             {
                 _recoveryContent.SetActive(!settings);
+            }
+        }
+
+        private void SetCloseAvailable(bool available)
+        {
+            if (_closeButton == null)
+            {
+                return;
+            }
+
+            _closeButton.interactable = available;
+            if (_closeButton.gameObject.activeSelf != available)
+            {
+                _closeButton.gameObject.SetActive(available);
             }
         }
 

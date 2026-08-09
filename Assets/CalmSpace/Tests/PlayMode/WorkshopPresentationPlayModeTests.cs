@@ -12,6 +12,7 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
 namespace CalmSpace.Tests.PlayMode
@@ -26,6 +27,8 @@ namespace CalmSpace.Tests.PlayMode
         private const string ProfileFileName = "player-profile-v1.bin";
         private const string FirstRevealBeatId =
             "cozy-workshop.clear-passage";
+        private const string UnavailableMemoryId =
+            "legacy.unavailable-memory";
         private const string InvalidRevealDiagnostic =
             "Workshop reveal cozy-workshop.clear-passage could not be " +
             "retired because its persisted presentation state is invalid; " +
@@ -377,6 +380,401 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator RevealFallbackCannotBeDismissedOrReplacedBySettings()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore store = Store(experience);
+            yield return WaitForRoom(home);
+            yield return CompleteFirstLevel(experience);
+
+            var loader = new ControlledRoomLoader();
+            ReplaceRoomLoader(home, loader);
+            yield return ReturnHome(experience, home);
+            loader.CompleteWithNull();
+            yield return WaitForRevealFallback(home, 2f);
+
+            AssertRevealFallbackRetainsHead(home, store);
+            string title = RecoveryTitle(home);
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+
+            AssertRevealFallbackRetainsHead(home, store);
+            AssertRecoveryModeWasNotReplaced(home, title);
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator MemoryCardCannotBeDismissedOrReplacedBySettings()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            yield return WaitForRoom(home);
+
+            DemoProgressSnapshot snapshot = CreatePendingSnapshot(
+                0b11,
+                PendingPresentationEntry.Memory(
+                    WorkshopContentIds.SummerTrailStonesMemoryId));
+            var store = new InMemoryProgressStore(
+                snapshot,
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return null;
+
+            Assert.That(
+                MemoryCardId(home),
+                Is.EqualTo(WorkshopContentIds.SummerTrailStonesMemoryId));
+            Assert.That(home.View.BottomSheet.IsOpen, Is.True);
+            string title = RecoveryTitle(home);
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+
+            Assert.That(
+                MemoryCardId(home),
+                Is.EqualTo(WorkshopContentIds.SummerTrailStonesMemoryId));
+            Assert.That(store.Current.PendingPresentationCount, Is.EqualTo(1));
+            AssertRecoveryModeWasNotReplaced(home, title);
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator LoadFailureCannotBeDismissedOrReplacedBySettings()
+        {
+            yield return LoadMain();
+            WorkshopHomeController home = FindHome();
+            var retryCount = 0;
+            ((IWorkshopHomeRecovery)home).ShowLoadFailure(
+                default,
+                _ => retryCount++);
+            yield return null;
+
+            Assert.That(
+                GetPrivateField<bool>(home, "_hasLoadFailure"),
+                Is.True);
+            string title = RecoveryTitle(home);
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+
+            Assert.That(
+                GetPrivateField<bool>(home, "_hasLoadFailure"),
+                Is.True);
+            Assert.That(retryCount, Is.Zero);
+            AssertRecoveryModeWasNotReplaced(home, title);
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator PrepareEntryKeepsImmediateNullRoomFallbackVisible()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            yield return WaitForRoom(home);
+
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+            var loader = new ControlledRoomLoader();
+            loader.CompleteWithNull();
+            ReplaceRoomLoader(home, loader);
+
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            AssertRevealFallbackRetainsHead(home, store);
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator PrepareEntryKeepsImmediateThrowRoomFallbackVisible()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            yield return WaitForRoom(home);
+
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+            var loader = new ControlledRoomLoader();
+            loader.Fail(new InvalidOperationException(
+                "Immediate room failure."));
+            ReplaceRoomLoader(home, loader);
+
+            LogAssert.Expect(
+                LogType.Warning,
+                "The illustrated workshop room is unavailable; the " +
+                "localized task card remains in use. Immediate room " +
+                "failure.");
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            AssertRevealFallbackRetainsHead(home, store);
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator SettingsSheetRetainsDismissibleCloseButton()
+        {
+            yield return LoadMain();
+            WorkshopHomeController home = FindHome();
+
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+
+            Button close = CloseButton(home);
+            Assert.That(home.View.BottomSheet.IsOpen, Is.True);
+            Assert.That(close.gameObject.activeSelf, Is.True);
+            Assert.That(close.interactable, Is.True);
+
+            close.onClick.Invoke();
+            yield return null;
+            Assert.That(home.View.BottomSheet.IsOpen, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator PersistFailedFinaleRetirementOffersRetryWithoutRepeatingAutomatically()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry finale =
+                PendingPresentationEntry.Finale(
+                    WorkshopContentIds.CozyWorkshopChapterId);
+            DemoProgressSnapshot snapshot = CreatePendingSnapshot(
+                0xFF,
+                finale,
+                PendingPresentationEntry.Memory(UnavailableMemoryId),
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+            var store = new InMemoryProgressStore(
+                snapshot,
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.PersistFailed);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+
+            string recoveryTitle = RecoveryTitle(home);
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+            AssertRecoveryModeWasNotReplaced(home, recoveryTitle);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+
+            IDemoLocalizationService localization =
+                GetPrivateField<IDemoLocalizationService>(
+                    home,
+                    "_localization");
+            IWorkshopTextService text =
+                GetPrivateField<IWorkshopTextService>(home, "_text");
+            DemoLocale originalLocale = localization.CurrentLocale;
+            DemoLocale refreshedLocale = originalLocale == DemoLocale.Ukrainian
+                ? DemoLocale.Russian
+                : DemoLocale.Ukrainian;
+            Assert.That(localization.SelectLocale(refreshedLocale), Is.True);
+            yield return null;
+            Assert.That(
+                RecoveryTitle(home),
+                Is.EqualTo(text.Get("load.failure.title")));
+            Assert.That(
+                RecoveryActionLabel(home),
+                Is.EqualTo(text.Get("load.failure.retry")),
+                "Locale refresh must update the active retry in place.");
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(localization.SelectLocale(originalLocale), Is.True);
+            yield return null;
+
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+            Assert.That(
+                store.RetirementAttemptCount,
+                Is.EqualTo(1),
+                "Preparation must not repeat a mutation awaiting player retry.");
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(2));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
+            AssertFreshHead(
+                store,
+                PendingPresentationEntry.Memory(UnavailableMemoryId));
+            AssertQueueRecoveryRetainsHead(
+                home,
+                store,
+                PendingPresentationEntry.Memory(UnavailableMemoryId));
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(3));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(2));
+            AssertFreshHead(
+                store,
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+        }
+
+        [UnityTest]
+        public IEnumerator PersistFailedUnavailableMemoryRetirementOffersRetry()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry memory =
+                PendingPresentationEntry.Memory(UnavailableMemoryId);
+            DemoProgressSnapshot snapshot = CreatePendingSnapshot(
+                0b1,
+                memory,
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+            var store = new InMemoryProgressStore(
+                snapshot,
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.PersistFailed);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            AssertQueueRecoveryRetainsHead(home, store, memory);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(2));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
+            AssertFreshHead(
+                store,
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+        }
+
+        [UnityTest]
+        public IEnumerator InvalidUnpresentableRetirementFailsClosedWithRetry()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry finale =
+                PendingPresentationEntry.Finale(
+                    WorkshopContentIds.CozyWorkshopChapterId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(0xFF, finale),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.Invalid,
+                ProfileMutationStatus.Invalid,
+                ProfileMutationStatus.Invalid);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+
+            home.NotifyHidden();
+            AssertFreshHead(store, finale);
+            Assert.That(home.View.BottomSheet.IsOpen, Is.False);
+            Assert.That(
+                GetPrivateField<bool>(home, "_hasQueueRecovery"),
+                Is.False,
+                "Hiding clears transient recovery state, not its queue head.");
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(2));
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(3));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator StaleQueueRecoveryCallbackIsSilent()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry finale =
+                PendingPresentationEntry.Finale(
+                    WorkshopContentIds.CozyWorkshopChapterId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(0xFF, finale),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.PersistFailed);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            AssertQueueRecoveryRetainsHead(home, store, finale);
+
+            PendingPresentationEntry fresh =
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId);
+            store.ReplaceCurrent(CreatePendingSnapshot(0b1, fresh));
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.Zero);
+            AssertFreshHead(store, fresh);
+        }
+
+        [UnityTest]
         public IEnumerator ReplayingACompletedLevelQueuesNothingNew()
         {
             yield return LoadMain();
@@ -613,6 +1011,123 @@ namespace CalmSpace.Tests.PlayMode
         private static string MemoryCardId(WorkshopHomeController home)
         {
             return GetPrivateField<string>(home, "_memoryCardId");
+        }
+
+        private static string RecoveryTitle(WorkshopHomeController home)
+        {
+            Text title = GetPrivateField<Text>(
+                home.View.BottomSheet,
+                "_recoveryTitleLabel");
+            return title == null ? string.Empty : title.text;
+        }
+
+        private static Button CloseButton(WorkshopHomeController home)
+        {
+            return GetPrivateField<Button>(
+                home.View.BottomSheet,
+                "_closeButton");
+        }
+
+        private static string RecoveryActionLabel(
+            WorkshopHomeController home)
+        {
+            Text action = GetPrivateField<Text>(
+                home.View.BottomSheet,
+                "_actionLabel");
+            return action == null ? string.Empty : action.text;
+        }
+
+        private static void AssertRecoveryModeWasNotReplaced(
+            WorkshopHomeController home,
+            string expectedTitle)
+        {
+            WorkshopBottomSheet sheet = home.View.BottomSheet;
+            GameObject settings = GetPrivateField<GameObject>(
+                sheet,
+                "_settingsContent");
+            GameObject recovery = GetPrivateField<GameObject>(
+                sheet,
+                "_recoveryContent");
+            Assert.That(sheet.IsOpen, Is.True);
+            Assert.That(settings.activeSelf, Is.False);
+            Assert.That(recovery.activeSelf, Is.True);
+            Assert.That(RecoveryTitle(home), Is.EqualTo(expectedTitle));
+        }
+
+        private static void AssertRecoveryCloseUnavailable(
+            WorkshopHomeController home)
+        {
+            Button close = CloseButton(home);
+            Assert.That(
+                close.gameObject.activeSelf,
+                Is.False,
+                "Recovery must not expose an X that can discard its action.");
+            Assert.That(close.interactable, Is.False);
+        }
+
+        private static void AssertQueueRecoveryRetainsHead(
+            WorkshopHomeController home,
+            InMemoryProgressStore store,
+            PendingPresentationEntry expectedHead)
+        {
+            AssertFreshHead(store, expectedHead);
+            Assert.That(
+                home.View.BottomSheet.IsOpen,
+                Is.True,
+                "A failed automatic retirement needs an explicit retry.");
+            Assert.That(
+                home.View.BottomSheet.ActionButton.gameObject.activeSelf,
+                Is.True);
+            Assert.That(
+                home.View.BottomSheet.ActionButton.interactable,
+                Is.True);
+            Assert.That(
+                home.View.PrimaryButton.gameObject.activeSelf,
+                Is.False,
+                "Primary progression stays suppressed behind the queue head.");
+            AssertRecoveryCloseUnavailable(home);
+        }
+
+        private static void AssertFreshHead(
+            IDemoProgressStore store,
+            PendingPresentationEntry expectedHead)
+        {
+            Assert.That(
+                store.Current.TryGetPendingPresentation(
+                    0,
+                    out PendingPresentationEntry head),
+                Is.True);
+            Assert.That(head, Is.EqualTo(expectedHead));
+        }
+
+        private static DemoProgressSnapshot CreatePendingSnapshot(
+            int completedLevelMask,
+            params PendingPresentationEntry[] pending)
+        {
+            return new DemoProgressSnapshot(
+                highestUnlockedLevelIndex: 7,
+                completedLevelMask: completedLevelMask,
+                selectedThemeId: "sage",
+                musicEnabled: true,
+                cozyTokens: 0,
+                rewardedLevelMask: completedLevelMask,
+                ownedDecorationIds: Array.Empty<string>(),
+                decorationSelections: Array.Empty<DecorationSelection>(),
+                seenRoomRevealIds: Array.Empty<string>(),
+                viewedMemoryIds: Array.Empty<string>(),
+                seenFinaleIds: Array.Empty<string>(),
+                pendingPresentations: pending,
+                lastDailyCareUtcDayKey: 0,
+                completedDailyCareCount: 0);
+        }
+
+        private static void ReplaceProgressStore(
+            DemoExperienceController experience,
+            WorkshopHomeController home,
+            IDemoProgressStore store)
+        {
+            SetPrivateField(home, "_store", store);
+            SetPrivateField(Flow(experience), "_store", store);
         }
 
         private void CountInvalidRevealDiagnostic(
@@ -1075,22 +1590,39 @@ namespace CalmSpace.Tests.PlayMode
 
         private sealed class InMemoryProgressStore : IDemoProgressStore
         {
+            private readonly ProfileMutationStatus[] _retirementStatuses;
+            private int _retirementStatusIndex;
+
             public InMemoryProgressStore(
                 DemoProgressSnapshot snapshot,
-                int levelCount)
+                int levelCount,
+                params ProfileMutationStatus[] retirementStatuses)
             {
                 Current = snapshot;
                 LevelCount = levelCount;
+                _retirementStatuses =
+                    retirementStatuses ??
+                    Array.Empty<ProfileMutationStatus>();
             }
 
             public event Action<DemoProgressSnapshot> ProgressChanged;
             public bool IsInitialized => true;
             public int LevelCount { get; }
             public DemoProgressSnapshot Current { get; private set; }
+            public int RetirementAttemptCount { get; private set; }
 
             public ProfileMutationResult<PresentationMutation>
                 MarkPresentationSeen(PendingPresentationEntry presentation)
             {
+                RetirementAttemptCount++;
+                if (TryTakeRetirementStatus(out ProfileMutationStatus status))
+                {
+                    return new ProfileMutationResult<PresentationMutation>(
+                        status,
+                        Current,
+                        default);
+                }
+
                 ProfileMutationResult<PresentationMutation> result =
                     DemoProgressRules.MarkPresentationSeen(
                         Current, presentation);
@@ -1103,6 +1635,47 @@ namespace CalmSpace.Tests.PlayMode
                 return result;
             }
 
+            public ProfileMutationResult<MemoryMutation> MarkMemoryViewed(
+                string memoryId)
+            {
+                RetirementAttemptCount++;
+                if (TryTakeRetirementStatus(out ProfileMutationStatus status))
+                {
+                    return new ProfileMutationResult<MemoryMutation>(
+                        status,
+                        Current,
+                        default);
+                }
+
+                ProfileMutationResult<MemoryMutation> result =
+                    DemoProgressRules.MarkMemoryViewed(Current, memoryId);
+                if (result.IsSuccess)
+                {
+                    Current = result.Snapshot;
+                    ProgressChanged?.Invoke(Current);
+                }
+
+                return result;
+            }
+
+            public void ReplaceCurrent(DemoProgressSnapshot snapshot)
+            {
+                Current = snapshot;
+            }
+
+            private bool TryTakeRetirementStatus(
+                out ProfileMutationStatus status)
+            {
+                if (_retirementStatusIndex >= _retirementStatuses.Length)
+                {
+                    status = default;
+                    return false;
+                }
+
+                status = _retirementStatuses[_retirementStatusIndex++];
+                return true;
+            }
+
             public ProfileInitializationResult Initialize(
                 int levelCount,
                 string defaultThemeId,
@@ -1111,10 +1684,6 @@ namespace CalmSpace.Tests.PlayMode
 
             public ProfileMutationResult<LevelCompletionMutation> CompleteLevel(
                 CompleteLevelCommand command) =>
-                throw new NotSupportedException();
-
-            public ProfileMutationResult<MemoryMutation> MarkMemoryViewed(
-                string memoryId) =>
                 throw new NotSupportedException();
 
             public ProfileMutationResult<DecorationMutation>
