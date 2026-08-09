@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CalmSpace.Editor;
 using CalmSpace.UI;
 using CalmSpace.Workshop;
 using NUnit.Framework;
@@ -165,14 +166,68 @@ namespace CalmSpace.Tests.EditMode
         [Test]
         public void RoomEntryDoesNotDisturbTheEightLevelEntries()
         {
+            AddressableAssetSettings settings =
+                AddressableAssetSettingsDefaultObject.GetSettings(false);
+            Assert.That(settings, Is.Not.Null);
             List<AddressableAssetEntry> entries = AllEntries();
             foreach (string address in StableLevelAddresses)
             {
+                List<AddressableAssetEntry> matches = entries
+                    .Where(entry => string.Equals(
+                        entry.address, address, StringComparison.Ordinal))
+                    .ToList();
                 Assert.That(
-                    entries.Count(entry => string.Equals(
-                        entry.address, address, StringComparison.Ordinal)),
+                    matches.Count,
                     Is.EqualTo(1),
                     address + " must survive room authoring.");
+                Assert.That(
+                    matches[0].parentGroup,
+                    Is.SameAs(settings.DefaultGroup),
+                    address + " must remain in Default Local Group.");
+            }
+        }
+
+        [Test]
+        public void ReusedWorkshopGroupRejectsLocalProfileDrift()
+        {
+            AddressableAssetSettings settings =
+                AddressableAssetSettings.Create(
+                    "unused",
+                    "TemporaryWorkshopSettings",
+                    true,
+                    false);
+            try
+            {
+                AddressableAssetGroup defaultGroup = settings.DefaultGroup;
+                AddressableAssetGroup workshop = settings.CreateGroup(
+                    WorkshopGroupName,
+                    false,
+                    false,
+                    false,
+                    new List<AddressableAssetGroupSchema>(
+                        defaultGroup.Schemas));
+                BundledAssetGroupSchema defaultBundle =
+                    defaultGroup.GetSchema<BundledAssetGroupSchema>();
+                BundledAssetGroupSchema workshopBundle =
+                    workshop.GetSchema<BundledAssetGroupSchema>();
+                workshopBundle.BuildPath.SetVariableByName(
+                    settings,
+                    AddressableAssetSettings.kRemoteBuildPath);
+
+                InvalidOperationException exception = Assert.Throws<
+                    InvalidOperationException>(() =>
+                    CalmSpaceWorkshopAssetBuilder.ValidateWorkshopGroup(
+                        workshop,
+                        defaultGroup,
+                        defaultBundle,
+                        RoomGuid));
+                Assert.That(
+                    exception.Message,
+                    Does.Contain("enabled local PackTogether group"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
             }
         }
 

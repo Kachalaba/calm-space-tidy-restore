@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using CalmSpace.Editor;
 using NUnit.Framework;
 using UnityEditor;
@@ -103,6 +105,63 @@ namespace CalmSpace.Tests.EditMode
 
             Assert.That(result.Errors, Is.Not.Empty);
             Assert.That(result.Duplicates, Is.Empty);
+        }
+
+        [Test]
+        public void FailedAnalyzeCannotClaimDuplicationIsClear()
+        {
+            CalmSpaceAddressablesAudit.AnalyzeClassification classification =
+                CalmSpaceAddressablesAudit.ClassifyAnalyzeResults(
+                    new List<AnalyzeRule.AnalyzeResult>
+                    {
+                        Result("Analyze build failed", MessageType.Error)
+                    });
+
+            Assert.That(classification.Errors, Is.Not.Empty);
+            Assert.That(
+                CalmSpaceAddressablesAudit.GetAddressablesDuplicationStatus(
+                    classification),
+                Is.EqualTo("notEvaluated"));
+        }
+
+        [Test]
+        public void FailedBuildCannotFallBackToAStaleBuildLayout()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "CalmSpaceAddressablesAuditTests-" +
+                Guid.NewGuid().ToString("N"));
+            string reportDirectory = Path.Combine(
+                root,
+                "Library",
+                "com.unity.addressables");
+            string staleLayout = Path.Combine(
+                reportDirectory,
+                "buildlayout.json");
+            string sibling = Path.Combine(reportDirectory, "keep.json");
+            try
+            {
+                Directory.CreateDirectory(reportDirectory);
+                File.WriteAllText(staleLayout, "stale");
+                File.WriteAllText(sibling, "keep");
+
+                CalmSpaceAddressablesAudit.RemovePriorBuildLayout(
+                    staleLayout);
+                // Simulate the current build returning without an artifact.
+
+                Assert.That(File.Exists(staleLayout), Is.False);
+                Assert.That(
+                    File.Exists(sibling),
+                    Is.True,
+                    "Cleanup must delete only the exact legacy layout file.");
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
         }
 
         private static AnalyzeRule.AnalyzeResult Result(

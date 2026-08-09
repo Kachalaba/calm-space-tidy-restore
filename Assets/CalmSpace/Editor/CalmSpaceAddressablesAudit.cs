@@ -240,9 +240,7 @@ namespace CalmSpace.Editor
             summary.DuplicateDependencies.AddRange(
                 classification.Duplicates);
             summary.AddressablesToAddressablesDuplication =
-                classification.Duplicates.Count == 0
-                    ? "clear"
-                    : "unintendedDuplicatesFound";
+                GetAddressablesDuplicationStatus(classification);
             if (classification.Errors.Count > 0)
             {
                 throw new AuditFailureException(classification.Errors[0]);
@@ -257,6 +255,9 @@ namespace CalmSpace.Editor
                 throw new AuditFailureException("activeDataBuilderMissing");
             }
 
+            string fullBuildLayoutPath =
+                ResolveProjectPath(BuildLayoutPath);
+            RemovePriorBuildLayout(fullBuildLayoutPath);
             AddressableAssetSettings.CleanPlayerContent(
                 settings.ActivePlayerDataBuilder);
             AddressableAssetSettings.BuildPlayerContent(
@@ -267,8 +268,13 @@ namespace CalmSpace.Editor
                 throw new AuditFailureException("addressablesBuildFailed");
             }
 
+            if (!File.Exists(fullBuildLayoutPath))
+            {
+                throw new AuditFailureException("buildLayoutMissing");
+            }
+
             BuildLayout layout = BuildLayout.Open(
-                ResolveProjectPath(BuildLayoutPath),
+                fullBuildLayoutPath,
                 readHeader: true,
                 readFullFile: true);
             if (layout == null)
@@ -422,6 +428,57 @@ namespace CalmSpace.Editor
                     throw new AuditFailureException(
                         "roomSpriteOwnershipIncomplete");
                 }
+            }
+        }
+
+        internal static string GetAddressablesDuplicationStatus(
+            AnalyzeClassification classification)
+        {
+            if (classification == null || classification.Errors.Count > 0)
+            {
+                return "notEvaluated";
+            }
+
+            return classification.Duplicates.Count == 0
+                ? "clear"
+                : "unintendedDuplicatesFound";
+        }
+
+        internal static void RemovePriorBuildLayout(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath) ||
+                !Path.IsPathRooted(fullPath))
+            {
+                throw new ArgumentException(
+                    "Build Layout cleanup requires an absolute file path.",
+                    nameof(fullPath));
+            }
+
+            var layout = new FileInfo(Path.GetFullPath(fullPath));
+            DirectoryInfo addressablesDirectory = layout.Directory;
+            DirectoryInfo libraryDirectory = addressablesDirectory?.Parent;
+            bool isExactLegacyLayout =
+                string.Equals(
+                    layout.Name,
+                    "buildlayout.json",
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    addressablesDirectory?.Name,
+                    "com.unity.addressables",
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    libraryDirectory?.Name,
+                    "Library",
+                    StringComparison.Ordinal);
+            if (!isExactLegacyLayout)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to delete an unexpected Build Layout path.");
+            }
+
+            if (layout.Exists)
+            {
+                layout.Delete();
             }
         }
 

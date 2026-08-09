@@ -581,7 +581,7 @@ namespace CalmSpace.Editor
             return workshopGroup;
         }
 
-        private static void ValidateWorkshopGroup(
+        internal static void ValidateWorkshopGroup(
             AddressableAssetGroup workshopGroup,
             AddressableAssetGroup defaultGroup,
             BundledAssetGroupSchema defaultBundle,
