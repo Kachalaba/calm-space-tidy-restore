@@ -78,3 +78,31 @@ plays stages 1-3 in sequence and fails on the pre-fix code. The shipped APK
 (`12ce841f118f92eb37255b5f43c63c80b68770bb57ba8f26bc68cacc9a7744ea`) has **not**
 been re-run on the Pixel 8. Before release, repeat the pass B journey through at
 least stage 3 and confirm the Start action survives the pebble-shelf beat.
+
+## Pass D — release build after the resilience work
+
+Build: `CalmSpace-Release-verify.apk`, release-signed, built from the verified
+HEAD (EditMode 281/281, PlayMode 84/84). Clean uninstall then install, so the
+signature swap could not silently fail as it did in an earlier pass.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Release build cold-launches on a fresh profile | Pass | dusty 0/8 room, UK locale |
+| Stage 1 completes, pays once, shows its beat line | Pass | "Шлях до верстака вільний.", +15 |
+| Stage 2 memory card renders in Ukrainian | Pass | `23-memory-card-uk.png` |
+| An open memory card survives `am force-stop` | **Pass** | `24-memory-survives-kill.png` — offered again on cold start |
+| Closing the card retires it and restores the next task | Pass | `25-memory-retired.png` — 2/8, "Відновити чайну шухляду" |
+| logcat clean across the whole pass | Pass | zero `AndroidRuntime` / `FATAL` / `JNI DETECTED` |
+
+The process-death test is stronger than the desktop one: `NotifyHidden` is a
+managed call, whereas this killed the process outright and the pending
+presentation still came back from the encrypted profile.
+
+### Still not verified on hardware
+
+- Stages 3-8 and their mechanics.
+- The mechanic-specific screw and cleaning audio, and the tactile placement
+  palette — these are subjective and need a human ear, not a screenshot.
+- Interrupting a reveal *while it is playing*. Two attempts killed the app
+  after the reveal had already completed; the timing window is roughly two to
+  five seconds after returning home and is easier to hit by hand.
