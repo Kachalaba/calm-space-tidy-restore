@@ -260,6 +260,7 @@ namespace CalmSpace.UI
             CancellationToken cancellationToken)
         {
             var result = WorkshopRevealPlaybackResult.Cancelled;
+            var restartAfterControllerCancellation = false;
             try
             {
                 UniTask<WorkshopRevealPlaybackResult> playback =
@@ -271,9 +272,12 @@ namespace CalmSpace.UI
 
                 result = await playback;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception) when (
+                cancellationToken.IsCancellationRequested &&
+                exception.CancellationToken == cancellationToken)
             {
                 result = WorkshopRevealPlaybackResult.Cancelled;
+                restartAfterControllerCancellation = true;
             }
             catch (Exception exception)
             {
@@ -304,7 +308,10 @@ namespace CalmSpace.UI
                     // already made the home visible before cancellation
                     // settled. A hidden home leaves it pending for later.
                     Refresh();
-                    RestartCancelledRevealIfFresh(beatId);
+                    if (restartAfterControllerCancellation)
+                    {
+                        RestartCancelledRevealIfFresh(beatId);
+                    }
                     break;
             }
         }

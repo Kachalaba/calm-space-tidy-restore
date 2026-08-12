@@ -327,8 +327,13 @@ namespace CalmSpace.UI
 
                 return WorkshopRevealPlaybackResult.Completed;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception)
             {
+                if (exception.CancellationToken == cancellationToken)
+                {
+                    throw;
+                }
+
                 return WorkshopRevealPlaybackResult.Cancelled;
             }
             finally

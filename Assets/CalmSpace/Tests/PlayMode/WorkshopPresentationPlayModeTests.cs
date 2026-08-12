@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using CalmSpace.Audio;
 using CalmSpace.Demo;
@@ -300,6 +301,126 @@ namespace CalmSpace.Tests.PlayMode
 
             Assert.That(activeHotspotCount, Is.EqualTo(1));
             Assert.That(interactableHotspotCount, Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator RevealFrameFaultKeepsPendingHeadWithoutAutomaticReplay()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            WorkshopRoomPresenter room = Room(home);
+            var frames = new ControlledRevealFrameDriver();
+            room.RevealFrameDriver = frames.WaitForNextFrameAsync;
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+
+            LogAssert.Expect(
+                LogType.Exception,
+                new Regex("Controlled reveal frame failure"));
+            frames.Fail(new InvalidOperationException(
+                "Controlled reveal frame failure."));
+
+            Assert.That(
+                frames.WaitCount,
+                Is.EqualTo(1),
+                "A frame fault is not controller cancellation and must not " +
+                "start another reveal wait.");
+            Assert.That(frames.PendingCount, Is.Zero);
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+            Assert.That(
+                GetPrivateField<bool>(home, "_revealPlaying"),
+                Is.False);
+            Assert.That(room.IsRevealPlaying, Is.False);
+            Assert.That(store.RetirementAttemptCount, Is.Zero);
+            Assert.That(store.Current.SeenRoomRevealCount, Is.Zero);
+            Assert.That(PendingRevealCount(store), Is.EqualTo(1));
+            AssertFreshHead(
+                store,
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+            Assert.That(room.GetBeat(0).BeforeGroup.alpha, Is.EqualTo(0f));
+        }
+
+        [UnityTest]
+        public IEnumerator
+            ForeignRevealCancellationDuringImmediateReentryDoesNotReplay()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            WorkshopRoomPresenter room = Room(home);
+            var frames = new ControlledRevealFrameDriver();
+            room.RevealFrameDriver = frames.WaitForNextFrameAsync;
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            using var foreignCancellation = new CancellationTokenSource();
+            foreignCancellation.Cancel();
+            frames.ReleaseCancelledFrame(foreignCancellation.Token);
+
+            Assert.That(
+                frames.WaitCount,
+                Is.EqualTo(1),
+                "Only cancellation from the exact controller token may " +
+                "restart the pending reveal.");
+            Assert.That(frames.PendingCount, Is.Zero);
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+            Assert.That(
+                GetPrivateField<bool>(home, "_revealPlaying"),
+                Is.False);
+            Assert.That(store.RetirementAttemptCount, Is.Zero);
+            Assert.That(store.Current.SeenRoomRevealCount, Is.Zero);
+            AssertFreshHead(
+                store,
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
         }
 
         [UnityTest]
@@ -2122,6 +2243,31 @@ namespace CalmSpace.Tests.PlayMode
                     Is.True,
                     "The controlled frame must observe cancellation first.");
                 frame.Completion.TrySetCanceled(frame.CancellationToken);
+            }
+
+            public void ReleaseCancelledFrame(
+                CancellationToken cancellationToken)
+            {
+                PendingRevealFrame frame = TakePending();
+                Assert.That(
+                    frame.CancellationToken.IsCancellationRequested,
+                    Is.True,
+                    "The controller frame must observe its own cancellation.");
+                Assert.That(
+                    cancellationToken,
+                    Is.Not.EqualTo(frame.CancellationToken),
+                    "The regression needs distinct cancellation provenance.");
+                frame.Completion.TrySetCanceled(cancellationToken);
+            }
+
+            public void Fail(Exception exception)
+            {
+                PendingRevealFrame frame = TakePending();
+                Assert.That(
+                    frame.CancellationToken.IsCancellationRequested,
+                    Is.False,
+                    "A reveal fault must remain distinct from cancellation.");
+                frame.Completion.TrySetException(exception);
             }
 
             private PendingRevealFrame TakePending()
