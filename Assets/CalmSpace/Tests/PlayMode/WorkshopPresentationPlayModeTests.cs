@@ -838,14 +838,13 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         /// <summary>
-        /// Walks the whole chapter. Stages 2 and 5 also queue a Memory and
-        /// stage 8 queues a Finale; this build ships neither the Album nor a
-        /// finale sequence, so those entries must still leave the queue. A
-        /// presentation stuck at the head blocks every later recommendation
-        /// and would strand the player on a home screen with no next level.
+        /// The real Addressable room must become visibly more restored after
+        /// each completed stage. This catches a projection, presenter, or
+        /// hotspot regression that would leave the player home with a stale
+        /// workshop despite the profile recording chapter progress.
         /// </summary>
         [UnityTest]
-        public IEnumerator EveryStageKeepsTheChapterPlayable()
+        public IEnumerator EveryStageReturnsHomeWithCumulativeVisibleRoomRestoration()
         {
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
@@ -877,7 +876,22 @@ namespace CalmSpace.Tests.PlayMode
 
                 yield return ReturnHome(experience, home);
                 yield return WaitForRevealEnd(home, 14f);
-                yield return CloseMemoryCardIfOpen(home);
+
+                if (levelIndex == 4 || levelIndex == 7)
+                {
+                    string expectedMemoryId = levelIndex == 4
+                        ? WorkshopContentIds.FixEverythingMemoryId
+                        : WorkshopContentIds.OpenWindowsMemoryId;
+                    yield return AssertMemoryOpensAndClosesOnce(
+                        home,
+                        store,
+                        expectedMemoryId,
+                        levelIndex);
+                }
+                else
+                {
+                    yield return CloseMemoryCardIfOpen(home);
+                }
 
                 Assert.That(
                     PendingRevealCount(store),
@@ -890,6 +904,12 @@ namespace CalmSpace.Tests.PlayMode
                     "Stage " + levelIndex +
                     " left a presentation this build cannot show at the " +
                     "head of the queue.");
+
+                AssertSettledHomeShowsCumulativeRestoration(
+                    experience,
+                    home,
+                    levelIndex,
+                    stages);
 
                 WorkshopRecommendedAction? action =
                     Flow(experience).GetRecommendedAction();
@@ -910,10 +930,25 @@ namespace CalmSpace.Tests.PlayMode
                     ".");
             }
 
+            IWorkshopProgressProjector projector =
+                GetPrivateField<IWorkshopProgressProjector>(
+                    home,
+                    "_projector");
+            Assert.That(
+                projector.TryProject(
+                    store.Current,
+                    out WorkshopProgressProjection finalProjection),
+                Is.True,
+                "The complete profile must still project a workshop room.");
+            Assert.That(finalProjection.CompletedBeatCount, Is.EqualTo(8));
+            Assert.That(finalProjection.RestoredZoneMask, Is.EqualTo(0xFF));
+            Assert.That(finalProjection.IsComplete, Is.True);
+            Assert.That(finalProjection.ActiveHotspotBeatId, Is.Empty);
             Assert.That(
                 store.Current.CompletedLevelMask & 0xFF,
                 Is.EqualTo(0xFF),
                 "All eight stages must be recorded complete.");
+            Assert.That(store.Current.PendingPresentationCount, Is.Zero);
             Assert.That(
                 GetPrivateField<int>(experience, "_currentLevelIndex"),
                 Is.LessThan(0),
@@ -1233,6 +1268,111 @@ namespace CalmSpace.Tests.PlayMode
 
             presentation = default;
             return false;
+        }
+
+        private static IEnumerator AssertMemoryOpensAndClosesOnce(
+            WorkshopHomeController home,
+            IDemoProgressStore store,
+            string expectedMemoryId,
+            int levelIndex)
+        {
+            Assert.That(
+                MemoryCardId(home),
+                Is.EqualTo(expectedMemoryId),
+                "Stage " + levelIndex + " must open its family memory.");
+            Assert.That(home.View.BottomSheet.IsOpen, Is.True);
+            Assert.That(
+                home.View.BottomSheet.ActionButton.gameObject.activeSelf,
+                Is.True);
+            Assert.That(home.View.BottomSheet.ActionButton.interactable, Is.True);
+            Assert.That(store.Current.HasViewedMemory(expectedMemoryId), Is.False);
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(MemoryCardId(home), Is.Empty);
+            Assert.That(
+                store.Current.HasViewedMemory(expectedMemoryId),
+                Is.True,
+                "Closing stage " + levelIndex + " memory must retire it.");
+            Assert.That(home.View.BottomSheet.IsOpen, Is.False);
+        }
+
+        private static void AssertSettledHomeShowsCumulativeRestoration(
+            DemoExperienceController experience,
+            WorkshopHomeController home,
+            int completedStageIndex,
+            int stageCount)
+        {
+            CanvasGroup homeScreen = GetPrivateField<CanvasGroup>(
+                experience,
+                "_homeScreen");
+            Assert.That(
+                GetPrivateField<CanvasGroup>(experience, "_activeScreen"),
+                Is.SameAs(homeScreen),
+                "Stage " + completedStageIndex + " did not return to Main.");
+            Assert.That(homeScreen.gameObject.activeInHierarchy, Is.True);
+            Assert.That(homeScreen.interactable, Is.True);
+            Assert.That(
+                GetPrivateField<LevelBase>(experience, "_boundLevel"),
+                Is.Null,
+                "No level may remain active after returning home.");
+            Assert.That(experience.CurrentLevelIndex, Is.LessThan(0));
+
+            WorkshopRoomPresenter room = Room(home);
+            Assert.That(room.IsVisible, Is.True);
+            Assert.That(room.BeatCount, Is.EqualTo(stageCount));
+
+            var activeHotspotCount = 0;
+            var interactableHotspotCount = 0;
+            string activeHotspotBeatId = string.Empty;
+            for (var beatIndex = 0; beatIndex < room.BeatCount; beatIndex++)
+            {
+                WorkshopRoomBeatBinding binding = room.GetBeat(beatIndex);
+                Assert.That(binding, Is.Not.Null);
+                Assert.That(binding.RestoredGroup, Is.Not.Null);
+                Assert.That(binding.BeforeGroup, Is.Not.Null);
+                Assert.That(binding.Hotspot, Is.Not.Null);
+                Assert.That(
+                    binding.RestoredGroup.alpha,
+                    Is.EqualTo(
+                        binding.ZoneIndex <= completedStageIndex ? 1f : 0f)
+                        .Within(0.001f),
+                    "Stage " + completedStageIndex + " restored layer " +
+                    binding.ZoneIndex + " is wrong.");
+                Assert.That(
+                    binding.BeforeGroup.alpha,
+                    Is.EqualTo(0f).Within(0.001f),
+                    "Stage " + completedStageIndex + " left a dirty overlay " +
+                    "visible for beat " + beatIndex + ".");
+
+                if (binding.Hotspot.gameObject.activeSelf)
+                {
+                    activeHotspotCount++;
+                    activeHotspotBeatId = binding.BeatId;
+                    if (binding.Hotspot.interactable)
+                    {
+                        interactableHotspotCount++;
+                    }
+                }
+            }
+
+            bool isFinalStage = completedStageIndex == stageCount - 1;
+            Assert.That(activeHotspotCount, Is.EqualTo(isFinalStage ? 0 : 1));
+            Assert.That(
+                interactableHotspotCount,
+                Is.EqualTo(isFinalStage ? 0 : 1),
+                "Only the next restoration hotspot may accept input.");
+            if (!isFinalStage)
+            {
+                Assert.That(
+                    WorkshopContentIds.TryGetCozyWorkshopBeat(
+                        completedStageIndex + 1,
+                        out WorkshopBeatContract nextBeat),
+                    Is.True);
+                Assert.That(activeHotspotBeatId, Is.EqualTo(nextBeat.BeatId));
+            }
         }
 
         private static IEnumerator CloseMemoryCardIfOpen(
