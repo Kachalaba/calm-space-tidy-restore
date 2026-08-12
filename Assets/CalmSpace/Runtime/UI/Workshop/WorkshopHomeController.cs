@@ -300,10 +300,28 @@ namespace CalmSpace.UI
                     break;
                 default:
                     // Interrupted playback persists nothing, so the same
-                    // presentation is replayed on the next entry.
+                    // fresh presentation is replayed if an immediate entry
+                    // already made the home visible before cancellation
+                    // settled. A hidden home leaves it pending for later.
                     Refresh();
+                    RestartCancelledRevealIfFresh(beatId);
                     break;
             }
+        }
+
+        private void RestartCancelledRevealIfFresh(string cancelledBeatId)
+        {
+            if (!_visible ||
+                !TryGetPendingRevealBeatId(out string freshBeatId) ||
+                !string.Equals(
+                    freshBeatId,
+                    cancelledBeatId,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            BeginPendingReveal();
         }
 
         /// <summary>

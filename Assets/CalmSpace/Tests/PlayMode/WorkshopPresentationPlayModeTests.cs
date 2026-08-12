@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using CalmSpace.Audio;
@@ -154,6 +155,151 @@ namespace CalmSpace.Tests.PlayMode
 
             yield return WaitForRevealEnd(home, 12f);
             Assert.That(PendingRevealCount(store), Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator
+            MidRevealHideThenImmediateReentryRestoresProjectionAndReplaysPendingHeadOnce()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            SetPrivateField(home, "_audioService", audio);
+            yield return WaitForRoom(home);
+
+            WorkshopRoomPresenter room = Room(home);
+            var frames = new ControlledRevealFrameDriver();
+            room.RevealFrameDriver = frames.WaitForNextFrameAsync;
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+            Assert.That(room.IsRevealPlaying, Is.True);
+
+            frames.Advance(WorkshopRoomPresenter.RevealSeconds / 2f);
+
+            WorkshopRoomBeatBinding firstBeat = room.GetBeat(0);
+            Assert.That(frames.WaitCount, Is.EqualTo(2));
+            Assert.That(
+                firstBeat.BeforeGroup.alpha,
+                Is.EqualTo(0.5f).Within(0.0001f),
+                "Half of the reveal duration must produce a true mid-reveal " +
+                "overlay, not a boundary sample.");
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+
+            Assert.That(room.IsVisible, Is.True);
+            Assert.That(frames.WaitCount, Is.EqualTo(2));
+            Assert.That(
+                GetPrivateField<bool>(home, "_revealPlaying"),
+                Is.True,
+                "Immediate re-entry must occur before cancellation settles.");
+
+            frames.ReleaseCancelledFrame();
+
+            Assert.That(
+                frames.WaitCount,
+                Is.EqualTo(3),
+                "A visible home must start a new controlled reveal-frame wait " +
+                "after the cancelled continuation settles.");
+            Assert.That(frames.PendingCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(2));
+            Assert.That(room.IsRevealPlaying, Is.True);
+
+            frames.Advance(WorkshopRoomPresenter.RevealSeconds);
+
+            Assert.That(frames.WaitCount, Is.EqualTo(3));
+            Assert.That(frames.PendingCount, Is.Zero);
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(store.Current.SeenRoomRevealCount, Is.EqualTo(1));
+            Assert.That(
+                store.Current.HasSeenRoomReveal(FirstRevealBeatId),
+                Is.True);
+            Assert.That(PendingRevealCount(store), Is.Zero);
+            Assert.That(home.View.BottomSheet.IsOpen, Is.False);
+            Assert.That(room.IsVisible, Is.True);
+            Assert.That(
+                GetPrivateField<GameObject>(room, "_ambientRoot")
+                    .activeInHierarchy,
+                Is.True);
+
+            IWorkshopProgressProjector projector =
+                GetPrivateField<IWorkshopProgressProjector>(
+                    home,
+                    "_projector");
+            Assert.That(
+                projector.TryProject(
+                    store.Current,
+                    out WorkshopProgressProjection projection),
+                Is.True);
+            Assert.That(projection.CompletedBeatCount, Is.EqualTo(1));
+            Assert.That(projection.RestoredZoneMask, Is.EqualTo(0b1));
+            Assert.That(projection.IsComplete, Is.False);
+            Assert.That(
+                WorkshopContentIds.TryGetCozyWorkshopBeat(
+                    1,
+                    out WorkshopBeatContract nextBeat),
+                Is.True);
+            Assert.That(
+                projection.ActiveHotspotBeatId,
+                Is.EqualTo(nextBeat.BeatId));
+            Assert.That(
+                GetPrivateField<CanvasGroup>(room, "_finaleGroup").alpha,
+                Is.EqualTo(0f).Within(0.0001f));
+
+            var activeHotspotCount = 0;
+            var interactableHotspotCount = 0;
+            for (var index = 0; index < room.BeatCount; index++)
+            {
+                WorkshopRoomBeatBinding binding = room.GetBeat(index);
+                Assert.That(
+                    binding.RestoredGroup.alpha,
+                    Is.EqualTo(binding.ZoneIndex == 0 ? 1f : 0f)
+                        .Within(0.0001f));
+                Assert.That(
+                    binding.BeforeGroup.alpha,
+                    Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(binding.RestoredGroup.interactable, Is.False);
+                Assert.That(binding.RestoredGroup.blocksRaycasts, Is.False);
+                Assert.That(binding.BeforeGroup.interactable, Is.False);
+                Assert.That(binding.BeforeGroup.blocksRaycasts, Is.False);
+
+                if (!binding.Hotspot.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+
+                activeHotspotCount++;
+                Assert.That(binding.BeatId, Is.EqualTo(nextBeat.BeatId));
+                if (binding.Hotspot.interactable)
+                {
+                    interactableHotspotCount++;
+                }
+            }
+
+            Assert.That(activeHotspotCount, Is.EqualTo(1));
+            Assert.That(interactableHotspotCount, Is.EqualTo(1));
         }
 
         [UnityTest]
@@ -1938,6 +2084,66 @@ namespace CalmSpace.Tests.PlayMode
 
             public void Dispose()
             {
+            }
+        }
+
+        private sealed class ControlledRevealFrameDriver
+        {
+            private readonly Queue<PendingRevealFrame> _pending =
+                new Queue<PendingRevealFrame>();
+
+            public int WaitCount { get; private set; }
+            public int PendingCount => _pending.Count;
+
+            public UniTask<float> WaitForNextFrameAsync(
+                CancellationToken cancellationToken)
+            {
+                WaitCount++;
+                var frame = new PendingRevealFrame(cancellationToken);
+                _pending.Enqueue(frame);
+                return frame.Completion.Task;
+            }
+
+            public void Advance(float delta)
+            {
+                PendingRevealFrame frame = TakePending();
+                Assert.That(
+                    frame.CancellationToken.IsCancellationRequested,
+                    Is.False,
+                    "A cancelled reveal frame must be released explicitly.");
+                frame.Completion.TrySetResult(delta);
+            }
+
+            public void ReleaseCancelledFrame()
+            {
+                PendingRevealFrame frame = TakePending();
+                Assert.That(
+                    frame.CancellationToken.IsCancellationRequested,
+                    Is.True,
+                    "The controlled frame must observe cancellation first.");
+                frame.Completion.TrySetCanceled(frame.CancellationToken);
+            }
+
+            private PendingRevealFrame TakePending()
+            {
+                Assert.That(
+                    _pending.Count,
+                    Is.GreaterThan(0),
+                    "No controlled reveal frame is waiting.");
+                return _pending.Dequeue();
+            }
+
+            private sealed class PendingRevealFrame
+            {
+                public PendingRevealFrame(
+                    CancellationToken cancellationToken)
+                {
+                    CancellationToken = cancellationToken;
+                }
+
+                public CancellationToken CancellationToken { get; }
+                public UniTaskCompletionSource<float> Completion { get; } =
+                    new UniTaskCompletionSource<float>();
             }
         }
 

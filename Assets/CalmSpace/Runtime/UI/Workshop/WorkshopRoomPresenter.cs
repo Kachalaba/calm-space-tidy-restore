@@ -81,6 +81,8 @@ namespace CalmSpace.UI
         private bool _interactionEnabled = true;
         private bool _revealPlaying;
         private string _revealBeatId = string.Empty;
+        [NonSerialized] private Func<CancellationToken, UniTask<float>>
+            _revealFrameDriver = WaitForProductionRevealFrameAsync;
 
         public event Action<string> HotspotPressed;
 
@@ -90,6 +92,12 @@ namespace CalmSpace.UI
             _roomRoot != null && _roomRoot.activeSelf;
 
         public bool IsRevealPlaying => _revealPlaying;
+
+        internal Func<CancellationToken, UniTask<float>> RevealFrameDriver
+        {
+            set => _revealFrameDriver =
+                value ?? WaitForProductionRevealFrameAsync;
+        }
 
         public int BeatCount => _beats?.Length ?? 0;
 
@@ -310,9 +318,7 @@ namespace CalmSpace.UI
                 var elapsed = 0f;
                 while (elapsed < RevealSeconds)
                 {
-                    await UniTask.Yield(
-                        PlayerLoopTiming.Update, cancellationToken);
-                    elapsed += Time.unscaledDeltaTime;
+                    elapsed += await _revealFrameDriver(cancellationToken);
                     float progress = Mathf.Clamp01(elapsed / RevealSeconds);
                     SetAlpha(
                         binding.BeforeGroup,
@@ -333,6 +339,14 @@ namespace CalmSpace.UI
                 _interactionEnabled = previousInteraction;
                 ApplyInteraction();
             }
+        }
+
+        private static async UniTask<float> WaitForProductionRevealFrameAsync(
+            CancellationToken cancellationToken)
+        {
+            await UniTask.Yield(
+                PlayerLoopTiming.Update, cancellationToken);
+            return Time.unscaledDeltaTime;
         }
 
         private bool TryGetBinding(
