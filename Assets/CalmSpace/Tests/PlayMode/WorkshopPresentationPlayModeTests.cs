@@ -123,7 +123,7 @@ namespace CalmSpace.Tests.PlayMode
 
             // Leaving the workshop mid-reveal persists nothing.
             home.NotifyHidden();
-            yield return WaitForRevealEnd(home, 5f);
+            yield return WaitForRevealEnd(home, 5f, false);
 
             Assert.That(
                 PendingRevealCount(store),
@@ -183,7 +183,7 @@ namespace CalmSpace.Tests.PlayMode
                 "Workshop room has no authored visual for beat " +
                 "cozy-workshop.clear-passage; the room stays usable.");
             yield return ReturnHome(experience, home);
-            yield return WaitForRevealEnd(home, 2f);
+            yield return WaitForRevealEnd(home, 2f, false);
 
             Assert.That(
                 audio.Count(AsmrAudioCue.RoomReveal),
@@ -1347,7 +1347,7 @@ namespace CalmSpace.Tests.PlayMode
                     "Stage " + completedStageIndex + " left a dirty overlay " +
                     "visible for beat " + beatIndex + ".");
 
-                if (binding.Hotspot.gameObject.activeSelf)
+                if (binding.Hotspot.gameObject.activeInHierarchy)
                 {
                     activeHotspotCount++;
                     activeHotspotBeatId = binding.BeatId;
@@ -1519,12 +1519,23 @@ namespace CalmSpace.Tests.PlayMode
             {
                 yield return null;
             }
+
+            Assert.That(
+                GetPrivateField<bool>(home, "_revealPlaying"),
+                Is.True,
+                "The reveal never started.");
         }
 
         private static IEnumerator WaitForRevealEnd(
             WorkshopHomeController home,
-            float seconds)
+            float seconds,
+            bool requireRevealStart = true)
         {
+            if (requireRevealStart)
+            {
+                yield return WaitForRevealStart(home);
+            }
+
             float timeout = Time.realtimeSinceStartup + seconds;
             while (GetPrivateField<bool>(home, "_revealPlaying") &&
                    Time.realtimeSinceStartup < timeout)
