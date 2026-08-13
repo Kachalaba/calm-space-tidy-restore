@@ -151,6 +151,20 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void AllCompleteProfileProducesNoRecommendedLevel()
+        {
+            var profile = new DemoProgressSnapshot(
+                7,
+                0b1111_1111,
+                "sage",
+                true);
+
+            Assert.That(
+                DemoProgressRules.GetRecommendedLevel(profile, 8),
+                Is.EqualTo(-1));
+        }
+
+        [Test]
         public void CompletionRewardIsGrantedOnlyOncePerLevel()
         {
             DemoProgressSnapshot initial =

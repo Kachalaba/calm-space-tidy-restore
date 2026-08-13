@@ -63,6 +63,8 @@ namespace CalmSpace.UI
         private bool _roomLoading;
         private bool _revealPlaying;
         private string _revealFallbackBeatId = string.Empty;
+        private string _completedRevealAwaitingPersistenceBeatId =
+            string.Empty;
         private string _invalidRevealDiagnosticBeatId = string.Empty;
         private string _memoryCardId = string.Empty;
         private IDemoProgressStore _store;
@@ -70,6 +72,7 @@ namespace CalmSpace.UI
         private IWorkshopProgressProjector _projector;
         private IWorkshopTextService _text;
         private IProductAnalytics _analytics;
+        private WorkshopAnalyticsSessionState _analyticsSession;
         private IHapticService _haptics;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _music;
@@ -80,6 +83,7 @@ namespace CalmSpace.UI
         private bool _visible;
         private bool _hasLoadFailure;
         private bool _hasQueueRecovery;
+        private bool _queueRecoveryAllowsPresentableMemory;
         private PendingPresentationEntry _queueRecoveryHead;
         private LevelLaunchRequest _failedRequest;
         private Action<LevelLaunchRequest> _retryLoad;
@@ -97,6 +101,7 @@ namespace CalmSpace.UI
             IWorkshopProgressProjector projector,
             IWorkshopTextService text,
             IProductAnalytics analytics,
+            WorkshopAnalyticsSessionState analyticsSession,
             IHapticService haptics,
             IDemoLocalizationService localization,
             IBackgroundMusicService music,
@@ -113,6 +118,8 @@ namespace CalmSpace.UI
             _text = text ?? throw new ArgumentNullException(nameof(text));
             _analytics = analytics ??
                 throw new ArgumentNullException(nameof(analytics));
+            _analyticsSession = analyticsSession ??
+                throw new ArgumentNullException(nameof(analyticsSession));
             _haptics = haptics ??
                 throw new ArgumentNullException(nameof(haptics));
             _localization = localization ??
@@ -134,6 +141,7 @@ namespace CalmSpace.UI
 
             if (_view == null || _store == null || _flow == null ||
                 _projector == null || _text == null || _analytics == null ||
+                _analyticsSession == null ||
                 _haptics == null || _localization == null || _music == null ||
                 _audioService == null || _availability == null ||
                 _roomLoader == null)
@@ -197,6 +205,7 @@ namespace CalmSpace.UI
             ClearQueueRecovery();
             CancelReveal();
             _revealFallbackBeatId = string.Empty;
+            _completedRevealAwaitingPersistenceBeatId = string.Empty;
             _memoryCardId = string.Empty;
             _room?.SetVisible(false);
             _view?.CloseBottomSheet();
@@ -267,6 +276,14 @@ namespace CalmSpace.UI
                     _room.PlayRevealAsync(beatId, cancellationToken);
                 if (_room.IsRevealPlaying)
                 {
+                    if (_analyticsSession
+                        .TryAdmitRestorationRevealStarted())
+                    {
+                        _analytics.Track(
+                            ProductAnalyticsEvent
+                                .RestorationRevealStarted(beatId));
+                    }
+
                     PlayAudioCue(AsmrAudioCue.RoomReveal);
                 }
 
@@ -296,9 +313,11 @@ namespace CalmSpace.UI
             switch (result)
             {
                 case WorkshopRevealPlaybackResult.Completed:
+                    _completedRevealAwaitingPersistenceBeatId = beatId;
                     MarkRevealSeen(beatId);
                     break;
                 case WorkshopRevealPlaybackResult.MissingVisual:
+                    ClearCompletedRevealProvenance(beatId);
                     Refresh();
                     ShowRevealFallback(beatId);
                     break;
@@ -342,8 +361,10 @@ namespace CalmSpace.UI
                 return;
             }
 
-            ProfileMutationStatus status = _store.MarkPresentationSeen(
-                PendingPresentationEntry.RoomReveal(beatId)).Status;
+            ProfileMutationResult<PresentationMutation> result =
+                _store.MarkPresentationSeen(
+                    PendingPresentationEntry.RoomReveal(beatId));
+            ProfileMutationStatus status = result.Status;
             switch (status)
             {
                 case ProfileMutationStatus.Applied:
@@ -361,11 +382,13 @@ namespace CalmSpace.UI
                     // before deciding what the home can present next.
                     DrainUnpresentableQueue();
                     Refresh();
-                    if (TryGetPendingRevealBeatId(out string next) &&
+                    bool retained =
+                        TryGetPendingRevealBeatId(out string next) &&
                         string.Equals(
                             next,
                             beatId,
-                            StringComparison.Ordinal))
+                            StringComparison.Ordinal);
+                    if (retained)
                     {
                         // A success result cannot overrule the fresh persisted
                         // head. Fail closed instead of replay-looping a visual.
@@ -373,12 +396,30 @@ namespace CalmSpace.UI
                         return;
                     }
 
+                    if (status == ProfileMutationStatus.Applied &&
+                        string.Equals(
+                            _completedRevealAwaitingPersistenceBeatId,
+                            beatId,
+                            StringComparison.Ordinal) &&
+                        _analyticsSession
+                            .TryAdmitRestorationRevealCompleted(
+                                beatId,
+                                status))
+                    {
+                        _analytics.Track(
+                            ProductAnalyticsEvent
+                                .RestorationRevealCompleted(beatId));
+                    }
+
+                    ClearCompletedRevealProvenance(beatId);
+
                     BeginPendingReveal();
                     return;
                 case ProfileMutationStatus.PersistFailed:
                     ShowFreshRevealRecovery();
                     return;
                 case ProfileMutationStatus.Invalid:
+                    ClearCompletedRevealProvenance(beatId);
                     LogInvalidRevealOnce(beatId);
                     ShowFreshRevealRecovery();
                     return;
@@ -390,10 +431,19 @@ namespace CalmSpace.UI
             Refresh();
             if (TryGetPendingRevealBeatId(out string freshBeatId))
             {
+                if (!string.Equals(
+                        freshBeatId,
+                        _completedRevealAwaitingPersistenceBeatId,
+                        StringComparison.Ordinal))
+                {
+                    _completedRevealAwaitingPersistenceBeatId = string.Empty;
+                }
+
                 ShowRevealFallback(freshBeatId);
                 return;
             }
 
+            _completedRevealAwaitingPersistenceBeatId = string.Empty;
             // The store is authoritative even when it changed independently
             // during the failed command. Do not replay the attempted visual.
             TryShowPendingMemory();
@@ -415,6 +465,17 @@ namespace CalmSpace.UI
                 "because its persisted presentation state is invalid; " +
                 "the reveal remains queued for recovery.",
                 this);
+        }
+
+        private void ClearCompletedRevealProvenance(string beatId)
+        {
+            if (string.Equals(
+                    _completedRevealAwaitingPersistenceBeatId,
+                    beatId,
+                    StringComparison.Ordinal))
+            {
+                _completedRevealAwaitingPersistenceBeatId = string.Empty;
+            }
         }
 
         /// <summary>
@@ -469,7 +530,7 @@ namespace CalmSpace.UI
                 if (_store.Current.TryGetPendingPresentation(
                         0, out PendingPresentationEntry recoveryHead) &&
                     recoveryHead == _queueRecoveryHead &&
-                    IsAutomaticallyRetirable(recoveryHead))
+                    IsQueueRecoveryEligible(recoveryHead))
                 {
                     // Preparation can run again while a failed persistence
                     // command is waiting for the player. Reopen the same
@@ -536,6 +597,15 @@ namespace CalmSpace.UI
             }
         }
 
+        private bool IsQueueRecoveryEligible(
+            PendingPresentationEntry head)
+        {
+            return IsAutomaticallyRetirable(head) ||
+                (_queueRecoveryAllowsPresentableMemory &&
+                 head.Kind == PendingPresentationKind.Memory &&
+                 CanPresentMemory(head.StableId));
+        }
+
         private ProfileMutationStatus RetireUnpresentableHead(
             PendingPresentationEntry head)
         {
@@ -589,7 +659,7 @@ namespace CalmSpace.UI
                 !_store.Current.TryGetPendingPresentation(
                     0, out PendingPresentationEntry freshHead) ||
                 freshHead != expected ||
-                !IsAutomaticallyRetirable(freshHead))
+                !IsQueueRecoveryEligible(freshHead))
             {
                 // The bottom sheet closes before invoking this callback. A
                 // stale/rejected action is deliberately silent and follows
@@ -600,10 +670,26 @@ namespace CalmSpace.UI
                 return;
             }
 
+            bool retryingPresentableMemory =
+                _queueRecoveryAllowsPresentableMemory &&
+                expected.Kind == PendingPresentationKind.Memory &&
+                CanPresentMemory(expected.StableId);
             ClearQueueRecovery();
             PlayAudioCue(AsmrAudioCue.UiTap);
-            ProfileMutationStatus status =
-                RetireUnpresentableHead(expected);
+            ProfileMutationStatus status;
+            MemoryMutation memoryMutation = default;
+            if (retryingPresentableMemory)
+            {
+                ProfileMutationResult<MemoryMutation> result =
+                    _store.MarkMemoryViewed(expected.StableId);
+                status = result.Status;
+                memoryMutation = result.Payload;
+            }
+            else
+            {
+                status = RetireUnpresentableHead(expected);
+            }
+
             bool succeeded =
                 status == ProfileMutationStatus.Applied ||
                 status == ProfileMutationStatus.AlreadyApplied;
@@ -613,8 +699,24 @@ namespace CalmSpace.UI
                 currentHead == expected;
             if (!succeeded || retained)
             {
-                OfferQueueRecovery(expected);
+                if (retryingPresentableMemory)
+                {
+                    OfferPresentableMemoryRecovery(expected);
+                }
+                else
+                {
+                    OfferQueueRecovery(expected);
+                }
+
                 return;
+            }
+
+            if (retryingPresentableMemory &&
+                status == ProfileMutationStatus.Applied)
+            {
+                TrackMemoryViewedIfFirst(
+                    expected.StableId,
+                    memoryMutation);
             }
 
             // A successful retry retires only the fresh head. Hand the next
@@ -643,7 +745,18 @@ namespace CalmSpace.UI
 
         private void HoldQueueRecovery(PendingPresentationEntry freshHead)
         {
+            HoldQueueRecovery(
+                freshHead,
+                allowPresentableMemory: false);
+        }
+
+        private void HoldQueueRecovery(
+            PendingPresentationEntry freshHead,
+            bool allowPresentableMemory)
+        {
             _hasQueueRecovery = true;
+            _queueRecoveryAllowsPresentableMemory =
+                allowPresentableMemory;
             _queueRecoveryHead = freshHead;
             Refresh();
             ShowQueueRecovery();
@@ -652,6 +765,7 @@ namespace CalmSpace.UI
         private void ClearQueueRecovery()
         {
             _hasQueueRecovery = false;
+            _queueRecoveryAllowsPresentableMemory = false;
             _queueRecoveryHead = default;
         }
 
@@ -712,20 +826,100 @@ namespace CalmSpace.UI
             string memoryId = _memoryCardId;
             _memoryCardId = string.Empty;
             _view.CloseBottomSheet();
-            if (!string.IsNullOrEmpty(memoryId))
+            if (string.IsNullOrEmpty(memoryId) ||
+                _store == null ||
+                !_store.IsInitialized)
             {
-                PlayAudioCue(AsmrAudioCue.UiTap);
+                Refresh();
+                BeginPendingReveal();
+                return;
             }
 
-            if (!string.IsNullOrEmpty(memoryId) &&
-                _store != null &&
-                _store.IsInitialized)
+            PendingPresentationEntry expected =
+                PendingPresentationEntry.Memory(memoryId);
+            if (!_store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry freshHead) ||
+                freshHead != expected)
             {
+                Refresh();
+                BeginPendingReveal();
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
+            ProfileMutationResult<MemoryMutation> result =
                 _store.MarkMemoryViewed(memoryId);
+            bool retained =
+                _store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry currentHead) &&
+                currentHead == expected;
+            switch (result.Status)
+            {
+                case ProfileMutationStatus.Applied:
+                    if (!retained)
+                    {
+                        TrackMemoryViewedIfFirst(
+                            memoryId,
+                            result.Payload);
+                        Refresh();
+                        BeginPendingReveal();
+                        return;
+                    }
+
+                    break;
+                case ProfileMutationStatus.AlreadyApplied:
+                    if (!retained)
+                    {
+                        Refresh();
+                        BeginPendingReveal();
+                        return;
+                    }
+
+                    break;
+                case ProfileMutationStatus.PersistFailed:
+                case ProfileMutationStatus.Invalid:
+                    break;
             }
 
-            Refresh();
-            BeginPendingReveal();
+            OfferPresentableMemoryRecovery(expected);
+        }
+
+        private void OfferPresentableMemoryRecovery(
+            PendingPresentationEntry attempted)
+        {
+            if (_store == null ||
+                !_store.IsInitialized ||
+                !_store.Current.TryGetPendingPresentation(
+                    0, out PendingPresentationEntry freshHead) ||
+                freshHead != attempted ||
+                freshHead.Kind != PendingPresentationKind.Memory ||
+                !CanPresentMemory(freshHead.StableId))
+            {
+                ClearQueueRecovery();
+                Refresh();
+                BeginPendingReveal();
+                return;
+            }
+
+            HoldQueueRecovery(
+                freshHead,
+                allowPresentableMemory: true);
+        }
+
+        private void TrackMemoryViewedIfFirst(
+            string memoryId,
+            MemoryMutation mutation)
+        {
+            if (!mutation.FirstView ||
+                !_analyticsSession.TryAdmitMemoryViewed())
+            {
+                return;
+            }
+
+            _analytics.Track(
+                ProductAnalyticsEvent.MemoryViewed(
+                    memoryId,
+                    mutation.FirstView));
         }
 
         private bool CanPresentMemory(string memoryId)
@@ -1034,7 +1228,18 @@ namespace CalmSpace.UI
 
         private void HandleSettingsMusicRequested()
         {
-            _music.Toggle();
+            if (_store == null || !_store.IsInitialized)
+            {
+                return;
+            }
+
+            bool enabled = !_music.IsEnabled;
+            ProfileMutationResult<PreferenceMutation> result =
+                _store.SetMusicEnabled(enabled);
+            if (result.IsSuccess)
+            {
+                _music.SetEnabled(enabled);
+            }
         }
 
         private void HandleSettingsLocaleRequested()

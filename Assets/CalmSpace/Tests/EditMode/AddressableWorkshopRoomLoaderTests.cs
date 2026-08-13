@@ -219,6 +219,86 @@ namespace CalmSpace.Tests.EditMode
             Assert.That(_loader.IsLoaded, Is.True);
         }
 
+        [Test]
+        public async Task DestroyedOwnedRoomIsReleasedBeforeSameTargetReload()
+        {
+            CreateLoader();
+            Task<WorkshopRoomPresenter> first = _loader.LoadAsync(
+                    "chapter-a",
+                    _parentObject.transform,
+                    CancellationToken.None)
+                .AsTask();
+            ControlledOperation firstOperation = _adapter.LastOperation;
+            GameObject firstRoom = CreateRoom();
+            firstOperation.Succeed(firstRoom);
+            await first;
+            UnityEngine.Object.DestroyImmediate(firstRoom);
+
+            Task<WorkshopRoomPresenter> second = _loader.LoadAsync(
+                    "chapter-a",
+                    _parentObject.transform,
+                    CancellationToken.None)
+                .AsTask();
+            ControlledOperation secondOperation = _adapter.LastOperation;
+
+            Assert.That(_adapter.StartCount, Is.EqualTo(2));
+            Assert.That(_adapter.ReleaseCount, Is.EqualTo(1));
+            Assert.That(firstOperation.DestroyCount, Is.EqualTo(1));
+
+            GameObject secondRoom = CreateRoom();
+            secondOperation.Succeed(secondRoom);
+            Assert.That(await second, Is.SameAs(
+                secondRoom.GetComponent<WorkshopRoomPresenter>()));
+            await _loader.UnloadAsync(CancellationToken.None);
+            Assert.That(_adapter.ReleaseCount, Is.EqualTo(2));
+            Assert.That(secondOperation.DestroyCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task CompletedLoadAndUnloadDoNotRetainInFlightTask()
+        {
+            CreateLoader();
+            Task<WorkshopRoomPresenter> load = _loader.LoadAsync(
+                    "chapter-a",
+                    _parentObject.transform,
+                    CancellationToken.None)
+                .AsTask();
+
+            Assert.That(GetInFlight(), Is.Not.Null);
+            _adapter.LastOperation.Succeed(CreateRoom());
+            await load;
+
+            Assert.That(GetInFlight(), Is.Null);
+            await _loader.UnloadAsync(CancellationToken.None);
+            Assert.That(GetInFlight(), Is.Null);
+            Assert.That(_adapter.ReleaseCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task SynchronousSuccessDoesNotRetainInFlightTask()
+        {
+            CreateLoader();
+            GameObject room = CreateRoom();
+            _adapter.SynchronousResult = room;
+
+            WorkshopRoomPresenter loaded = await _loader.LoadAsync(
+                "chapter-a",
+                _parentObject.transform,
+                CancellationToken.None);
+
+            Assert.That(loaded, Is.SameAs(
+                room.GetComponent<WorkshopRoomPresenter>()));
+            Assert.That(_loader.IsLoaded, Is.True);
+            Assert.That(GetInFlight(), Is.Null);
+            Assert.That(_adapter.ReleaseCount, Is.Zero);
+
+            ControlledOperation operation = _adapter.LastOperation;
+            await _loader.UnloadAsync(CancellationToken.None);
+            Assert.That(GetInFlight(), Is.Null);
+            Assert.That(_adapter.ReleaseCount, Is.EqualTo(1));
+            Assert.That(operation.DestroyCount, Is.EqualTo(1));
+        }
+
         private void CreateLoader()
         {
             _adapter = new ControlledOperationAdapter();
@@ -240,6 +320,15 @@ namespace CalmSpace.Tests.EditMode
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null);
             return (CancellationTokenSource)field.GetValue(_loader);
+        }
+
+        private Task<WorkshopRoomPresenter> GetInFlight()
+        {
+            FieldInfo field = typeof(AddressableWorkshopRoomLoader).GetField(
+                "_inFlight",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            return (Task<WorkshopRoomPresenter>)field.GetValue(_loader);
         }
 
         private static bool IsDisposed(CancellationTokenSource source)
@@ -305,6 +394,7 @@ namespace CalmSpace.Tests.EditMode
             public ControlledOperation LastOperation { get; private set; }
             public AsyncOperationHandle<GameObject> LastHandle { get; private set; }
             public Exception StartException { get; set; }
+            public GameObject SynchronousResult { get; set; }
 
             public AsyncOperationHandle<GameObject> InstantiateAsync(
                 string address,
@@ -323,6 +413,13 @@ namespace CalmSpace.Tests.EditMode
                     LastOperation,
                     default(AsyncOperationHandle));
                 _handles.Add(LastHandle);
+                GameObject synchronousResult = SynchronousResult;
+                SynchronousResult = null;
+                if (synchronousResult != null)
+                {
+                    LastOperation.Succeed(synchronousResult);
+                }
+
                 return LastHandle;
             }
 

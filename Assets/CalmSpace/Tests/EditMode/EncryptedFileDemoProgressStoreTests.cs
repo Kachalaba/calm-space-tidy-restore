@@ -402,6 +402,131 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void ThemeConsumerPublishesOnlyAfterEncryptedWriteSucceeds()
+        {
+            using (var fixture = new SecureStoreFixture())
+            using (var protector =
+                   new SwitchableAuthenticatedDataProtector(Secret))
+            {
+                DemoThemeCatalog catalog =
+                    ScriptableObject.CreateInstance<DemoThemeCatalog>();
+                try
+                {
+                    EncryptedFileDemoProgressStore store =
+                        fixture.CreateStore(protector);
+                    Assert.That(
+                        store.Initialize(8, "sage", 15).IsReady,
+                        Is.True);
+                    var service = new DemoThemeService(catalog, store);
+                    service.Initialize();
+                    Assert.That(
+                        catalog.TryGetPalette(1, out ThemePalette desired),
+                        Is.True);
+                    int beforeIndex = service.CurrentIndex;
+                    ThemePalette beforePalette = service.Current;
+                    DemoProgressSnapshot beforeSnapshot = store.Current;
+                    byte[] beforeFile = File.ReadAllBytes(fixture.FilePath);
+                    var changes = 0;
+                    service.ThemeChanged += _ => changes++;
+
+                    protector.ThrowOnProtect = true;
+                    bool failed = service.SelectTheme(1);
+
+                    Assert.That(failed, Is.False);
+                    Assert.That(service.CurrentIndex, Is.EqualTo(beforeIndex));
+                    Assert.That(service.Current, Is.SameAs(beforePalette));
+                    Assert.That(store.Current, Is.EqualTo(beforeSnapshot));
+                    Assert.That(changes, Is.Zero);
+                    CollectionAssert.AreEqual(
+                        beforeFile,
+                        File.ReadAllBytes(fixture.FilePath));
+
+                    protector.ThrowOnProtect = false;
+                    bool retried = service.SelectTheme(1);
+
+                    Assert.That(retried, Is.True);
+                    Assert.That(service.CurrentIndex, Is.EqualTo(1));
+                    Assert.That(service.Current, Is.SameAs(desired));
+                    Assert.That(
+                        store.Current.SelectedThemeId,
+                        Is.EqualTo(desired.Id));
+                    Assert.That(changes, Is.EqualTo(1));
+
+                    EncryptedFileDemoProgressStore reloaded =
+                        fixture.CreateStore();
+                    Assert.That(
+                        reloaded.Initialize(8, "sage", 15).IsReady,
+                        Is.True);
+                    Assert.That(
+                        reloaded.Current.SelectedThemeId,
+                        Is.EqualTo(desired.Id));
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(catalog);
+                }
+            }
+        }
+
+        [Test]
+        public void ViewedMemoryQueuedAtHeadRepairsAndPersistsVersionTwo()
+        {
+            const string memoryId = "family.summer-trail-stones";
+            var inconsistent = new DemoProgressSnapshot(
+                1,
+                1,
+                "sage",
+                true,
+                15,
+                1,
+                new[] { "soft-fern" },
+                new DecorationSelection[0],
+                new string[0],
+                new[] { memoryId },
+                new string[0],
+                new[]
+                {
+                    PendingPresentationEntry.Memory(memoryId),
+                    PendingPresentationEntry.RoomReveal(
+                        "cozy-workshop.tea-drawer")
+                },
+                0,
+                0);
+
+            using (var fixture = new SecureStoreFixture())
+            {
+                fixture.WriteVersionTwo(fixture.FilePath, inconsistent);
+                EncryptedFileDemoProgressStore store = fixture.CreateStore();
+                Assert.That(
+                    store.Initialize(8, "sage", 15).LoadStatus,
+                    Is.EqualTo(ProfileLoadStatus.LoadedV2));
+
+                ProfileMutationResult<MemoryMutation> result =
+                    store.MarkMemoryViewed(memoryId);
+
+                Assert.That(result.Status, Is.EqualTo(
+                    ProfileMutationStatus.Applied));
+                Assert.That(result.Payload.FirstView, Is.False);
+                Assert.That(store.Current.PendingPresentationCount, Is.EqualTo(1));
+                Assert.That(
+                    store.Current.TryGetPendingPresentation(
+                        0,
+                        out PendingPresentationEntry remaining),
+                    Is.True);
+                Assert.That(
+                    remaining,
+                    Is.EqualTo(PendingPresentationEntry.RoomReveal(
+                        "cozy-workshop.tea-drawer")));
+
+                EncryptedFileDemoProgressStore reloaded = fixture.CreateStore();
+                Assert.That(
+                    reloaded.Initialize(8, "sage", 15).IsReady,
+                    Is.True);
+                Assert.That(reloaded.Current, Is.EqualTo(store.Current));
+            }
+        }
+
+        [Test]
         public void SuccessfulCommandReplacesFileBeforeOneEventAndReplayWritesNothing()
         {
             using (var fixture = new SecureStoreFixture())

@@ -120,6 +120,13 @@ namespace CalmSpace.Workshop
             cancellationToken.ThrowIfCancellationRequested();
 
             string normalizedChapterId = chapterId.Trim();
+            if (_hasHandle && _presenter == null)
+            {
+                // Unity's destroyed-object equality can make the presenter
+                // look absent while this loader still owns its handle.
+                ReleaseCurrent();
+            }
+
             if (IsSameTarget(normalizedChapterId, parent))
             {
                 if (_presenter != null)
@@ -152,13 +159,23 @@ namespace CalmSpace.Workshop
             CancellationToken operationToken = cancellationOwner.Token;
             _loadCancellation = cancellationOwner;
             int generation = ++_loadGeneration;
-            _inFlight = LoadCoreAsync(
+            Task<WorkshopRoomPresenter> inFlight = LoadCoreAsync(
                 normalizedChapterId,
                 parent,
                 generation,
                 cancellationOwner,
                 operationToken).AsTask();
-            return AwaitForCaller(_inFlight, cancellationToken);
+            _inFlight = inFlight;
+            if (!_loading &&
+                generation == _loadGeneration &&
+                ReferenceEquals(_inFlight, inFlight))
+            {
+                // A synchronously completed operation reaches finally before
+                // the task can be assigned to the field.
+                _inFlight = null;
+            }
+
+            return AwaitForCaller(inFlight, cancellationToken);
         }
 
         private static UniTask<WorkshopRoomPresenter> AwaitForCaller(
@@ -240,6 +257,7 @@ namespace CalmSpace.Workshop
             if (generation == _loadGeneration)
             {
                 _loading = false;
+                _inFlight = null;
             }
 
             if (!ReferenceEquals(_loadCancellation, cancellationOwner))
@@ -294,6 +312,7 @@ namespace CalmSpace.Workshop
             _parent = null;
             _chapterId = string.Empty;
             _loading = false;
+            _inFlight = null;
             if (!_hasHandle)
             {
                 return;

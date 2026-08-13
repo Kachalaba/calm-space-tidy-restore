@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
+using CalmSpace.Analytics;
 using CalmSpace.Audio;
 using CalmSpace.Demo;
 using CalmSpace.Levels;
@@ -68,6 +69,33 @@ namespace CalmSpace.Tests.PlayMode
             Application.logMessageReceived -= CountInvalidRevealDiagnostic;
         }
 
+        [Test]
+        public void AwaitPropagatesAlreadyFaultedUniTasks()
+        {
+            var expected = new InvalidOperationException("await sentinel");
+            UniTask task = UniTask.FromException(expected);
+            Exception actual = CaptureAwaitFailure(Await(task));
+            if (actual == null)
+            {
+                CaptureTaskFailure(task);
+            }
+
+            Assert.That(actual, Is.SameAs(expected));
+
+            var genericExpected =
+                new InvalidOperationException("generic await sentinel");
+            UniTask<bool> genericTask =
+                UniTask.FromException<bool>(genericExpected);
+            Exception genericActual =
+                CaptureAwaitFailure(Await(genericTask));
+            if (genericActual == null)
+            {
+                CaptureTaskFailure(genericTask);
+            }
+
+            Assert.That(genericActual, Is.SameAs(genericExpected));
+        }
+
         [UnityTest]
         public IEnumerator FirstCompletionRevealsTheZoneAndRetiresItOnce()
         {
@@ -112,7 +140,9 @@ namespace CalmSpace.Tests.PlayMode
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
             SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
             IDemoProgressStore store = Store(experience);
             yield return WaitForRoom(home);
 
@@ -122,6 +152,12 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(
                 audio.Count(AsmrAudioCue.RoomReveal),
                 Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
 
             // Leaving the workshop mid-reveal persists nothing.
             home.NotifyHidden();
@@ -150,12 +186,22 @@ namespace CalmSpace.Tests.PlayMode
                 Is.EqualTo(2),
                 "Replaying an interrupted visual starts one fresh cue.");
             Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(2));
+            Assert.That(
                 Room(home).IsRevealPlaying,
                 Is.True,
                 "The next entry must replay the unfinished reveal.");
 
             yield return WaitForRevealEnd(home, 12f);
             Assert.That(PendingRevealCount(store), Is.Zero);
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Find(ProductEventKind.RestorationRevealCompleted)
+                    .BeatId,
+                Is.EqualTo(FirstRevealBeatId));
         }
 
         [UnityTest]
@@ -304,13 +350,124 @@ namespace CalmSpace.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator DeferredCancellationDoesNotReplayReplacementHead()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            WorkshopRoomPresenter room = Room(home);
+            var frames = new ControlledRevealFrameDriver();
+            room.RevealFrameDriver = frames.WaitForNextFrameAsync;
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+
+            Assert.That(
+                WorkshopContentIds.TryGetCozyWorkshopBeat(
+                    1,
+                    out WorkshopBeatContract replacementBeat),
+                Is.True);
+            PendingPresentationEntry replacement =
+                PendingPresentationEntry.RoomReveal(
+                    replacementBeat.BeatId);
+            store.ReplaceCurrent(CreatePendingSnapshot(0b11, replacement));
+
+            frames.ReleaseCancelledFrame();
+
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+            Assert.That(frames.PendingCount, Is.Zero);
+            Assert.That(store.RetirementAttemptCount, Is.Zero);
+            AssertFreshHead(store, replacement);
+            Assert.That(audio.Count(AsmrAudioCue.RoomReveal), Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator AlreadyAppliedRevealRetirementDoesNotComplete()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            WorkshopRoomPresenter room = Room(home);
+            var frames = new ControlledRevealFrameDriver();
+            room.RevealFrameDriver = frames.WaitForNextFrameAsync;
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(
+                    0b1,
+                    PendingPresentationEntry.RoomReveal(
+                        FirstRevealBeatId)),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.AlreadyApplied);
+            ReplaceProgressStore(experience, home, store);
+
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            Assert.That(frames.WaitCount, Is.EqualTo(1));
+
+            frames.Advance(WorkshopRoomPresenter.RevealSeconds);
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            AssertRevealFallbackRetainsHead(home, store);
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
+        }
+
+        [UnityTest]
         public IEnumerator RevealFrameFaultKeepsPendingHeadWithoutAutomaticReplay()
         {
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
             SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
             yield return WaitForRoom(home);
 
             WorkshopRoomPresenter room = Room(home);
@@ -355,6 +512,12 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(store.RetirementAttemptCount, Is.Zero);
             Assert.That(store.Current.SeenRoomRevealCount, Is.Zero);
             Assert.That(PendingRevealCount(store), Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
             AssertFreshHead(
                 store,
                 PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
@@ -369,7 +532,9 @@ namespace CalmSpace.Tests.PlayMode
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
             SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
             yield return WaitForRoom(home);
 
             WorkshopRoomPresenter room = Room(home);
@@ -421,6 +586,12 @@ namespace CalmSpace.Tests.PlayMode
             AssertFreshHead(
                 store,
                 PendingPresentationEntry.RoomReveal(FirstRevealBeatId));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
         }
 
         [UnityTest]
@@ -430,7 +601,9 @@ namespace CalmSpace.Tests.PlayMode
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
             SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
             yield return WaitForRoom(home);
             yield return CompleteFirstLevel(experience);
 
@@ -457,6 +630,9 @@ namespace CalmSpace.Tests.PlayMode
                 Is.Zero,
                 "A missing visual is a fallback, not a reveal playback.");
             Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.Zero);
+            Assert.That(
                 GetPrivateField<string>(home, "_revealFallbackBeatId"),
                 Is.EqualTo("cozy-workshop.clear-passage"));
             Assert.That(home.View.BottomSheet.IsOpen, Is.True);
@@ -465,6 +641,9 @@ namespace CalmSpace.Tests.PlayMode
             yield return null;
             Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
                 "Skipping an available reveal fallback emits one UI cue.");
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
         }
 
         [UnityTest]
@@ -553,6 +732,8 @@ namespace CalmSpace.Tests.PlayMode
             yield return LoadMain();
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
             IDemoProgressStore persistedStore = Store(experience);
             var store = new PresentationRetirementStore(
                 persistedStore,
@@ -566,8 +747,17 @@ namespace CalmSpace.Tests.PlayMode
             yield return WaitForRevealFallback(home, 2f);
 
             AssertRevealFallbackRetainsHead(home, persistedStore);
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealStarted),
+                Is.EqualTo(1));
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.Zero);
             yield return RetireRevealFallbackAndExposeNextLevel(
                 experience, home, persistedStore);
+            Assert.That(
+                analytics.Count(ProductEventKind.RestorationRevealCompleted),
+                Is.EqualTo(1));
         }
 
         [UnityTest]
@@ -711,6 +901,199 @@ namespace CalmSpace.Tests.PlayMode
             Assert.That(store.Current.PendingPresentationCount, Is.EqualTo(1));
             AssertRecoveryModeWasNotReplaced(home, title);
             AssertRecoveryCloseUnavailable(home);
+        }
+
+        [UnityTest]
+        public IEnumerator PresentableMemoryPersistFailureOffersCalmRetry()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry memory = PendingPresentationEntry.Memory(
+                WorkshopContentIds.SummerTrailStonesMemoryId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(0b11, memory),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.PersistFailed);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return null;
+
+            Assert.That(MemoryCardId(home), Is.EqualTo(memory.StableId));
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(MemoryCardId(home), Is.Empty);
+            Assert.That(
+                GetPrivateField<bool>(home, "_hasQueueRecovery"),
+                Is.True);
+            AssertQueueRecoveryRetainsHead(home, store, memory);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.Zero);
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(2));
+            Assert.That(store.Current.PendingPresentationCount, Is.Zero);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.EqualTo(1));
+            ProductAnalyticsEvent viewed =
+                analytics.Find(ProductEventKind.MemoryViewed);
+            Assert.That(viewed.ItemId, Is.EqualTo(memory.StableId));
+            Assert.That(viewed.FirstView, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator RetainedAlreadyAppliedMemoryOffersRetry()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry memory = PendingPresentationEntry.Memory(
+                WorkshopContentIds.SummerTrailStonesMemoryId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(0b11, memory),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.AlreadyApplied);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return null;
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            AssertQueueRecoveryRetainsHead(home, store, memory);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.Zero);
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(2));
+            Assert.That(store.Current.PendingPresentationCount, Is.Zero);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator ViewedQueuedMemoryRepairsWithoutDuplicateAnalytics()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            string memoryId = WorkshopContentIds.SummerTrailStonesMemoryId;
+            PendingPresentationEntry memory =
+                PendingPresentationEntry.Memory(memoryId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshotWithViewed(
+                    0b11,
+                    new[] { memoryId },
+                    memory),
+                WorkshopContentIds.CozyWorkshopBeatCount);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return null;
+
+            Assert.That(MemoryCardId(home), Is.EqualTo(memoryId));
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(store.Current.PendingPresentationCount, Is.Zero);
+            Assert.That(MemoryCardId(home), Is.Empty);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator StaleMemoryRetryDoesNotRetireReplacementHead()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience = FindExperience();
+            WorkshopHomeController home = FindHome();
+            var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
+            yield return WaitForRoom(home);
+
+            PendingPresentationEntry memory = PendingPresentationEntry.Memory(
+                WorkshopContentIds.SummerTrailStonesMemoryId);
+            var store = new InMemoryProgressStore(
+                CreatePendingSnapshot(0b11, memory),
+                WorkshopContentIds.CozyWorkshopBeatCount,
+                ProfileMutationStatus.PersistFailed);
+            ReplaceProgressStore(experience, home, store);
+            home.NotifyHidden();
+            yield return Await(home.PrepareEntryAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return Await(home.NotifyVisibleAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                default));
+            yield return null;
+
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+            AssertQueueRecoveryRetainsHead(home, store, memory);
+
+            PendingPresentationEntry replacement =
+                PendingPresentationEntry.RoomReveal(FirstRevealBeatId);
+            store.ReplaceCurrent(CreatePendingSnapshot(0b1, replacement));
+            home.View.BottomSheet.ActionButton.onClick.Invoke();
+            yield return null;
+            yield return null;
+
+            Assert.That(store.RetirementAttemptCount, Is.EqualTo(1));
+            Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1));
+            AssertFreshHead(store, replacement);
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.Zero);
         }
 
         [UnityTest]
@@ -1234,7 +1617,9 @@ namespace CalmSpace.Tests.PlayMode
             DemoExperienceController experience = FindExperience();
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
+            var analytics = new RecordingAnalytics();
             SetPrivateField(home, "_audioService", audio);
+            SetPrivateField(home, "_analytics", analytics);
             IDemoProgressStore store = Store(experience);
             yield return WaitForRoom(home);
 
@@ -1304,10 +1689,22 @@ namespace CalmSpace.Tests.PlayMode
                 "The next level must be offered again.");
             Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
                 "Closing an offered memory is one accepted primary action.");
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.EqualTo(1));
+            ProductAnalyticsEvent viewed =
+                analytics.Find(ProductEventKind.MemoryViewed);
+            Assert.That(
+                viewed.ItemId,
+                Is.EqualTo(WorkshopContentIds.SummerTrailStonesMemoryId));
+            Assert.That(viewed.FirstView, Is.True);
 
             yield return CloseMemoryCardIfOpen(home);
             Assert.That(audio.Count(AsmrAudioCue.UiTap), Is.EqualTo(1),
                 "No memory card means no accepted action and no extra cue.");
+            Assert.That(
+                analytics.Count(ProductEventKind.MemoryViewed),
+                Is.EqualTo(1));
         }
 
         private static string MemoryCardId(WorkshopHomeController home)
@@ -1406,6 +1803,17 @@ namespace CalmSpace.Tests.PlayMode
             int completedLevelMask,
             params PendingPresentationEntry[] pending)
         {
+            return CreatePendingSnapshotWithViewed(
+                completedLevelMask,
+                Array.Empty<string>(),
+                pending);
+        }
+
+        private static DemoProgressSnapshot CreatePendingSnapshotWithViewed(
+            int completedLevelMask,
+            string[] viewedMemoryIds,
+            params PendingPresentationEntry[] pending)
+        {
             return new DemoProgressSnapshot(
                 highestUnlockedLevelIndex: 7,
                 completedLevelMask: completedLevelMask,
@@ -1416,7 +1824,7 @@ namespace CalmSpace.Tests.PlayMode
                 ownedDecorationIds: Array.Empty<string>(),
                 decorationSelections: Array.Empty<DecorationSelection>(),
                 seenRoomRevealIds: Array.Empty<string>(),
-                viewedMemoryIds: Array.Empty<string>(),
+                viewedMemoryIds: viewedMemoryIds,
                 seenFinaleIds: Array.Empty<string>(),
                 pendingPresentations: pending,
                 lastDailyCareUtcDayKey: 0,
@@ -1682,8 +2090,7 @@ namespace CalmSpace.Tests.PlayMode
             while (!started && Time.realtimeSinceStartup < startTimeout)
             {
                 UniTask<bool> play = experience.PlayLevelAsync(levelIndex);
-                yield return Await(play);
-                started = play.GetAwaiter().GetResult();
+                yield return Await(play, value => started = value);
                 if (!started)
                 {
                     yield return null;
@@ -2325,6 +2732,45 @@ namespace CalmSpace.Tests.PlayMode
             }
         }
 
+        private sealed class RecordingAnalytics : IProductAnalytics
+        {
+            private readonly List<ProductAnalyticsEvent> _events =
+                new List<ProductAnalyticsEvent>();
+
+            public void Track(in ProductAnalyticsEvent analyticsEvent)
+            {
+                _events.Add(analyticsEvent);
+            }
+
+            public int Count(ProductEventKind kind)
+            {
+                var count = 0;
+                for (var index = 0; index < _events.Count; index++)
+                {
+                    if (_events[index].Kind == kind)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+
+            public ProductAnalyticsEvent Find(ProductEventKind kind)
+            {
+                for (var index = 0; index < _events.Count; index++)
+                {
+                    if (_events[index].Kind == kind)
+                    {
+                        return _events[index];
+                    }
+                }
+
+                Assert.Fail("Missing analytics event " + kind + ".");
+                return default;
+            }
+        }
+
         private static IEnumerator LoadMain()
         {
             AsyncOperation load = SceneManager.LoadSceneAsync(
@@ -2358,10 +2804,57 @@ namespace CalmSpace.Tests.PlayMode
                 yield return null;
             }
 
-            Assert.That(task.Status, Is.Not.EqualTo(UniTaskStatus.Pending));
+            UniTaskStatus status = task.Status;
+            if (status == UniTaskStatus.Faulted ||
+                status == UniTaskStatus.Canceled)
+            {
+                task.GetAwaiter().GetResult();
+            }
+
+            Assert.That(status, Is.EqualTo(UniTaskStatus.Succeeded));
+            task.GetAwaiter().GetResult();
         }
 
-        private static IEnumerator Await(UniTask<bool> task)
+        private static Exception CaptureAwaitFailure(IEnumerator routine)
+        {
+            try
+            {
+                routine.MoveNext();
+                return null;
+            }
+            catch (Exception exception)
+            {
+                return exception;
+            }
+        }
+
+        private static void CaptureTaskFailure(UniTask task)
+        {
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // The regression assertion owns the original exception.
+            }
+        }
+
+        private static void CaptureTaskFailure(UniTask<bool> task)
+        {
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // The regression assertion owns the original exception.
+            }
+        }
+
+        private static IEnumerator Await(
+            UniTask<bool> task,
+            Action<bool> onSucceeded = null)
         {
             float timeout = Time.realtimeSinceStartup + 15f;
             while (task.Status == UniTaskStatus.Pending &&
@@ -2370,7 +2863,16 @@ namespace CalmSpace.Tests.PlayMode
                 yield return null;
             }
 
-            Assert.That(task.Status, Is.Not.EqualTo(UniTaskStatus.Pending));
+            UniTaskStatus status = task.Status;
+            if (status == UniTaskStatus.Faulted ||
+                status == UniTaskStatus.Canceled)
+            {
+                task.GetAwaiter().GetResult();
+            }
+
+            Assert.That(status, Is.EqualTo(UniTaskStatus.Succeeded));
+            bool result = task.GetAwaiter().GetResult();
+            onSucceeded?.Invoke(result);
         }
     }
 }

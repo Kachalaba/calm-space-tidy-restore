@@ -407,7 +407,9 @@ namespace CalmSpace.UI
             int recommended = DemoProgressRules.GetRecommendedLevel(
                 _progressStore.Current,
                 _levelCatalog.Count);
-            return PlayLevelAsync(recommended, cancellationToken);
+            return recommended >= 0
+                ? PlayLevelAsync(recommended, cancellationToken)
+                : UniTask.FromResult(false);
         }
 
         public UniTask<bool> PlayLevelAsync(
@@ -1314,12 +1316,6 @@ namespace CalmSpace.UI
 
         private void HandleMusicEnabledChanged(bool enabled)
         {
-            if (_progressStore.IsInitialized &&
-                _progressStore.Current.MusicEnabled != enabled)
-            {
-                _progressStore.SetMusicEnabled(enabled);
-            }
-
             RefreshMusicUi(enabled);
             if (_initialized)
             {
@@ -2236,9 +2232,18 @@ namespace CalmSpace.UI
 
         private void HandleMusicPressed()
         {
-            if (CanNavigate())
+            if (!CanNavigate() ||
+                !_progressStore.IsInitialized)
             {
-                _musicService.Toggle();
+                return;
+            }
+
+            bool enabled = !_musicService.IsEnabled;
+            ProfileMutationResult<PreferenceMutation> result =
+                _progressStore.SetMusicEnabled(enabled);
+            if (result.IsSuccess)
+            {
+                _musicService.SetEnabled(enabled);
             }
         }
 
@@ -2352,7 +2357,8 @@ namespace CalmSpace.UI
             int recommended = DemoProgressRules.GetRecommendedLevel(
                 _progressStore.Current,
                 _levelCatalog.Count);
-            return _progressStore.IsLevelUnlocked(recommended) &&
+            return recommended >= 0 &&
+                _progressStore.IsLevelUnlocked(recommended) &&
                 _levelCatalog.TryGetEntry(recommended, out _);
         }
 

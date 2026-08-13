@@ -132,9 +132,15 @@ namespace CalmSpace.Demo
                 return true;
             }
 
+            ProfileMutationResult<PreferenceMutation> persisted =
+                _progressStore.SetSelectedTheme(palette.Id);
+            if (!persisted.IsSuccess)
+            {
+                return false;
+            }
+
             CurrentIndex = index;
             Current = palette;
-            _progressStore.SetSelectedTheme(palette.Id);
             ThemeChanged?.Invoke(palette);
             return true;
         }

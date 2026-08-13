@@ -217,6 +217,61 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
+        public void ViewedMemoryAtExactQueueHeadIsRepairedWithoutFirstView()
+        {
+            DemoProgressSnapshot inconsistent = CreateSnapshot(
+                0,
+                new[] { "soft-fern" },
+                new DecorationSelection[0],
+                new[]
+                {
+                    PendingPresentationEntry.Memory(MemoryId),
+                    PendingPresentationEntry.RoomReveal(RoomBeatId)
+                },
+                viewedMemoryIds: new[] { MemoryId });
+
+            ProfileMutationResult<MemoryMutation> result =
+                DemoProgressRules.MarkMemoryViewed(
+                    inconsistent,
+                    MemoryId);
+
+            Assert.That(result.Status, Is.EqualTo(
+                ProfileMutationStatus.Applied));
+            Assert.That(result.Payload.FirstView, Is.False);
+            Assert.That(result.Snapshot.PendingPresentationCount, Is.EqualTo(1));
+            AssertPending(
+                result.Snapshot,
+                0,
+                PendingPresentationKind.RoomReveal,
+                RoomBeatId);
+        }
+
+        [Test]
+        public void ViewedMemoryBehindDifferentHeadLeavesQueueUntouched()
+        {
+            DemoProgressSnapshot inconsistent = CreateSnapshot(
+                0,
+                new[] { "soft-fern" },
+                new DecorationSelection[0],
+                new[]
+                {
+                    PendingPresentationEntry.RoomReveal(RoomBeatId),
+                    PendingPresentationEntry.Memory(MemoryId)
+                },
+                viewedMemoryIds: new[] { MemoryId });
+
+            ProfileMutationResult<MemoryMutation> result =
+                DemoProgressRules.MarkMemoryViewed(
+                    inconsistent,
+                    MemoryId);
+
+            Assert.That(result.Status, Is.EqualTo(
+                ProfileMutationStatus.AlreadyApplied));
+            Assert.That(result.Payload.FirstView, Is.False);
+            Assert.That(result.Snapshot, Is.EqualTo(inconsistent));
+        }
+
+        [Test]
         public void InvalidIdsAndLevelIndicesLeaveSnapshotEqual()
         {
             DemoProgressSnapshot initial =
@@ -653,7 +708,8 @@ namespace CalmSpace.Tests.EditMode
             string[] owned,
             DecorationSelection[] selections,
             PendingPresentationEntry[] pending = null,
-            string[] seenFinaleIds = null)
+            string[] seenFinaleIds = null,
+            string[] viewedMemoryIds = null)
         {
             return new DemoProgressSnapshot(
                 0,
@@ -665,7 +721,7 @@ namespace CalmSpace.Tests.EditMode
                 owned,
                 selections,
                 new string[0],
-                new string[0],
+                viewedMemoryIds ?? new string[0],
                 seenFinaleIds ?? new string[0],
                 pending ?? new PendingPresentationEntry[0],
                 0,

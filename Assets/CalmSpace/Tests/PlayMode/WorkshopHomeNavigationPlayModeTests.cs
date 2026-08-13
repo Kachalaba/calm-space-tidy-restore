@@ -38,6 +38,34 @@ namespace CalmSpace.Tests.PlayMode
             PlayerPrefs.Save();
         }
 
+        [Test]
+        public void AwaitPropagatesAlreadyFaultedUniTasks()
+        {
+            var expected =
+                new System.InvalidOperationException("await sentinel");
+            UniTask task = UniTask.FromException(expected);
+            System.Exception actual = CaptureAwaitFailure(Await(task));
+            if (actual == null)
+            {
+                CaptureTaskFailure(task);
+            }
+
+            Assert.That(actual, Is.SameAs(expected));
+
+            var genericExpected = new System.InvalidOperationException(
+                "generic await sentinel");
+            UniTask<bool> genericTask =
+                UniTask.FromException<bool>(genericExpected);
+            System.Exception genericActual =
+                CaptureAwaitFailure(Await(genericTask));
+            if (genericActual == null)
+            {
+                CaptureTaskFailure(genericTask);
+            }
+
+            Assert.That(genericActual, Is.SameAs(genericExpected));
+        }
+
         [UnityTest]
         public IEnumerator PrimaryIntentEmitsOneStableWorkshopRequest()
         {
@@ -137,6 +165,59 @@ namespace CalmSpace.Tests.PlayMode
                 Is.EqualTo(DemoLocale.Ukrainian),
                 "One click must advance locale exactly once.");
             Assert.That(home.View.VisibleActionControlsHaveBindings, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator MusicWriteFailureDoesNotPublishStateUiOrAnalytics()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            WorkshopHomeController home = FindHome();
+            IDemoProgressStore persisted =
+                GetPrivateField<IDemoProgressStore>(
+                    experience,
+                    "_progressStore");
+            var store = new FailOnceMusicPreferenceStore(persisted);
+            SetPrivateField(home, "_store", store);
+            SetPrivateField(experience, "_progressStore", store);
+            var analytics = new RecordingAnalytics();
+            SetPrivateField(experience, "_analytics", analytics);
+            IBackgroundMusicService music =
+                GetPrivateField<IBackgroundMusicService>(home, "_music");
+
+            home.View.SettingsButton.onClick.Invoke();
+            yield return null;
+            Text label = GetPrivateField<Text>(
+                home.View,
+                "_settingsMusicLabel");
+            bool enabledBefore = music.IsEnabled;
+            string labelBefore = label.text;
+            DemoProgressSnapshot persistedBefore = persisted.Current;
+
+            home.View.SettingsMusicButton.onClick.Invoke();
+            yield return null;
+
+            Assert.That(store.MusicWriteAttempts, Is.EqualTo(1));
+            Assert.That(music.IsEnabled, Is.EqualTo(enabledBefore));
+            Assert.That(label.text, Is.EqualTo(labelBefore));
+            Assert.That(persisted.Current, Is.EqualTo(persistedBefore));
+            Assert.That(
+                analytics.Count(ProductEventKind.MusicChanged),
+                Is.Zero);
+
+            home.View.SettingsMusicButton.onClick.Invoke();
+            yield return null;
+
+            Assert.That(store.MusicWriteAttempts, Is.EqualTo(2));
+            Assert.That(music.IsEnabled, Is.EqualTo(!enabledBefore));
+            Assert.That(label.text, Is.Not.EqualTo(labelBefore));
+            Assert.That(
+                persisted.Current.MusicEnabled,
+                Is.EqualTo(!enabledBefore));
+            Assert.That(
+                analytics.Count(ProductEventKind.MusicChanged),
+                Is.EqualTo(1));
         }
 
         [UnityTest]
@@ -240,9 +321,62 @@ namespace CalmSpace.Tests.PlayMode
 
             UniTask<bool> recommended =
                 experience.PlayRecommendedLevelAsync();
-            yield return Await(recommended);
-            Assert.That(recommended.GetAwaiter().GetResult(), Is.False);
+            var recommendedResult = true;
+            yield return Await(
+                recommended,
+                value => recommendedResult = value);
+            Assert.That(recommendedResult, Is.False);
             Assert.That(experience.CurrentLevelIndex, Is.EqualTo(-1));
+        }
+
+        [UnityTest]
+        public IEnumerator AllCompleteWithInvalidMetadataCannotReplayLevelEight()
+        {
+            yield return LoadMain();
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>();
+            IDemoProgressStore store = GetPrivateField<IDemoProgressStore>(
+                experience,
+                "_progressStore");
+            for (var index = 0; index < 8; index++)
+            {
+                store.MarkLevelCompleted(index);
+            }
+
+            LevelCatalog levels = GetPrivateField<LevelCatalog>(
+                experience,
+                "_levelCatalog");
+            LivingWorkshopCatalog workshop =
+                GetPrivateField<LivingWorkshopCatalog>(
+                    experience,
+                    "_livingWorkshopCatalog");
+            WorkshopTextCatalog emptyText =
+                ScriptableObject.CreateInstance<WorkshopTextCatalog>();
+            try
+            {
+                var unavailable = new WorkshopRuntimeAvailability(
+                    levels,
+                    workshop,
+                    emptyText);
+                Assert.That(unavailable.HomeMetaAvailable, Is.False);
+                SetAvailabilityIfSupported(experience, unavailable);
+                SetPrivateField(
+                    experience,
+                    "_workshopFlowCoordinator",
+                    new ScriptedWorkshopFlow());
+
+                UniTask<bool> play =
+                    experience.PlayRecommendedLevelAsync();
+                var played = true;
+                yield return Await(play, value => played = value);
+
+                Assert.That(played, Is.False);
+                Assert.That(experience.CurrentLevelIndex, Is.EqualTo(-1));
+            }
+            finally
+            {
+                Object.Destroy(emptyText);
+            }
         }
 
         [UnityTest]
@@ -260,9 +394,10 @@ namespace CalmSpace.Tests.PlayMode
                 "cozy-workshop.clear-passage");
 
             UniTask<bool> play = experience.PlayLevelAsync(request, cancelled);
-            yield return Await(play);
+            var played = true;
+            yield return Await(play, value => played = value);
 
-            Assert.That(play.GetAwaiter().GetResult(), Is.False);
+            Assert.That(played, Is.False);
             CanvasGroup[] groups = Object.FindObjectsByType<CanvasGroup>(
                 FindObjectsInactive.Include,
                 FindObjectsSortMode.None);
@@ -496,12 +631,13 @@ namespace CalmSpace.Tests.PlayMode
                 "cozy-workshop.clear-passage");
 
             UniTask<bool> play = experience.PlayLevelAsync(request);
-            yield return Await(play);
+            var played = true;
+            yield return Await(play, value => played = value);
 
             WorkshopHomeController home = FindHome();
             var audio = new RecordingAudio();
             SetPrivateField(home, "_audioService", audio);
-            Assert.That(play.GetAwaiter().GetResult(), Is.False);
+            Assert.That(played, Is.False);
             Assert.That(home.View.BottomSheet.IsOpen, Is.True);
             Assert.That(home.View.BottomSheet.ActionButton.gameObject.activeSelf,
                 Is.True);
@@ -944,8 +1080,9 @@ namespace CalmSpace.Tests.PlayMode
             }
 
             UniTask<bool> play = experience.PlayLevelAsync(levelIndex);
-            yield return Await(play);
-            Assert.That(play.GetAwaiter().GetResult(), Is.True);
+            var played = false;
+            yield return Await(play, value => played = value);
+            Assert.That(played, Is.True);
         }
 
         private static void InvokeCompletion(
@@ -1110,10 +1247,58 @@ namespace CalmSpace.Tests.PlayMode
                 yield return null;
             }
 
-            Assert.That(task.Status, Is.Not.EqualTo(UniTaskStatus.Pending));
+            UniTaskStatus status = task.Status;
+            if (status == UniTaskStatus.Faulted ||
+                status == UniTaskStatus.Canceled)
+            {
+                task.GetAwaiter().GetResult();
+            }
+
+            Assert.That(status, Is.EqualTo(UniTaskStatus.Succeeded));
+            task.GetAwaiter().GetResult();
         }
 
-        private static IEnumerator Await(UniTask<bool> task)
+        private static System.Exception CaptureAwaitFailure(
+            IEnumerator routine)
+        {
+            try
+            {
+                routine.MoveNext();
+                return null;
+            }
+            catch (System.Exception exception)
+            {
+                return exception;
+            }
+        }
+
+        private static void CaptureTaskFailure(UniTask task)
+        {
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // The regression assertion owns the original exception.
+            }
+        }
+
+        private static void CaptureTaskFailure(UniTask<bool> task)
+        {
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // The regression assertion owns the original exception.
+            }
+        }
+
+        private static IEnumerator Await(
+            UniTask<bool> task,
+            System.Action<bool> onSucceeded = null)
         {
             float timeout = Time.realtimeSinceStartup + 10f;
             while (task.Status == UniTaskStatus.Pending &&
@@ -1122,7 +1307,16 @@ namespace CalmSpace.Tests.PlayMode
                 yield return null;
             }
 
-            Assert.That(task.Status, Is.Not.EqualTo(UniTaskStatus.Pending));
+            UniTaskStatus status = task.Status;
+            if (status == UniTaskStatus.Faulted ||
+                status == UniTaskStatus.Canceled)
+            {
+                task.GetAwaiter().GetResult();
+            }
+
+            Assert.That(status, Is.EqualTo(UniTaskStatus.Succeeded));
+            bool result = task.GetAwaiter().GetResult();
+            onSucceeded?.Invoke(result);
         }
 
         private static void DeleteSecureDemoProgress()
@@ -1249,6 +1443,127 @@ namespace CalmSpace.Tests.PlayMode
 
                 return count;
             }
+        }
+
+        private sealed class FailOnceMusicPreferenceStore : IDemoProgressStore
+        {
+            private readonly IDemoProgressStore _inner;
+            private bool _failNextMusicWrite = true;
+
+            public FailOnceMusicPreferenceStore(IDemoProgressStore inner)
+            {
+                _inner = inner;
+            }
+
+            public event System.Action<DemoProgressSnapshot> ProgressChanged
+            {
+                add => _inner.ProgressChanged += value;
+                remove => _inner.ProgressChanged -= value;
+            }
+
+            public bool IsInitialized => _inner.IsInitialized;
+            public int LevelCount => _inner.LevelCount;
+            public DemoProgressSnapshot Current => _inner.Current;
+            public int MusicWriteAttempts { get; private set; }
+
+            public ProfileInitializationResult Initialize(
+                int levelCount,
+                string defaultThemeId,
+                int completionReward) =>
+                _inner.Initialize(
+                    levelCount,
+                    defaultThemeId,
+                    completionReward);
+
+            public ProfileMutationResult<LevelCompletionMutation> CompleteLevel(
+                CompleteLevelCommand command) =>
+                _inner.CompleteLevel(command);
+
+            public ProfileMutationResult<PresentationMutation>
+                MarkPresentationSeen(PendingPresentationEntry presentation) =>
+                    _inner.MarkPresentationSeen(presentation);
+
+            public ProfileMutationResult<MemoryMutation> MarkMemoryViewed(
+                string memoryId) =>
+                    _inner.MarkMemoryViewed(memoryId);
+
+            public ProfileMutationResult<DecorationMutation>
+                PurchaseAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    int cost) =>
+                    _inner.PurchaseAndSelectDecoration(
+                        slotId,
+                        decorationId,
+                        cost);
+
+            public ProfileMutationResult<DecorationMutation>
+                GrantAndSelectDecoration(
+                    string slotId,
+                    string decorationId,
+                    DecorationGrantSource source) =>
+                    _inner.GrantAndSelectDecoration(
+                        slotId,
+                        decorationId,
+                        source);
+
+            public ProfileMutationResult<DecorationMutation> SelectDecoration(
+                string slotId,
+                string decorationId) =>
+                _inner.SelectDecoration(slotId, decorationId);
+
+            public ProfileMutationResult<DailyCareMutation> CompleteDailyCare(
+                string careId,
+                int utcDayKey,
+                int rewardAmount,
+                string unlockedMemoryId) =>
+                _inner.CompleteDailyCare(
+                    careId,
+                    utcDayKey,
+                    rewardAmount,
+                    unlockedMemoryId);
+
+            public ProfileMutationResult<PreferenceMutation> SetSelectedTheme(
+                string themeId) =>
+                _inner.SetSelectedTheme(themeId);
+
+            public ProfileMutationResult<PreferenceMutation> SetMusicEnabled(
+                bool enabled)
+            {
+                MusicWriteAttempts++;
+                if (_failNextMusicWrite)
+                {
+                    _failNextMusicWrite = false;
+                    return new ProfileMutationResult<PreferenceMutation>(
+                        ProfileMutationStatus.PersistFailed,
+                        _inner.Current,
+                        new PreferenceMutation(false));
+                }
+
+                return _inner.SetMusicEnabled(enabled);
+            }
+
+            public bool IsLevelUnlocked(int levelIndex) =>
+                _inner.IsLevelUnlocked(levelIndex);
+
+            public bool IsLevelCompleted(int levelIndex) =>
+                _inner.IsLevelCompleted(levelIndex);
+
+            public void MarkLevelCompleted(int levelIndex) =>
+                _inner.MarkLevelCompleted(levelIndex);
+
+            public int CompleteLevelAndReward(
+                int levelIndex,
+                int rewardAmount) =>
+                _inner.CompleteLevelAndReward(levelIndex, rewardAmount);
+
+            public bool TryPurchaseAndSelectDecoration(
+                int decorationIndex,
+                int cost) =>
+                _inner.TryPurchaseAndSelectDecoration(decorationIndex, cost);
+
+            public bool TrySelectDecoration(int decorationIndex) =>
+                _inner.TrySelectDecoration(decorationIndex);
         }
 
         private sealed class CountingFailingLevelFlow : ILevelFlowController

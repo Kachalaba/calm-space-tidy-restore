@@ -177,6 +177,36 @@ namespace CalmSpace.Demo
 
             if (snapshot.HasViewedMemory(memoryId))
             {
+                if (snapshot.TryGetPendingPresentation(
+                        0,
+                        out PendingPresentationEntry head) &&
+                    head.Kind == PendingPresentationKind.Memory &&
+                    string.Equals(
+                        head.StableId,
+                        memoryId,
+                        StringComparison.Ordinal))
+                {
+                    DemoProgressSnapshot repaired = Rebuild(
+                        snapshot,
+                        snapshot.HighestUnlockedLevelIndex,
+                        snapshot.CompletedLevelMask,
+                        snapshot.SelectedThemeId,
+                        snapshot.MusicEnabled,
+                        snapshot.CozyTokens,
+                        snapshot.RewardedLevelMask,
+                        snapshot.CopyOwnedDecorationIds(),
+                        snapshot.CopyDecorationSelections(),
+                        snapshot.CopySeenRoomRevealIds(),
+                        snapshot.CopyViewedMemoryIds(),
+                        snapshot.CopySeenFinaleIds(),
+                        RemovePendingAt(snapshot, 0),
+                        snapshot.LastDailyCareUtcDayKey,
+                        snapshot.CompletedDailyCareCount);
+                    return Applied(
+                        repaired,
+                        new MemoryMutation(memoryId, false));
+                }
+
                 return AlreadyApplied(
                     snapshot,
                     new MemoryMutation(memoryId, false));
@@ -1433,7 +1463,7 @@ namespace CalmSpace.Demo
                 }
             }
 
-            return highestUnlocked;
+            return -1;
         }
 
         public static int NormalizeLevelCount(int levelCount)
