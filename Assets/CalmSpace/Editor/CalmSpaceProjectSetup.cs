@@ -318,30 +318,41 @@ namespace CalmSpace.Editor
         {
             string versionName = Environment.GetEnvironmentVariable(
                 VersionNameVariable);
-            if (!string.IsNullOrWhiteSpace(versionName))
-            {
-                PlayerSettings.bundleVersion = versionName.Trim();
-            }
+            string normalizedVersionName =
+                string.IsNullOrWhiteSpace(versionName)
+                    ? null
+                    : versionName.Trim();
 
             string versionCode = Environment.GetEnvironmentVariable(
                 VersionCodeVariable);
-            if (string.IsNullOrWhiteSpace(versionCode))
+            int? parsedVersionCode = null;
+            if (!string.IsNullOrWhiteSpace(versionCode))
             {
-                return;
+                if (!int.TryParse(
+                        versionCode.Trim(),
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out int parsed) ||
+                    parsed < 1)
+                {
+                    throw new BuildFailedException(
+                        VersionCodeVariable +
+                        " must be a positive integer.");
+                }
+
+                parsedVersionCode = parsed;
             }
 
-            if (!int.TryParse(
-                    versionCode.Trim(),
-                    NumberStyles.Integer,
-                    CultureInfo.InvariantCulture,
-                    out int parsed) ||
-                parsed < 1)
+            if (normalizedVersionName != null)
             {
-                throw new BuildFailedException(
-                    VersionCodeVariable + " must be a positive integer.");
+                PlayerSettings.bundleVersion = normalizedVersionName;
             }
 
-            PlayerSettings.Android.bundleVersionCode = parsed;
+            if (parsedVersionCode.HasValue)
+            {
+                PlayerSettings.Android.bundleVersionCode =
+                    parsedVersionCode.Value;
+            }
         }
 
         /// <summary>
@@ -397,6 +408,10 @@ namespace CalmSpace.Editor
 
         internal sealed class AndroidSigningCleanupScope : IDisposable
         {
+            private readonly string _bundleVersion =
+                PlayerSettings.bundleVersion;
+            private readonly int _bundleVersionCode =
+                PlayerSettings.Android.bundleVersionCode;
             private bool _armed;
             private bool _disposed;
 
@@ -419,9 +434,24 @@ namespace CalmSpace.Editor
                 }
 
                 _disposed = true;
-                if (_armed)
+                try
                 {
-                    ClearSigningSecrets();
+                    if (_armed)
+                    {
+                        ClearSigningSecrets();
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        PlayerSettings.bundleVersion = _bundleVersion;
+                    }
+                    finally
+                    {
+                        PlayerSettings.Android.bundleVersionCode =
+                            _bundleVersionCode;
+                    }
                 }
             }
         }
@@ -1166,7 +1196,7 @@ namespace CalmSpace.Editor
             return false;
         }
 
-        private static bool ValidateGeneratedWorkshopScene(Scene scene)
+        internal static bool ValidateGeneratedWorkshopScene(Scene scene)
         {
             WorkshopHomeController home =
                 Object.FindFirstObjectByType<WorkshopHomeController>(
@@ -1180,47 +1210,50 @@ namespace CalmSpace.Editor
             AsmrAudioService audio =
                 Object.FindFirstObjectByType<AsmrAudioService>(
                     FindObjectsInactive.Include);
-            if (home == null || home.View == null || experience == null ||
-                scope == null || audio == null)
+            if (home == null || experience == null || scope == null ||
+                audio == null ||
+                !HasObjectReferences(home, "_view", "_roomParent"))
             {
                 return false;
             }
 
-            SerializedObject view = new SerializedObject(home.View);
+            WorkshopHomeView view = home.View;
             if (!(home is IWorkshopHomeRecovery) ||
-                view.FindProperty("_primaryButton")?.objectReferenceValue == null ||
-                view.FindProperty("_catalogButton")?.objectReferenceValue == null ||
-                view.FindProperty("_settingsButton")?.objectReferenceValue == null ||
-                view.FindProperty("_hotspotButton")?.objectReferenceValue == null ||
-                view.FindProperty("_taskTitle")?.objectReferenceValue == null ||
-                view.FindProperty("_bottomSheet")?.objectReferenceValue == null ||
-                view.FindProperty("_settingsMusicButton")
-                    ?.objectReferenceValue == null ||
-                view.FindProperty("_settingsLocaleButton")
-                    ?.objectReferenceValue == null ||
-                view.FindProperty("_settingsHapticButton")
-                    ?.objectReferenceValue == null)
+                !HasObjectReferences(
+                    view,
+                    "_primaryButton",
+                    "_catalogButton",
+                    "_settingsButton",
+                    "_hotspotButton",
+                    "_albumRoot",
+                    "_decorRoot",
+                    "_dailyCareRoot",
+                    "_relaxPassRoot",
+                    "_primaryLabel",
+                    "_taskTitle",
+                    "_progressLabel",
+                    "_catalogLabel",
+                    "_bottomSheet",
+                    "_settingsMusicButton",
+                    "_settingsLocaleButton",
+                    "_settingsHapticButton",
+                    "_settingsMusicLabel",
+                    "_settingsLocaleLabel",
+                    "_settingsHapticLabel"))
             {
                 return false;
             }
 
-            WorkshopBottomSheet bottomSheet = home.View.BottomSheet;
-            if (bottomSheet == null)
-            {
-                return false;
-            }
-
-            var sheetData = new SerializedObject(bottomSheet);
-            if (sheetData.FindProperty("_settingsContent")
-                    ?.objectReferenceValue == null ||
-                sheetData.FindProperty("_recoveryContent")
-                    ?.objectReferenceValue == null ||
-                sheetData.FindProperty("_recoveryTitleLabel")
-                    ?.objectReferenceValue == null ||
-                sheetData.FindProperty("_actionLabel")
-                    ?.objectReferenceValue == null ||
-                sheetData.FindProperty("_actionButton")
-                    ?.objectReferenceValue == null)
+            WorkshopBottomSheet bottomSheet = view.BottomSheet;
+            if (!HasObjectReferences(
+                    bottomSheet,
+                    "_sheet",
+                    "_closeButton",
+                    "_actionButton",
+                    "_settingsContent",
+                    "_recoveryContent",
+                    "_recoveryTitleLabel",
+                    "_actionLabel"))
             {
                 return false;
             }
@@ -1269,6 +1302,32 @@ namespace CalmSpace.Editor
                     FindObjectsInactive.Include);
             return room != null && room.RoomRoot != null &&
                 room.RoomRoot.GetComponentsInChildren<Graphic>(true).Length >= 4;
+        }
+
+        private static bool HasObjectReferences(
+            Object target,
+            params string[] fieldNames)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            var serialized = new SerializedObject(target);
+            for (var index = 0; index < fieldNames.Length; index++)
+            {
+                SerializedProperty field =
+                    serialized.FindProperty(fieldNames[index]);
+                if (field == null ||
+                    field.propertyType !=
+                    SerializedPropertyType.ObjectReference ||
+                    field.objectReferenceValue == null)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static void SetAudioClipBank(

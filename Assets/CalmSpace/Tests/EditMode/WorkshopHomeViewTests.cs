@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using CalmSpace.Demo;
 using CalmSpace.UI;
@@ -9,6 +10,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
@@ -66,7 +68,10 @@ namespace CalmSpace.Tests.EditMode
         [TearDown]
         public void DestroyView()
         {
-            Object.DestroyImmediate(_root);
+            if (_root != null)
+            {
+                Object.DestroyImmediate(_root);
+            }
         }
 
         [Test]
@@ -166,70 +171,6 @@ namespace CalmSpace.Tests.EditMode
         }
 
         [Test]
-        public void ConfigureRepairsMissingRequiredHomeReference()
-        {
-            EditorSceneManager.OpenScene(
-                CalmSpaceProjectSetup.MainScenePath,
-                OpenSceneMode.Single);
-            WorkshopHomeController home =
-                Object.FindFirstObjectByType<WorkshopHomeController>(
-                    FindObjectsInactive.Include);
-            Assert.That(home, Is.Not.Null);
-            var serialized = new SerializedObject(home.View);
-            serialized.FindProperty("_primaryButton").objectReferenceValue = null;
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-            Assert.That(
-                EditorSceneManager.SaveScene(
-                    home.gameObject.scene,
-                    CalmSpaceProjectSetup.MainScenePath),
-                Is.True);
-
-            CalmSpaceProjectSetup.ConfigureProject();
-
-            home = Object.FindFirstObjectByType<WorkshopHomeController>(
-                FindObjectsInactive.Include);
-            serialized = new SerializedObject(home.View);
-            Assert.That(
-                serialized.FindProperty("_primaryButton").objectReferenceValue,
-                Is.Not.Null,
-                "A matching marker must not block repair of a missing ref.");
-        }
-
-        [Test]
-        public void GeneratedRecoverySurfaceHasVisiblePracticalContent()
-        {
-            EditorSceneManager.OpenScene(
-                CalmSpaceProjectSetup.MainScenePath,
-                OpenSceneMode.Single);
-            WorkshopBottomSheet sheet =
-                Object.FindFirstObjectByType<WorkshopBottomSheet>(
-                    FindObjectsInactive.Include);
-
-            Assert.That(sheet, Is.Not.Null);
-            Transform recovery = sheet.transform.Find("Recovery Content");
-            Assert.That(recovery, Is.Not.Null,
-                "Load failure needs a distinct authored content group.");
-            Text title = recovery?.Find("Failure Title")
-                ?.GetComponent<Text>();
-            Assert.That(title, Is.Not.Null);
-            Assert.That(title.text, Is.Not.Empty);
-            Assert.That(title.fontSize, Is.GreaterThanOrEqualTo(24));
-
-            Button action = sheet.ActionButton;
-            Assert.That(action, Is.Not.Null);
-            Text label = action.GetComponentInChildren<Text>(true);
-            Assert.That(label, Is.Not.Null);
-            Assert.That(label.text, Is.Not.Empty);
-            Assert.That(label.fontSize, Is.GreaterThanOrEqualTo(24));
-            Assert.That(action.GetComponent<RectTransform>().sizeDelta.x,
-                Is.GreaterThanOrEqualTo(600f));
-            Assert.That(action.GetComponent<RectTransform>().sizeDelta.y,
-                Is.GreaterThanOrEqualTo(80f));
-            Assert.That(action.targetGraphic.color.a,
-                Is.GreaterThanOrEqualTo(0.8f));
-        }
-
-        [Test]
         public void ExperienceUsesCompanionRecoveryInterfaceWithoutConcreteCast()
         {
             Type recovery = Type.GetType(
@@ -306,49 +247,6 @@ namespace CalmSpace.Tests.EditMode
             }
         }
 
-        [Test]
-        public void ConfigureRepairsTaskTitleAndRecoveryReferences()
-        {
-            EditorSceneManager.OpenScene(
-                CalmSpaceProjectSetup.MainScenePath,
-                OpenSceneMode.Single);
-            WorkshopHomeController home =
-                Object.FindFirstObjectByType<WorkshopHomeController>(
-                    FindObjectsInactive.Include);
-            Assert.That(home, Is.Not.Null);
-            var view = new SerializedObject(home.View);
-            SerializedProperty taskTitle = view.FindProperty("_taskTitle");
-            Assert.That(taskTitle, Is.Not.Null,
-                "The generated scene contract needs a dedicated task title.");
-            WorkshopBottomSheet sheet = home.View.BottomSheet;
-            Assert.That(sheet, Is.Not.Null);
-            var sheetData = new SerializedObject(sheet);
-            SerializedProperty recoveryTitle =
-                sheetData.FindProperty("_recoveryTitleLabel");
-            Assert.That(recoveryTitle, Is.Not.Null,
-                "The generated scene contract needs recovery copy.");
-            taskTitle.objectReferenceValue = null;
-            recoveryTitle.objectReferenceValue = null;
-            view.ApplyModifiedPropertiesWithoutUndo();
-            sheetData.ApplyModifiedPropertiesWithoutUndo();
-            Assert.That(EditorSceneManager.SaveScene(
-                home.gameObject.scene,
-                CalmSpaceProjectSetup.MainScenePath), Is.True);
-
-            CalmSpaceProjectSetup.ConfigureProject();
-
-            home = Object.FindFirstObjectByType<WorkshopHomeController>(
-                FindObjectsInactive.Include);
-            view = new SerializedObject(home.View);
-            sheetData = new SerializedObject(home.View.BottomSheet);
-            Assert.That(view.FindProperty("_taskTitle").objectReferenceValue,
-                Is.Not.Null);
-            Assert.That(
-                sheetData.FindProperty("_recoveryTitleLabel")
-                    .objectReferenceValue,
-                Is.Not.Null);
-        }
-
         private Button CreateButton(string name)
         {
             GameObject root = CreateRoot(name);
@@ -373,6 +271,382 @@ namespace CalmSpace.Tests.EditMode
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, fieldName);
             field.SetValue(target, value);
+        }
+    }
+
+    public sealed class GeneratedWorkshopSceneTests
+    {
+        private static readonly string[] ControllerReferences =
+        {
+            "_view",
+            "_roomParent"
+        };
+
+        private static readonly string[] ViewReferences =
+        {
+            "_primaryButton",
+            "_catalogButton",
+            "_settingsButton",
+            "_hotspotButton",
+            "_albumRoot",
+            "_decorRoot",
+            "_dailyCareRoot",
+            "_relaxPassRoot",
+            "_primaryLabel",
+            "_taskTitle",
+            "_progressLabel",
+            "_catalogLabel",
+            "_bottomSheet",
+            "_settingsMusicButton",
+            "_settingsLocaleButton",
+            "_settingsHapticButton",
+            "_settingsMusicLabel",
+            "_settingsLocaleLabel",
+            "_settingsHapticLabel"
+        };
+
+        private static readonly string[] BottomSheetReferences =
+        {
+            "_sheet",
+            "_closeButton",
+            "_actionButton",
+            "_settingsContent",
+            "_recoveryContent",
+            "_recoveryTitleLabel",
+            "_actionLabel"
+        };
+
+        [Test]
+        public void ConfigureRepairsMissingRequiredHomeReference()
+        {
+            using (new MainSceneStateScope())
+            {
+                WorkshopHomeController home = OpenMainAndFindHome();
+                var serialized = new SerializedObject(home.View);
+                serialized.FindProperty("_primaryButton")
+                    .objectReferenceValue = null;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                SaveMain(home.gameObject.scene);
+
+                CalmSpaceProjectSetup.ConfigureProject();
+
+                home = FindHome();
+                serialized = new SerializedObject(home.View);
+                Assert.That(
+                    serialized.FindProperty("_primaryButton")
+                        .objectReferenceValue,
+                    Is.Not.Null,
+                    "A matching marker must not block repair of a missing ref.");
+            }
+        }
+
+        [Test]
+        public void GeneratedRecoverySurfaceHasVisiblePracticalContent()
+        {
+            using (new MainSceneStateScope())
+            {
+                EditorSceneManager.OpenScene(
+                    CalmSpaceProjectSetup.MainScenePath,
+                    OpenSceneMode.Single);
+                WorkshopBottomSheet sheet =
+                    Object.FindFirstObjectByType<WorkshopBottomSheet>(
+                        FindObjectsInactive.Include);
+
+                Assert.That(sheet, Is.Not.Null);
+                Transform recovery = sheet.transform.Find("Recovery Content");
+                Assert.That(recovery, Is.Not.Null,
+                    "Load failure needs a distinct authored content group.");
+                Text title = recovery?.Find("Failure Title")
+                    ?.GetComponent<Text>();
+                Assert.That(title, Is.Not.Null);
+                Assert.That(title.text, Is.Not.Empty);
+                Assert.That(title.fontSize, Is.GreaterThanOrEqualTo(24));
+
+                Button action = sheet.ActionButton;
+                Assert.That(action, Is.Not.Null);
+                Text label = action.GetComponentInChildren<Text>(true);
+                Assert.That(label, Is.Not.Null);
+                Assert.That(label.text, Is.Not.Empty);
+                Assert.That(label.fontSize, Is.GreaterThanOrEqualTo(24));
+                Assert.That(action.GetComponent<RectTransform>().sizeDelta.x,
+                    Is.GreaterThanOrEqualTo(600f));
+                Assert.That(action.GetComponent<RectTransform>().sizeDelta.y,
+                    Is.GreaterThanOrEqualTo(80f));
+                Assert.That(action.targetGraphic.color.a,
+                    Is.GreaterThanOrEqualTo(0.8f));
+            }
+        }
+
+        [Test]
+        public void ConfigureRepairsTaskTitleAndRecoveryReferences()
+        {
+            using (new MainSceneStateScope())
+            {
+                WorkshopHomeController home = OpenMainAndFindHome();
+                var view = new SerializedObject(home.View);
+                SerializedProperty taskTitle = view.FindProperty("_taskTitle");
+                Assert.That(taskTitle, Is.Not.Null,
+                    "The generated scene contract needs a dedicated task title.");
+                WorkshopBottomSheet sheet = home.View.BottomSheet;
+                Assert.That(sheet, Is.Not.Null);
+                var sheetData = new SerializedObject(sheet);
+                SerializedProperty recoveryTitle =
+                    sheetData.FindProperty("_recoveryTitleLabel");
+                Assert.That(recoveryTitle, Is.Not.Null,
+                    "The generated scene contract needs recovery copy.");
+                taskTitle.objectReferenceValue = null;
+                recoveryTitle.objectReferenceValue = null;
+                view.ApplyModifiedPropertiesWithoutUndo();
+                sheetData.ApplyModifiedPropertiesWithoutUndo();
+                SaveMain(home.gameObject.scene);
+
+                CalmSpaceProjectSetup.ConfigureProject();
+
+                home = FindHome();
+                view = new SerializedObject(home.View);
+                sheetData = new SerializedObject(home.View.BottomSheet);
+                Assert.That(view.FindProperty("_taskTitle").objectReferenceValue,
+                    Is.Not.Null);
+                Assert.That(
+                    sheetData.FindProperty("_recoveryTitleLabel")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+            }
+        }
+
+        [TestCase("controller", "_roomParent")]
+        [TestCase("view", "_settingsMusicLabel")]
+        public void ConfigureRepairsRepresentativeCriticalReference(
+            string owner,
+            string fieldName)
+        {
+            using (new MainSceneStateScope())
+            {
+                WorkshopHomeController home = OpenMainAndFindHome();
+                Object target = owner == "controller"
+                    ? home
+                    : home.View;
+                var serialized = new SerializedObject(target);
+                SerializedProperty reference =
+                    serialized.FindProperty(fieldName);
+                Assert.That(reference, Is.Not.Null, fieldName);
+                Assert.That(reference.objectReferenceValue, Is.Not.Null);
+                reference.objectReferenceValue = null;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                SaveMain(home.gameObject.scene);
+
+                CalmSpaceProjectSetup.ConfigureProject();
+
+                home = FindHome();
+                target = owner == "controller" ? home : home.View;
+                serialized = new SerializedObject(target);
+                Assert.That(
+                    serialized.FindProperty(fieldName).objectReferenceValue,
+                    Is.Not.Null,
+                    "A current marker must not hide " + fieldName + ".");
+            }
+        }
+
+        [Test]
+        public void GeneratedSceneValidationRejectsEveryRequiredReference()
+        {
+            using (new MainSceneStateScope())
+            {
+                WorkshopHomeController home = OpenMainAndFindHome();
+                Scene scene = home.gameObject.scene;
+                WorkshopHomeView view = home.View;
+                WorkshopBottomSheet bottomSheet = view.BottomSheet;
+
+                AssertEveryReferenceRejected(
+                    scene,
+                    home,
+                    ControllerReferences);
+                AssertEveryReferenceRejected(
+                    scene,
+                    view,
+                    ViewReferences);
+                AssertEveryReferenceRejected(
+                    scene,
+                    bottomSheet,
+                    BottomSheetReferences);
+            }
+        }
+
+        private static void AssertEveryReferenceRejected(
+            Scene scene,
+            Object target,
+            string[] fieldNames)
+        {
+            for (var index = 0; index < fieldNames.Length; index++)
+            {
+                AssertRejectedWhenCleared(
+                    scene,
+                    target,
+                    fieldNames[index]);
+            }
+        }
+
+        private static void AssertRejectedWhenCleared(
+            Scene scene,
+            Object target,
+            string fieldName)
+        {
+            var serialized = new SerializedObject(target);
+            SerializedProperty property =
+                serialized.FindProperty(fieldName);
+            Assert.That(property, Is.Not.Null, fieldName);
+            Assert.That(
+                property.objectReferenceValue,
+                Is.Not.Null,
+                fieldName);
+            Object original = property.objectReferenceValue;
+            try
+            {
+                property.objectReferenceValue = null;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                Assert.That(
+                    CalmSpaceProjectSetup
+                        .ValidateGeneratedWorkshopScene(scene),
+                    Is.False,
+                    fieldName);
+            }
+            finally
+            {
+                var restore = new SerializedObject(target);
+                restore.FindProperty(fieldName).objectReferenceValue =
+                    original;
+                restore.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        private static WorkshopHomeController OpenMainAndFindHome()
+        {
+            EditorSceneManager.OpenScene(
+                CalmSpaceProjectSetup.MainScenePath,
+                OpenSceneMode.Single);
+            return FindHome();
+        }
+
+        private static WorkshopHomeController FindHome()
+        {
+            WorkshopHomeController home =
+                Object.FindFirstObjectByType<WorkshopHomeController>(
+                    FindObjectsInactive.Include);
+            Assert.That(home, Is.Not.Null);
+            return home;
+        }
+
+        private static void SaveMain(Scene scene)
+        {
+            Assert.That(
+                EditorSceneManager.SaveScene(
+                    scene,
+                    CalmSpaceProjectSetup.MainScenePath),
+                Is.True);
+        }
+
+        private sealed class MainSceneStateScope : IDisposable
+        {
+            private readonly byte[] _mainSceneBytes;
+            private readonly EditorBuildSettingsScene[] _buildScenes;
+            private readonly SceneSetup[] _sceneSetup;
+            private readonly bool _restoreSavedSceneSetup;
+            private bool _disposed;
+
+            public MainSceneStateScope()
+            {
+                for (var index = 0;
+                     index < SceneManager.sceneCount;
+                     index++)
+                {
+                    Scene scene = SceneManager.GetSceneAt(index);
+                    if (scene.isDirty)
+                    {
+                        throw new InvalidOperationException(
+                            "Generated-scene tests cannot replace a dirty " +
+                            "scene: " + scene.path);
+                    }
+                }
+
+                _mainSceneBytes = File.ReadAllBytes(
+                    Path.GetFullPath(CalmSpaceProjectSetup.MainScenePath));
+                _buildScenes = CloneBuildScenes(EditorBuildSettings.scenes);
+                _sceneSetup = EditorSceneManager.GetSceneManagerSetup();
+
+                bool singleEmptyScene = _sceneSetup.Length <= 1 &&
+                    (_sceneSetup.Length == 0 ||
+                     string.IsNullOrEmpty(_sceneSetup[0].path));
+                _restoreSavedSceneSetup = _sceneSetup.Length > 0 &&
+                    Array.TrueForAll(
+                        _sceneSetup,
+                        setup => !string.IsNullOrEmpty(setup.path));
+                if (!singleEmptyScene && !_restoreSavedSceneSetup)
+                {
+                    throw new InvalidOperationException(
+                        "Generated-scene tests require either one scratch " +
+                        "scene or an entirely saved scene setup.");
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                try
+                {
+                    EditorSceneManager.NewScene(
+                        NewSceneSetup.EmptyScene,
+                        NewSceneMode.Single);
+                }
+                finally
+                {
+                    try
+                    {
+                        File.WriteAllBytes(
+                            Path.GetFullPath(
+                                CalmSpaceProjectSetup.MainScenePath),
+                            _mainSceneBytes);
+                        AssetDatabase.ImportAsset(
+                            CalmSpaceProjectSetup.MainScenePath,
+                            ImportAssetOptions.ForceSynchronousImport |
+                            ImportAssetOptions.ForceUpdate);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            EditorBuildSettings.scenes =
+                                CloneBuildScenes(_buildScenes);
+                        }
+                        finally
+                        {
+                            if (_restoreSavedSceneSetup)
+                            {
+                                EditorSceneManager.RestoreSceneManagerSetup(
+                                    _sceneSetup);
+                            }
+                        }
+                    }
+                }
+            }
+
+            private static EditorBuildSettingsScene[] CloneBuildScenes(
+                EditorBuildSettingsScene[] source)
+            {
+                var clone = new EditorBuildSettingsScene[source.Length];
+                for (var index = 0; index < source.Length; index++)
+                {
+                    clone[index] = new EditorBuildSettingsScene(
+                        source[index].path,
+                        source[index].enabled);
+                }
+
+                return clone;
+            }
         }
     }
 }
