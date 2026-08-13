@@ -301,8 +301,8 @@ class AndroidArchiveAuditTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(report["artifacts"][0]["physical"]["local_header_bytes"], 38)
 
-    def test_release_pair_accepts_container_delta_at_one_mibibyte(self):
-        # Catches an off-by-one error at the inclusive 1 MiB guard boundary.
+    def test_release_pair_keeps_same_source_not_evaluated_at_guard_boundary(self):
+        # Catches treating an inclusive container-delta pass as provenance.
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             apk = directory / "release.apk"
@@ -320,7 +320,15 @@ class AndroidArchiveAuditTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(report["release_pair"]["absolute_container_delta_bytes"], 1048576)
-            self.assertEqual(report["release_pair"]["status"], "pass")
+            self.assertEqual(
+                report["release_pair"].get("container_delta_guard_status"),
+                "pass",
+            )
+            self.assertEqual(
+                report["release_pair"].get("sameSource"),
+                "notEvaluated",
+            )
+            self.assertNotIn("status", report["release_pair"])
             self.assertFalse(report["release_pair"]["installed_size_claim"])
 
     def test_release_pair_rejects_container_delta_over_one_mibibyte(self):
@@ -341,7 +349,11 @@ class AndroidArchiveAuditTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 1)
-            self.assertEqual(report["release_pair"]["status"], "fail")
+            self.assertEqual(
+                report["release_pair"]["container_delta_guard_status"],
+                "fail",
+            )
+            self.assertEqual(report["release_pair"]["sameSource"], "notEvaluated")
 
     def test_truncated_archive_fails_closed_without_report(self):
         # Catches accepting a partial EOCD or silently reporting partial bytes.

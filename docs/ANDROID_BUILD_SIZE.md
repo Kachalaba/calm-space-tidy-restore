@@ -70,27 +70,31 @@ files.
 
 - A release APK or AAB fails when unreferenced local-record bytes are nonzero.
 - A debug APK may contain them, but reports a warning.
-- A supplied same-source release APK/AAB pair must reconcile independently and
-  have an absolute physical container delta of at most 1 MiB (1,048,576 bytes).
+- A supplied release APK/AAB pair must reconcile independently and have an
+  absolute physical container delta of at most 1 MiB (1,048,576 bytes).
+- The report labels `sameSource` as `notEvaluated`: archive layout and size do
+  not establish common build provenance. Establish the common source revision,
+  build metadata, and signing identity in the surrounding release orchestration.
 - The APK/AAB delta is a container guard only. It is **not** an installed Play
   size claim; Play delivery performs device-specific splitting and processing.
 - Malformed, truncated, multi-disk, ambiguous, or ZIP64 archives fail closed and
   do not produce a new report.
 
-## Current checked artifacts
+## Historical checked artifacts (`cd777b0`, 2026-08-13)
 
 | Role | Physical bytes | Canonical payload | Free records | Signing block | SHA-256 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Debug APK | 56,652,376 | 41,534,611 | 15,038,173 | 4,096 | `a0b1722a45d96837d0f1477c3adeb7307d89718038c3cf523a1309834de475e3` |
-| Release verification APK | 32,591,255 | 32,534,779 | 0 | 8,192 | `3ba41931708a2f22c27d304712bbc7cf425d01ec7d476d7300743215b53611a2` |
-| Release AAB | 31,971,674 | 31,890,370 | 0 | 0 | `7ba336070561b0758fafbe3dbf429f09bfd60a8765643d025fb8068bd5fe3f6d` |
+| Debug APK | 56,660,010 | 41,543,127 | 15,037,291 | 4,096 | `7deb0864640c161f4985a40e2ef10fec4781ce2ad93597b32abf4fe33c00713b` |
+| Release verification APK | 32,593,031 | 32,536,557 | 0 | 8,192 | `047c7aea11f4df4e096ddbacf08096386335d3eb34c969b2a2fe68c9708ef4b7` |
+| Release AAB | 31,973,377 | 31,892,073 | 0 | 0 | `8879cd80f787c14ba5520bad0988a0ba3f2b4662410123af36f4d74d71480063` |
 
-The current debug archive contains exactly **15,038,173 bytes** of debug-only
-unreferenced local records. Its canonical payload is **8,999,832 bytes** larger
-than the release verification APK, the current Development Player/code delta.
-No packaged debug-symbol files were found in any of the three archives. The
-release APK and AAB differ by **619,581 physical container bytes**, within the
-1 MiB guard.
+That historical debug archive contains exactly **15,037,291 bytes** of
+debug-only unreferenced local records. Its canonical payload is **9,006,570
+bytes** larger than the release verification APK. No packaged debug-symbol
+files were found in any of the three archives. The release APK and AAB differ
+by **619,654 physical container bytes**, within the 1 MiB guard. The audit did
+not evaluate whether the pair came from the same source; the surrounding build
+record established common HEAD, metadata, and signing identity separately.
 
 Unity's `BuildReport.summary.totalSize` describes player-build work output. It
 is not the final APK/AAB physical archive size, so it must not replace this

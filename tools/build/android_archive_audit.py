@@ -552,9 +552,10 @@ def build_report(role_paths: Sequence[Tuple[str, Path]]) -> dict:
         pair_status = "pass" if delta <= PAIR_DELTA_LIMIT else "fail"
         report["release_pair"] = {
             "absolute_container_delta_bytes": delta,
+            "container_delta_guard_status": pair_status,
             "guard_max_bytes": PAIR_DELTA_LIMIT,
             "installed_size_claim": False,
-            "status": pair_status,
+            "sameSource": "notEvaluated",
         }
         if pair_status == "fail":
             report["overall_status"] = "fail"
