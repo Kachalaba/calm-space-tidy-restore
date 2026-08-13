@@ -47,8 +47,10 @@ Central-directory records are the canonical entry set. Their local-header
 offsets identify referenced records. Every other byte before the signing block
 must parse exactly as an unreferenced classic local record; unexplained,
 overlapping, or truncated bytes fail closed. APK signing-block framing and both
-size words are validated separately. ZIP64 sentinels and ZIP64 extra fields are
-rejected as unsupported instead of being interpreted as 32-bit values.
+size words are validated separately. The classic central directory must end
+exactly where EOCD begins; EOCD comments and trailing bytes remain accounted
+after EOCD. ZIP64 sentinels and ZIP64 extra fields are rejected as unsupported
+instead of being interpreted as 32-bit values.
 
 Canonical compressed payload is grouped as:
 

@@ -128,6 +128,8 @@ def _parse_central_directory(
     central_end = central_offset + central_size
     if central_end > eocd_offset or central_end > len(data):
         raise AuditError("central directory is out of bounds")
+    if central_end != eocd_offset:
+        raise AuditError("bytes between central directory and EOCD are unsupported")
 
     entries = []
     position = central_offset

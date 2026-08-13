@@ -93,6 +93,7 @@ def build_archive(
     *,
     orphans=(),
     signing=False,
+    before_eocd=b"",
     trailing=b"",
     truncate_descriptor=False,
     zip64_eocd=False,
@@ -117,6 +118,7 @@ def build_archive(
         _central_record(entry, offset) for entry, offset in zip(entries, offsets)
     )
     body += central
+    body += before_eocd
     count = 0xFFFF if zip64_eocd else len(entries)
     body += struct.pack(
         "<I4H2LH",
@@ -354,6 +356,26 @@ class AndroidArchiveAuditTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIsNone(report)
             self.assertEqual(result.stderr, "error: valid EOCD not found\n")
+
+    def test_bytes_between_central_directory_and_eocd_fail_closed(self):
+        # Catches attributing unexplained pre-EOCD bytes as valid EOCD/trailing bytes.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive = directory / "central-gap.apk"
+            build_archive(
+                archive,
+                [_entry_record("a.txt", b"abc")],
+                before_eocd=b"JUNK",
+            )
+
+            result, report, _ = self.run_audit(directory, "--release-apk", archive)
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIsNone(report)
+            self.assertEqual(
+                result.stderr,
+                "error: bytes between central directory and EOCD are unsupported\n",
+            )
 
     def test_zip64_sentinel_fails_closed_as_unsupported(self):
         # Catches silently truncating ZIP64 counts into classic ZIP fields.
