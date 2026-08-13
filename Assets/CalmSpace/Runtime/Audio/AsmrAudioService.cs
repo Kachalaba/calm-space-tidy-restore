@@ -6,7 +6,9 @@ namespace CalmSpace.Audio
     /// <summary>
     /// Fixed-size spatial one-shot pool for close, randomized ASMR feedback.
     /// </summary>
-    public sealed class AsmrAudioService : MonoBehaviour, IAsmrAudioService
+    public sealed class AsmrAudioService :
+        MonoBehaviour,
+        ICategorizedAsmrAudioService
     {
         [SerializeField]
         [Min(1)]
@@ -14,6 +16,15 @@ namespace CalmSpace.Audio
 
         [SerializeField]
         private AudioClip[] _snapClips = new AudioClip[0];
+
+        [SerializeField] private AudioClip[] _screwTurnClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _screwReleaseClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _cleaningClothClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _cleaningSpongeClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _cleaningSqueegeeClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _levelCompleteClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _roomRevealClips = new AudioClip[0];
+        [SerializeField] private AudioClip[] _uiTapClips = new AudioClip[0];
 
         [SerializeField]
         private AudioMixerGroup _outputMixerGroup;
@@ -48,7 +59,7 @@ namespace CalmSpace.Audio
         public bool IsAvailable =>
             _sources != null &&
             _sources.Length > 0 &&
-            HasPlayableSnapClip();
+            HasAnyPlayableClip();
 
         private void Awake()
         {
@@ -57,9 +68,16 @@ namespace CalmSpace.Audio
 
         public void PlaySnap(Vector3 worldPosition)
         {
+            PlayCue(AsmrAudioCue.Placement, worldPosition);
+        }
+
+        public void PlayCue(
+            AsmrAudioCue cue,
+            Vector3 worldPosition)
+        {
             Prewarm();
 
-            var clip = SelectSnapClip();
+            AudioClip clip = SelectClip(BankFor(cue));
             if (clip == null || _sources.Length == 0)
             {
                 return;
@@ -81,7 +99,16 @@ namespace CalmSpace.Audio
                 _maximumPitch);
 
             source.Stop();
-            source.transform.position = worldPosition;
+            bool spatial = IsSpatial(cue);
+            source.spatialBlend = spatial ? 1f : 0f;
+            if (spatial)
+            {
+                source.transform.position = worldPosition;
+            }
+            else
+            {
+                source.transform.localPosition = Vector3.zero;
+            }
             source.clip = clip;
             source.volume = Random.Range(minimumVolume, maximumVolume);
             source.pitch = Random.Range(minimumPitch, maximumPitch);
@@ -90,6 +117,43 @@ namespace CalmSpace.Audio
             _releaseDspTimes[sourceIndex] =
                 AudioSettings.dspTime +
                 clip.length / Mathf.Max(0.01f, Mathf.Abs(source.pitch));
+        }
+
+        private AudioClip[] BankFor(AsmrAudioCue cue)
+        {
+            switch (cue)
+            {
+                case AsmrAudioCue.Placement:
+                    return _snapClips;
+                case AsmrAudioCue.ScrewTurn:
+                    return _screwTurnClips;
+                case AsmrAudioCue.ScrewRelease:
+                    return _screwReleaseClips;
+                case AsmrAudioCue.CleaningCloth:
+                    return _cleaningClothClips;
+                case AsmrAudioCue.CleaningSponge:
+                    return _cleaningSpongeClips;
+                case AsmrAudioCue.CleaningSqueegee:
+                    return _cleaningSqueegeeClips;
+                case AsmrAudioCue.LevelComplete:
+                    return _levelCompleteClips;
+                case AsmrAudioCue.RoomReveal:
+                    return _roomRevealClips;
+                case AsmrAudioCue.UiTap:
+                    return _uiTapClips;
+                default:
+                    return null;
+            }
+        }
+
+        private static bool IsSpatial(AsmrAudioCue cue)
+        {
+            return cue == AsmrAudioCue.Placement ||
+                cue == AsmrAudioCue.ScrewTurn ||
+                cue == AsmrAudioCue.ScrewRelease ||
+                cue == AsmrAudioCue.CleaningCloth ||
+                cue == AsmrAudioCue.CleaningSponge ||
+                cue == AsmrAudioCue.CleaningSqueegee;
         }
 
         private void Prewarm()
@@ -146,42 +210,58 @@ namespace CalmSpace.Audio
             return earliestIndex;
         }
 
-        private AudioClip SelectSnapClip()
+        private static AudioClip SelectClip(AudioClip[] clips)
         {
-            if (_snapClips == null || _snapClips.Length == 0)
+            if (clips == null || clips.Length == 0)
             {
                 return null;
             }
 
-            var startIndex = Random.Range(0, _snapClips.Length);
-            for (var offset = 0; offset < _snapClips.Length; offset++)
+            var startIndex = Random.Range(0, clips.Length);
+            for (var offset = 0; offset < clips.Length; offset++)
             {
-                var index = (startIndex + offset) % _snapClips.Length;
-                if (_snapClips[index] != null)
+                var index = (startIndex + offset) % clips.Length;
+                if (clips[index] != null)
                 {
-                    return _snapClips[index];
+                    return clips[index];
                 }
             }
 
             return null;
         }
 
-        private bool HasPlayableSnapClip()
+        private bool HasAnyPlayableClip()
         {
-            if (_snapClips == null)
+            for (var cue = AsmrAudioCue.Placement;
+                 cue <= AsmrAudioCue.UiTap;
+                 cue++)
             {
-                return false;
-            }
-
-            for (var index = 0; index < _snapClips.Length; index++)
-            {
-                if (_snapClips[index] != null)
+                AudioClip[] bank = BankFor(cue);
+                if (SelectFirstPlayable(bank) != null)
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private static AudioClip SelectFirstPlayable(AudioClip[] clips)
+        {
+            if (clips == null)
+            {
+                return null;
+            }
+
+            for (var index = 0; index < clips.Length; index++)
+            {
+                if (clips[index] != null)
+                {
+                    return clips[index];
+                }
+            }
+
+            return null;
         }
 
 #if UNITY_EDITOR

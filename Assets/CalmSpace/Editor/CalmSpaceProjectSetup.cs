@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 using CalmSpace.Audio;
 using CalmSpace.Core;
 using CalmSpace.Demo;
@@ -8,6 +11,7 @@ using CalmSpace.Haptics;
 using CalmSpace.Input;
 using CalmSpace.Levels;
 using CalmSpace.UI;
+using CalmSpace.Workshop;
 using UnityEditor;
 using UnityEditor.AddressableAssets;
 using UnityEditor.AddressableAssets.Build;
@@ -21,6 +25,7 @@ using UnityEngine.Audio;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
 namespace CalmSpace.Editor
@@ -43,6 +48,8 @@ namespace CalmSpace.Editor
             "Builds/Android/CalmSpace-Tidy-Restore-release.aab";
         public const string TestApkOutputPath =
             "Builds/Android/CalmSpace-Demo-debug.apk";
+        public const string VerificationApkOutputPath =
+            "Builds/Android/CalmSpace-Release-verify.apk";
 
         private const string DemoLevelDefinitionPath =
             "Assets/CalmSpace/Config/DemoFitting.asset";
@@ -58,6 +65,47 @@ namespace CalmSpace.Editor
             "levels/demo-fitting";
         private const string AddressableLabel =
             "calm-space-level";
+        /// <summary>
+        /// Pinned Google Play target level. Google requires new uploads to
+        /// target a recent API, and "Auto" would silently ship whatever SDK
+        /// the build machine happens to have installed.
+        /// </summary>
+        private const AndroidSdkVersions TargetSdkVersion =
+            AndroidSdkVersions.AndroidApiLevel36;
+
+        private const string KeystorePathVariable =
+            "CALMSPACE_KEYSTORE_PATH";
+        private const string KeystorePassVariable =
+            "CALMSPACE_KEYSTORE_PASS";
+        private const string KeyAliasVariable =
+            "CALMSPACE_KEY_ALIAS";
+        private const string KeyAliasPassVariable =
+            "CALMSPACE_KEY_ALIAS_PASS";
+        private const string VersionCodeVariable =
+            "CALMSPACE_VERSION_CODE";
+        private const string VersionNameVariable =
+            "CALMSPACE_VERSION_NAME";
+
+        private const string GeneratedSceneMarkerPrefix =
+            "CalmSpace Generated Scene · ";
+        private static readonly string[] GeneratedSceneSourcePaths =
+        {
+            "Assets/CalmSpace/Editor/CalmSpaceWorkshopSceneBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceDemoSceneBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceProjectSetup.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopBottomSheet.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeView.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopHomeController.cs",
+            "Assets/CalmSpace/Runtime/UI/Workshop/WorkshopRoomPresenter.cs",
+            "Assets/CalmSpace/Runtime/UI/DemoExperienceController.cs",
+            "Assets/CalmSpace/Runtime/Audio/IAsmrAudioService.cs",
+            "Assets/CalmSpace/Runtime/Audio/AsmrAudioService.cs",
+            "Assets/CalmSpace/Runtime/Composition/CalmSpaceLifetimeScope.cs",
+            "Assets/CalmSpace/Runtime/Workshop/WorkshopRuntimeAvailability.cs",
+            "Assets/CalmSpace/Runtime/Workshop/AddressableWorkshopRoomLoader.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceWorkshopAssetBuilder.cs",
+            "Assets/CalmSpace/Editor/CalmSpaceTactileAudioBuilder.cs"
+        };
 
         private static readonly Color BackgroundColor =
             new Color(0.075f, 0.09f, 0.12f, 1f);
@@ -107,6 +155,11 @@ namespace CalmSpace.Editor
                 CalmSpaceDemoLevelBuilder.CreateOrUpdate(
                 itemMaterials,
                 targetMaterials);
+            LivingWorkshopCatalog workshopCatalog =
+                CalmSpaceWorkshopCatalogBuilder.CreateOrUpdate();
+            WorkshopTextCatalog workshopTextCatalog =
+                CalmSpaceWorkshopTextBuilder.CreateOrUpdate();
+            CalmSpaceWorkshopAssetBuilder.CreateOrUpdate();
 
             CreateOrUpdateMainScene(
                 catalog,
@@ -115,7 +168,9 @@ namespace CalmSpace.Editor
                 ambientLoop,
                 mixerGroup,
                 menuBackground,
-                roundedSprite);
+                roundedSprite,
+                workshopCatalog,
+                workshopTextCatalog);
             EnsureCleaningShadersAreIncluded();
 
             EditorUtility.SetDirty(pipelineAsset);
@@ -156,6 +211,21 @@ namespace CalmSpace.Editor
                 buildAppBundle: true);
         }
 
+        /// <summary>
+        /// A release-signed APK carrying exactly the settings of the uploaded
+        /// bundle. An app bundle cannot be installed directly, so this is how
+        /// release managed stripping and IL2CPP get verified on a device
+        /// before the bundle goes to Google Play.
+        /// </summary>
+        [MenuItem("Calm Space/Release/Build Signed Verification APK")]
+        public static void BuildSignedVerificationApk()
+        {
+            BuildAndroidPlayer(
+                VerificationApkOutputPath,
+                requireReleaseSigning: true,
+                buildAppBundle: false);
+        }
+
         private static void BuildAndroidPlayer(
             string buildOutputPath,
             bool requireReleaseSigning,
@@ -168,59 +238,222 @@ namespace CalmSpace.Editor
                     "Run this method with Android as the active build target.");
             }
 
-            ConfigureProject();
-            if (requireReleaseSigning)
+            using (var signingCleanup = new AndroidSigningCleanupScope())
             {
-                ValidateGooglePlayReleaseSettings();
+                ConfigureProject();
+                ApplyVersionOverrides();
+                if (requireReleaseSigning)
+                {
+                    // Arm before applying anything so even a partial setter
+                    // failure cannot leave release state serialized.
+                    signingCleanup.Arm();
+                    ApplyReleaseSigningFromEnvironment();
+                    ValidateGooglePlayReleaseSettings();
+                }
+
+                EditorUserBuildSettings.buildAppBundle = buildAppBundle;
+
+                AddressableAssetSettings.BuildPlayerContent(
+                    out AddressablesPlayerBuildResult addressablesResult);
+                if (!string.IsNullOrEmpty(addressablesResult.Error))
+                {
+                    throw new BuildFailedException(
+                        "Addressables build failed: " +
+                        addressablesResult.Error);
+                }
+
+                string outputPath = Path.GetFullPath(buildOutputPath);
+                string outputDirectory = Path.GetDirectoryName(outputPath);
+                if (string.IsNullOrEmpty(outputDirectory))
+                {
+                    throw new BuildFailedException(
+                        "Could not resolve the Android build directory.");
+                }
+
+                Directory.CreateDirectory(outputDirectory);
+
+                BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
+                if (!requireReleaseSigning)
+                {
+                    buildOptions |= BuildOptions.Development;
+                }
+
+                var options = new BuildPlayerOptions
+                {
+                    scenes = new[] { MainScenePath },
+                    locationPathName = outputPath,
+                    target = BuildTarget.Android,
+                    targetGroup = BuildTargetGroup.Android,
+                    options = buildOptions
+                };
+
+                // Debug builds historically clear custom signing only once
+                // they reach the player build. Preserve that behavior while
+                // release builds arm immediately before signing is applied.
+                signingCleanup.Arm();
+                BuildReport report = BuildPipeline.BuildPlayer(options);
+
+                if (report.summary.result != BuildResult.Succeeded)
+                {
+                    throw new BuildFailedException(
+                        $"Android build ended with {report.summary.result}. " +
+                        $"Errors: {report.summary.totalErrors}.");
+                }
+
+                Debug.Log(
+                    $"CALMSPACE_ANDROID_BUILD_COMPLETE {outputPath} " +
+                    $"{report.summary.totalSize} bytes " +
+                    $"versionCode={PlayerSettings.Android.bundleVersionCode} " +
+                    $"versionName={PlayerSettings.bundleVersion} " +
+                    $"targetSdk={PlayerSettings.Android.targetSdkVersion}");
+            }
+        }
+
+        /// <summary>
+        /// Version name and code come from the environment so a release can be
+        /// re-cut without editing tracked project settings. Play rejects an
+        /// upload whose version code is not higher than the previous one.
+        /// </summary>
+        private static void ApplyVersionOverrides()
+        {
+            string versionName = Environment.GetEnvironmentVariable(
+                VersionNameVariable);
+            string normalizedVersionName =
+                string.IsNullOrWhiteSpace(versionName)
+                    ? null
+                    : versionName.Trim();
+
+            string versionCode = Environment.GetEnvironmentVariable(
+                VersionCodeVariable);
+            int? parsedVersionCode = null;
+            if (!string.IsNullOrWhiteSpace(versionCode))
+            {
+                if (!int.TryParse(
+                        versionCode.Trim(),
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out int parsed) ||
+                    parsed < 1)
+                {
+                    throw new BuildFailedException(
+                        VersionCodeVariable +
+                        " must be a positive integer.");
+                }
+
+                parsedVersionCode = parsed;
             }
 
-            EditorUserBuildSettings.buildAppBundle = buildAppBundle;
+            if (normalizedVersionName != null)
+            {
+                PlayerSettings.bundleVersion = normalizedVersionName;
+            }
 
-            AddressableAssetSettings.BuildPlayerContent(
-                out AddressablesPlayerBuildResult addressablesResult);
-            if (!string.IsNullOrEmpty(addressablesResult.Error))
+            if (parsedVersionCode.HasValue)
+            {
+                PlayerSettings.Android.bundleVersionCode =
+                    parsedVersionCode.Value;
+            }
+        }
+
+        /// <summary>
+        /// Reads the upload key from the environment. Secrets are never stored
+        /// in the repository and are cleared again once the build finishes.
+        /// </summary>
+        private static void ApplyReleaseSigningFromEnvironment()
+        {
+            string keystorePath = Environment.GetEnvironmentVariable(
+                KeystorePathVariable);
+            string keystorePass = Environment.GetEnvironmentVariable(
+                KeystorePassVariable);
+            string keyAlias = Environment.GetEnvironmentVariable(
+                KeyAliasVariable);
+            string keyAliasPass = Environment.GetEnvironmentVariable(
+                KeyAliasPassVariable);
+
+            if (string.IsNullOrWhiteSpace(keystorePath) ||
+                string.IsNullOrWhiteSpace(keystorePass) ||
+                string.IsNullOrWhiteSpace(keyAlias) ||
+                string.IsNullOrWhiteSpace(keyAliasPass))
             {
                 throw new BuildFailedException(
-                    "Addressables build failed: " +
-                    addressablesResult.Error);
+                    "Google Play release blocked: set " +
+                    KeystorePathVariable + ", " + KeystorePassVariable + ", " +
+                    KeyAliasVariable + " and " + KeyAliasPassVariable +
+                    " before building. Create the upload key with keytool; " +
+                    "it is never stored in this repository.");
             }
 
-            string outputPath = Path.GetFullPath(buildOutputPath);
-            string outputDirectory = Path.GetDirectoryName(outputPath);
-            if (string.IsNullOrEmpty(outputDirectory))
+            PlayerSettings.Android.useCustomKeystore = true;
+            PlayerSettings.Android.keystoreName =
+                Path.GetFullPath(keystorePath.Trim());
+            PlayerSettings.Android.keystorePass = keystorePass;
+            PlayerSettings.Android.keyaliasName = keyAlias.Trim();
+            PlayerSettings.Android.keyaliasPass = keyAliasPass;
+        }
+
+        /// <summary>
+        /// Signing configuration belongs to the build machine, not the
+        /// repository: passwords must never be serialized, and the keystore
+        /// path and alias would otherwise be committed and break every other
+        /// machine.
+        /// </summary>
+        private static void ClearSigningSecrets()
+        {
+            PlayerSettings.Android.keystorePass = string.Empty;
+            PlayerSettings.Android.keyaliasPass = string.Empty;
+            PlayerSettings.Android.keystoreName = string.Empty;
+            PlayerSettings.Android.keyaliasName = string.Empty;
+            PlayerSettings.Android.useCustomKeystore = false;
+        }
+
+        internal sealed class AndroidSigningCleanupScope : IDisposable
+        {
+            private readonly string _bundleVersion =
+                PlayerSettings.bundleVersion;
+            private readonly int _bundleVersionCode =
+                PlayerSettings.Android.bundleVersionCode;
+            private bool _armed;
+            private bool _disposed;
+
+            internal void Arm()
             {
-                throw new BuildFailedException(
-                    "Could not resolve the Android build directory.");
+                if (_disposed)
+                {
+                    throw new ObjectDisposedException(
+                        nameof(AndroidSigningCleanupScope));
+                }
+
+                _armed = true;
             }
 
-            Directory.CreateDirectory(outputDirectory);
-
-            BuildOptions buildOptions = BuildOptions.CompressWithLz4HC;
-            if (!requireReleaseSigning)
+            public void Dispose()
             {
-                buildOptions |= BuildOptions.Development;
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                try
+                {
+                    if (_armed)
+                    {
+                        ClearSigningSecrets();
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        PlayerSettings.bundleVersion = _bundleVersion;
+                    }
+                    finally
+                    {
+                        PlayerSettings.Android.bundleVersionCode =
+                            _bundleVersionCode;
+                    }
+                }
             }
-
-            var options = new BuildPlayerOptions
-            {
-                scenes = new[] { MainScenePath },
-                locationPathName = outputPath,
-                target = BuildTarget.Android,
-                targetGroup = BuildTargetGroup.Android,
-                options = buildOptions
-            };
-
-            BuildReport report = BuildPipeline.BuildPlayer(options);
-            if (report.summary.result != BuildResult.Succeeded)
-            {
-                throw new BuildFailedException(
-                    $"Android build ended with {report.summary.result}. " +
-                    $"Errors: {report.summary.totalErrors}.");
-            }
-
-            Debug.Log(
-                $"CALMSPACE_ANDROID_BUILD_COMPLETE {outputPath} " +
-                $"{report.summary.totalSize} bytes");
         }
 
         private static void ValidateGooglePlayReleaseSettings()
@@ -358,8 +591,11 @@ namespace CalmSpace.Editor
             }
             PlayerSettings.Android.minSdkVersion =
                 AndroidSdkVersions.AndroidApiLevel24;
+            // Pinned, not Auto: "highest installed" makes the shipped API
+            // level depend on the build machine, and Google Play rejects a
+            // bundle that targets an API level below the current floor.
             PlayerSettings.Android.targetSdkVersion =
-                AndroidSdkVersions.AndroidApiLevelAuto;
+                TargetSdkVersion;
             PlayerSettings.Android.targetArchitectures =
                 AndroidArchitecture.ARM64;
             PlayerSettings.SetScriptingBackend(
@@ -774,12 +1010,23 @@ namespace CalmSpace.Editor
             AudioClip ambientLoop,
             AudioMixerGroup mixerGroup,
             Sprite menuBackground,
-            Sprite roundedSprite)
+            Sprite roundedSprite,
+            LivingWorkshopCatalog workshopCatalog,
+            WorkshopTextCatalog workshopTextCatalog)
         {
+            CalmSpaceTactileAudioBuilder.GeneratedAudioPalette audioPalette =
+                CalmSpaceTactileAudioBuilder.CreateOrUpdatePalette();
+            string generatedSceneMarker = GetGeneratedSceneMarker();
+            if (TryReuseCurrentGeneratedScene(generatedSceneMarker))
+            {
+                return;
+            }
+
             Scene scene = EditorSceneManager.NewScene(
                 NewSceneSetup.EmptyScene,
                 NewSceneMode.Single);
             scene.name = "Main";
+            new GameObject(generatedSceneMarker);
 
             Camera camera = CreateCamera();
             CreateLighting();
@@ -801,14 +1048,43 @@ namespace CalmSpace.Editor
                 services.AddComponent<CalmSpaceLifetimeScope>();
 
             var audioSerialized = new SerializedObject(audioService);
-            SerializedProperty clips =
-                audioSerialized.FindProperty("_snapClips");
-            clips.arraySize = snapClip == null ? 0 : 1;
+
+            // The pooled service picks a clip at random per placement, so the
+            // whole tactile palette goes in: one repeated click is what makes
+            // a tidying game feel mechanical.
+            var snapClips = new List<AudioClip>();
             if (snapClip != null)
             {
-                clips.GetArrayElementAtIndex(0).objectReferenceValue =
-                    snapClip;
+                snapClips.Add(snapClip);
             }
+
+            foreach (AudioClip tactile in audioPalette.Placement)
+            {
+                if (tactile != null)
+                {
+                    snapClips.Add(tactile);
+                }
+            }
+
+            SetAudioClipBank(audioSerialized, "_snapClips", snapClips);
+            SetAudioClipBank(
+                audioSerialized, "_screwTurnClips", audioPalette.ScrewTurn);
+            SetAudioClipBank(
+                audioSerialized, "_screwReleaseClips", audioPalette.ScrewRelease);
+            SetAudioClipBank(
+                audioSerialized, "_cleaningClothClips", audioPalette.CleaningCloth);
+            SetAudioClipBank(
+                audioSerialized, "_cleaningSpongeClips", audioPalette.CleaningSponge);
+            SetAudioClipBank(
+                audioSerialized,
+                "_cleaningSqueegeeClips",
+                audioPalette.CleaningSqueegee);
+            SetAudioClipBank(
+                audioSerialized, "_levelCompleteClips", audioPalette.LevelComplete);
+            SetAudioClipBank(
+                audioSerialized, "_roomRevealClips", audioPalette.RoomReveal);
+            SetAudioClipBank(
+                audioSerialized, "_uiTapClips", audioPalette.UiTap);
 
             audioSerialized.FindProperty("_outputMixerGroup")
                 .objectReferenceValue = mixerGroup;
@@ -848,6 +1124,14 @@ namespace CalmSpace.Editor
                 lifetimeScope,
                 "_demoDecorationCatalog",
                 decorationCatalog);
+            SetObjectReference(
+                lifetimeScope,
+                "_livingWorkshopCatalog",
+                workshopCatalog);
+            SetObjectReference(
+                lifetimeScope,
+                "_workshopTextCatalog",
+                workshopTextCatalog);
 
             var inputObject = new GameObject("Input");
             DragInputRouter router =
@@ -873,6 +1157,228 @@ namespace CalmSpace.Editor
             {
                 new EditorBuildSettingsScene(MainScenePath, true)
             };
+        }
+
+        private static bool TryReuseCurrentGeneratedScene(
+            string expectedMarker)
+        {
+            if (!File.Exists(Path.GetFullPath(MainScenePath)))
+            {
+                return false;
+            }
+
+            Scene scene = EditorSceneManager.OpenScene(
+                MainScenePath,
+                OpenSceneMode.Single);
+            GameObject[] roots = scene.GetRootGameObjects();
+            for (var index = 0; index < roots.Length; index++)
+            {
+                if (!string.Equals(
+                        roots[index].name,
+                        expectedMarker,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!ValidateGeneratedWorkshopScene(scene))
+                {
+                    return false;
+                }
+
+                EditorBuildSettings.scenes = new[]
+                {
+                    new EditorBuildSettingsScene(MainScenePath, true)
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        internal static bool ValidateGeneratedWorkshopScene(Scene scene)
+        {
+            WorkshopHomeController home =
+                Object.FindFirstObjectByType<WorkshopHomeController>(
+                    FindObjectsInactive.Include);
+            DemoExperienceController experience =
+                Object.FindFirstObjectByType<DemoExperienceController>(
+                    FindObjectsInactive.Include);
+            CalmSpaceLifetimeScope scope =
+                Object.FindFirstObjectByType<CalmSpaceLifetimeScope>(
+                    FindObjectsInactive.Include);
+            AsmrAudioService audio =
+                Object.FindFirstObjectByType<AsmrAudioService>(
+                    FindObjectsInactive.Include);
+            if (home == null || experience == null || scope == null ||
+                audio == null ||
+                !HasObjectReferences(home, "_view", "_roomParent"))
+            {
+                return false;
+            }
+
+            WorkshopHomeView view = home.View;
+            if (!(home is IWorkshopHomeRecovery) ||
+                !HasObjectReferences(
+                    view,
+                    "_primaryButton",
+                    "_catalogButton",
+                    "_settingsButton",
+                    "_hotspotButton",
+                    "_albumRoot",
+                    "_decorRoot",
+                    "_dailyCareRoot",
+                    "_relaxPassRoot",
+                    "_primaryLabel",
+                    "_taskTitle",
+                    "_progressLabel",
+                    "_catalogLabel",
+                    "_bottomSheet",
+                    "_settingsMusicButton",
+                    "_settingsLocaleButton",
+                    "_settingsHapticButton",
+                    "_settingsMusicLabel",
+                    "_settingsLocaleLabel",
+                    "_settingsHapticLabel"))
+            {
+                return false;
+            }
+
+            WorkshopBottomSheet bottomSheet = view.BottomSheet;
+            if (!HasObjectReferences(
+                    bottomSheet,
+                    "_sheet",
+                    "_closeButton",
+                    "_actionButton",
+                    "_settingsContent",
+                    "_recoveryContent",
+                    "_recoveryTitleLabel",
+                    "_actionLabel"))
+            {
+                return false;
+            }
+
+            SerializedObject scopeData = new SerializedObject(scope);
+            if (scopeData.FindProperty("_livingWorkshopCatalog")
+                    ?.objectReferenceValue == null ||
+                scopeData.FindProperty("_workshopTextCatalog")
+                    ?.objectReferenceValue == null)
+            {
+                return false;
+            }
+
+            var audioData = new SerializedObject(audio);
+            foreach (string field in new[]
+                     {
+                         "_snapClips",
+                         "_screwTurnClips",
+                         "_screwReleaseClips",
+                         "_cleaningClothClips",
+                         "_cleaningSpongeClips",
+                         "_cleaningSqueegeeClips",
+                         "_levelCompleteClips",
+                         "_roomRevealClips",
+                         "_uiTapClips"
+                     })
+            {
+                SerializedProperty bank = audioData.FindProperty(field);
+                if (bank == null || bank.arraySize == 0)
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < bank.arraySize; index++)
+                {
+                    if (bank.GetArrayElementAtIndex(index)
+                            .objectReferenceValue == null)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            DemoRoomPresenter room =
+                Object.FindFirstObjectByType<DemoRoomPresenter>(
+                    FindObjectsInactive.Include);
+            return room != null && room.RoomRoot != null &&
+                room.RoomRoot.GetComponentsInChildren<Graphic>(true).Length >= 4;
+        }
+
+        private static bool HasObjectReferences(
+            Object target,
+            params string[] fieldNames)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            var serialized = new SerializedObject(target);
+            for (var index = 0; index < fieldNames.Length; index++)
+            {
+                SerializedProperty field =
+                    serialized.FindProperty(fieldNames[index]);
+                if (field == null ||
+                    field.propertyType !=
+                    SerializedPropertyType.ObjectReference ||
+                    field.objectReferenceValue == null)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void SetAudioClipBank(
+            SerializedObject serialized,
+            string fieldName,
+            IReadOnlyList<AudioClip> clips)
+        {
+            SerializedProperty bank = serialized.FindProperty(fieldName);
+            if (bank == null)
+            {
+                throw new InvalidOperationException(
+                    "Missing ASMR audio bank " + fieldName + ".");
+            }
+
+            int count = clips?.Count ?? 0;
+            bank.arraySize = count;
+            for (var index = 0; index < count; index++)
+            {
+                bank.GetArrayElementAtIndex(index).objectReferenceValue =
+                    clips[index];
+            }
+        }
+
+        private static string GetGeneratedSceneMarker()
+        {
+            using (SHA256 sha = SHA256.Create())
+            using (var stream = new MemoryStream())
+            {
+                for (var index = 0;
+                     index < GeneratedSceneSourcePaths.Length;
+                     index++)
+                {
+                    string path = Path.GetFullPath(
+                        GeneratedSceneSourcePaths[index]);
+                    if (!File.Exists(path))
+                    {
+                        throw new InvalidOperationException(
+                            "Generated scene source is missing: " + path);
+                    }
+
+                    byte[] bytes = File.ReadAllBytes(path);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+
+                stream.Position = 0;
+                byte[] hash = sha.ComputeHash(stream);
+                string fingerprint = BitConverter.ToString(hash)
+                    .Replace("-", string.Empty)
+                    .Substring(0, 16);
+                return GeneratedSceneMarkerPrefix + fingerprint;
+            }
         }
 
         private static Camera CreateCamera()

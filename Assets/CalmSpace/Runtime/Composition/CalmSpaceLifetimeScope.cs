@@ -9,6 +9,7 @@ using CalmSpace.Haptics;
 using CalmSpace.Levels;
 using CalmSpace.Monetization;
 using CalmSpace.UI;
+using CalmSpace.Workshop;
 using UnityEngine;
 using VContainer;
 using VContainer.Unity;
@@ -50,8 +51,19 @@ namespace CalmSpace.Core
         [SerializeField]
         private DemoDecorationCatalog _demoDecorationCatalog;
 
+        [SerializeField]
+        private LivingWorkshopCatalog _livingWorkshopCatalog;
+
+        [SerializeField]
+        private WorkshopTextCatalog _workshopTextCatalog;
+
         protected override void Configure(IContainerBuilder builder)
         {
+            if (builder.ApplicationOrigin == null)
+            {
+                builder.ApplicationOrigin = this;
+            }
+
             if (_levelCatalog == null)
             {
                 throw new InvalidOperationException(
@@ -77,9 +89,29 @@ namespace CalmSpace.Core
                     "CalmSpaceLifetimeScope.");
             }
 
+            LivingWorkshopCatalog runtimeWorkshop =
+                _livingWorkshopCatalog != null
+                    ? _livingWorkshopCatalog
+                    : ScriptableObject.CreateInstance<
+                        LivingWorkshopCatalog>();
+            WorkshopTextCatalog runtimeWorkshopText =
+                _workshopTextCatalog != null
+                    ? _workshopTextCatalog
+                    : ScriptableObject.CreateInstance<WorkshopTextCatalog>();
+            var workshopAvailability = new WorkshopRuntimeAvailability(
+                _levelCatalog,
+                runtimeWorkshop,
+                runtimeWorkshopText);
+
             builder.RegisterInstance(_levelCatalog);
             builder.RegisterInstance(_demoThemeCatalog);
             builder.RegisterInstance(_demoDecorationCatalog);
+            builder.RegisterInstance(runtimeWorkshop);
+            builder.RegisterInstance(runtimeWorkshopText);
+            builder.RegisterInstance(workshopAvailability);
+            builder.Register<WorkshopAnalyticsSessionState>(
+                _ => new WorkshopAnalyticsSessionState(),
+                Lifetime.Singleton);
 
             builder
                 .Register<PresentationActivityCoordinator>(
@@ -156,6 +188,35 @@ namespace CalmSpace.Core
                     Lifetime.Singleton)
                 .As<IDemoLocalizationService>();
 
+            builder.Register<WorkshopTextService>(
+                    resolver => new WorkshopTextService(
+                        runtimeWorkshopText,
+                        resolver.Resolve<IDemoLocalizationService>()),
+                    Lifetime.Singleton)
+                .As<IWorkshopTextService>();
+
+            builder.Register<AddressableWorkshopRoomLoader>(
+                    _ => new AddressableWorkshopRoomLoader(),
+                    Lifetime.Singleton)
+                .As<IWorkshopRoomLoader>();
+
+            builder.Register<WorkshopProgressProjector>(
+                    resolver => new WorkshopProgressProjector(
+                        _levelCatalog,
+                        runtimeWorkshop),
+                    Lifetime.Singleton)
+                .As<IWorkshopProgressProjector>();
+
+            builder.Register<WorkshopFlowCoordinator>(
+                    resolver => new WorkshopFlowCoordinator(
+                        _levelCatalog,
+                        runtimeWorkshop,
+                        resolver.Resolve<IDemoProgressStore>(),
+                        resolver.Resolve<IWorkshopProgressProjector>(),
+                        resolver.Resolve<WorkshopRuntimeAvailability>()),
+                    Lifetime.Singleton)
+                .As<IWorkshopFlowCoordinator>();
+
             builder.Register<ILevelFlowController>(
                 resolver =>
                     new AddressableLevelFlowController(
@@ -166,6 +227,10 @@ namespace CalmSpace.Core
                 Lifetime.Singleton);
 
             builder
+                .RegisterComponentInHierarchy<WorkshopHomeController>()
+                .As<IWorkshopHomeController>()
+                .As<IWorkshopHomeRecovery>();
+            builder
                 .RegisterComponentInHierarchy<
                     DemoExperienceController>()
                 .As<IDemoExperienceController>();
@@ -174,7 +239,8 @@ namespace CalmSpace.Core
                     new GameBootstrapper(
                         resolver.Resolve<IMonetizationManager>(),
                         resolver.Resolve<
-                            IDemoExperienceController>()),
+                            IDemoExperienceController>(),
+                        resolver.Resolve<IWorkshopHomeController>()),
                 Lifetime.Singleton);
         }
 

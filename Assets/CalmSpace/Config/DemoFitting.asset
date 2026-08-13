@@ -15,6 +15,6 @@ MonoBehaviour:
   _levelId: 01-soft-blocks
   _displayName: Soft Blocks
   _levelType: 3
-  _restorationChapterId:
+  _restorationChapterId: cozy-workshop
   _restorationStageIndex: 0
-  _restorationStageCount: 0
+  _restorationStageCount: 8

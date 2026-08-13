@@ -214,6 +214,14 @@ namespace CalmSpace.Cleaning
 
         public bool PaintFromScreenPoint(Vector2 screenPoint)
         {
+            return PaintFromScreenPoint(screenPoint, out _);
+        }
+
+        public bool PaintFromScreenPoint(
+            Vector2 screenPoint,
+            out Vector3 worldPosition)
+        {
+            worldPosition = default;
             if (!TryInitialize() ||
                 raycastCamera == null ||
                 cleanSurfaceCollider == null)
@@ -233,6 +241,7 @@ namespace CalmSpace.Cleaning
                 return false;
             }
 
+            worldPosition = hit.point;
             StampUv(hit.textureCoord);
             return true;
         }

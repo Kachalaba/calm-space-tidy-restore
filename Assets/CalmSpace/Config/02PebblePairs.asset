@@ -15,6 +15,6 @@ MonoBehaviour:
   _levelId: 02-pebble-pairs
   _displayName: Pebble Pairs
   _levelType: 0
-  _restorationChapterId:
-  _restorationStageIndex: 0
-  _restorationStageCount: 0
+  _restorationChapterId: cozy-workshop
+  _restorationStageIndex: 1
+  _restorationStageCount: 8

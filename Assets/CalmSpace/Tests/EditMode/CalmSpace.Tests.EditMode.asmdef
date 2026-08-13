@@ -5,7 +5,9 @@
     "CalmSpace.Runtime",
     "CalmSpace.Editor",
     "UniTask",
-    "Unity.Addressables"
+    "Unity.Addressables",
+    "Unity.Addressables.Editor",
+    "Unity.ResourceManager"
   ],
   "includePlatforms": [
     "Editor"

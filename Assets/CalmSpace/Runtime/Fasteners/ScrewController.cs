@@ -161,6 +161,7 @@ namespace CalmSpace.Fasteners
                  turn++)
             {
                 _hapticService?.PlayDragTick(_tickIntensity);
+                PlayTurnAudio();
             }
 
             if (result.IsComplete)
@@ -273,7 +274,23 @@ namespace CalmSpace.Fasteners
 
             try
             {
-                _audioService?.PlaySnap(transform.position);
+                _audioService.PlayCue(
+                    AsmrAudioCue.ScrewRelease,
+                    transform.position);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
+        }
+
+        private void PlayTurnAudio()
+        {
+            try
+            {
+                _audioService.PlayCue(
+                    AsmrAudioCue.ScrewTurn,
+                    transform.position);
             }
             catch (Exception exception)
             {

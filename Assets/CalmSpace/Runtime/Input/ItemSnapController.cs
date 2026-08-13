@@ -508,7 +508,9 @@ namespace CalmSpace.Input
 
             try
             {
-                _audioService?.PlaySnap(transform.position);
+                _audioService.PlayCue(
+                    AsmrAudioCue.Placement,
+                    transform.position);
             }
             catch (Exception exception)
             {

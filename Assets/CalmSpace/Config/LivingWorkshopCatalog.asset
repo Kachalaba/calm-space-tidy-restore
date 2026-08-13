@@ -1,0 +1,95 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1957ae47db4b6424e98895e6a269baaa, type: 3}
+  m_Name: LivingWorkshopCatalog
+  m_EditorClassIdentifier: 
+  _beats:
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.clear-passage
+    _stageIndex: 0
+    _titleTextKey: beat.clear-passage.title
+    _resultTextKey: beat.clear-passage.result
+    _zoneIndex: 0
+    _memoryId: 
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.pebble-shelf
+    _stageIndex: 1
+    _titleTextKey: beat.pebble-shelf.title
+    _resultTextKey: beat.pebble-shelf.result
+    _zoneIndex: 1
+    _memoryId: family.summer-trail-stones
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.tea-drawer
+    _stageIndex: 2
+    _titleTextKey: beat.tea-drawer.title
+    _resultTextKey: beat.tea-drawer.result
+    _zoneIndex: 2
+    _memoryId: 
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 1
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.paint-shelf
+    _stageIndex: 3
+    _titleTextKey: beat.paint-shelf.title
+    _resultTextKey: beat.paint-shelf.result
+    _zoneIndex: 3
+    _memoryId: 
+    _unlockedDecorSlotId: workbench-accent
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.fastener-tray
+    _stageIndex: 4
+    _titleTextKey: beat.fastener-tray.title
+    _resultTextKey: beat.fastener-tray.result
+    _zoneIndex: 4
+    _memoryId: family.fix-everything
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.warm-workbench
+    _stageIndex: 5
+    _titleTextKey: beat.warm-workbench.title
+    _resultTextKey: beat.warm-workbench.result
+    _zoneIndex: 5
+    _memoryId: 
+    _unlockedDecorSlotId: warm-light
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.cabinet-hinge
+    _stageIndex: 6
+    _titleTextKey: beat.cabinet-hinge.title
+    _resultTextKey: beat.cabinet-hinge.result
+    _zoneIndex: 6
+    _memoryId: 
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 0
+    _isFinale: 0
+  - _chapterId: cozy-workshop
+    _beatId: cozy-workshop.open-window
+    _stageIndex: 7
+    _titleTextKey: beat.open-window.title
+    _resultTextKey: beat.open-window.result
+    _zoneIndex: 7
+    _memoryId: family.open-windows
+    _unlockedDecorSlotId: 
+    _unlocksDailyCare: 0
+    _isFinale: 1

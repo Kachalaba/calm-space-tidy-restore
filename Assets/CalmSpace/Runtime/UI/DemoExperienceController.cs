@@ -6,6 +6,7 @@ using CalmSpace.Cleaning;
 using CalmSpace.Core;
 using CalmSpace.Demo;
 using CalmSpace.Levels;
+using CalmSpace.Workshop;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Events;
@@ -84,6 +85,12 @@ namespace CalmSpace.UI
         [SerializeField]
         private Button _languageButton;
 
+        [SerializeField]
+        private Button _retrySaveButton;
+
+        [SerializeField]
+        private Button _returnWithoutSavingButton;
+
         [Header("Copy")]
         [SerializeField]
         private Text _homeProgressText;
@@ -108,6 +115,12 @@ namespace CalmSpace.UI
 
         [SerializeField]
         private Text _languageButtonText;
+
+        [SerializeField]
+        private Text _retrySaveButtonText;
+
+        [SerializeField]
+        private Text _returnWithoutSavingButtonText;
 
         [SerializeField]
         private LocalizedTextBinding[] _localizedTexts =
@@ -166,9 +179,17 @@ namespace CalmSpace.UI
         private IDemoThemeService _themeService;
         private IDemoLocalizationService _localization;
         private IBackgroundMusicService _musicService;
+        private IAsmrAudioService _audioService;
         private IUndoHistory _undoHistory;
         private IProductAnalytics _analytics;
         private IMonotonicClock _clock;
+        private IWorkshopHomeController _workshopHomeController;
+        private IWorkshopHomeRecovery _workshopHomeRecovery;
+        private IWorkshopFlowCoordinator _workshopFlowCoordinator;
+        private IWorkshopTextService _workshopText;
+        private LivingWorkshopCatalog _livingWorkshopCatalog;
+        private WorkshopAnalyticsSessionState _workshopAnalyticsSession;
+        private WorkshopRuntimeAvailability _workshopAvailability;
 
         private readonly CancellationTokenSource _lifetimeCancellation =
             new CancellationTokenSource();
@@ -184,6 +205,20 @@ namespace CalmSpace.UI
         private int _lastCompletionReward;
         private int _levelUndoCount;
         private double _levelStartedAtSeconds;
+        private LevelLaunchSource _currentLaunchSource =
+            LevelLaunchSource.Catalog;
+        private string _pendingCompletionLevelId = string.Empty;
+        private int _pendingCompletionLevelIndex = -1;
+        private int _pendingCompletionReward;
+        private string _pendingCompletionBeatId = string.Empty;
+        private string _pendingCompletionMemoryId = string.Empty;
+        private string _pendingCompletionResultTextKey = string.Empty;
+        private string _pendingCompletionChapterId = string.Empty;
+        private bool _pendingCompletionIsFinale;
+        private bool _completionCuePlayed;
+        private ProfileMutationStatus _lastCompletionStatus =
+            ProfileMutationStatus.Invalid;
+        private bool _invalidCompletionLogged;
         private bool _eventsBound;
         private bool _initialized;
         private bool _initializing;
@@ -196,6 +231,9 @@ namespace CalmSpace.UI
 
         public int CurrentLevelIndex => _currentLevelIndex;
 
+        public ProfileMutationStatus LastCompletionStatus =>
+            _lastCompletionStatus;
+
         [Inject]
         public void Construct(
             ILevelFlowController levelFlow,
@@ -205,9 +243,17 @@ namespace CalmSpace.UI
             IDemoThemeService themeService,
             IDemoLocalizationService localization,
             IBackgroundMusicService musicService,
+            IAsmrAudioService audioService,
             IUndoHistory undoHistory,
             IProductAnalytics analytics,
-            IMonotonicClock clock)
+            IMonotonicClock clock,
+            IWorkshopHomeController workshopHomeController,
+            IWorkshopHomeRecovery workshopHomeRecovery,
+            IWorkshopFlowCoordinator workshopFlowCoordinator,
+            IWorkshopTextService workshopText,
+            LivingWorkshopCatalog livingWorkshopCatalog,
+            WorkshopAnalyticsSessionState workshopAnalyticsSession,
+            WorkshopRuntimeAvailability workshopAvailability)
         {
             _levelFlow = levelFlow ??
                 throw new ArgumentNullException(nameof(levelFlow));
@@ -224,12 +270,34 @@ namespace CalmSpace.UI
                 throw new ArgumentNullException(nameof(localization));
             _musicService = musicService ??
                 throw new ArgumentNullException(nameof(musicService));
+            _audioService = audioService ??
+                throw new ArgumentNullException(nameof(audioService));
             _undoHistory = undoHistory ??
                 throw new ArgumentNullException(nameof(undoHistory));
             _analytics = analytics ??
                 throw new ArgumentNullException(nameof(analytics));
             _clock = clock ??
                 throw new ArgumentNullException(nameof(clock));
+            _workshopHomeController = workshopHomeController ??
+                throw new ArgumentNullException(
+                    nameof(workshopHomeController));
+            _workshopHomeRecovery = workshopHomeRecovery ??
+                throw new ArgumentNullException(
+                    nameof(workshopHomeRecovery));
+            _workshopFlowCoordinator = workshopFlowCoordinator ??
+                throw new ArgumentNullException(
+                    nameof(workshopFlowCoordinator));
+            _workshopText = workshopText ??
+                throw new ArgumentNullException(nameof(workshopText));
+            _livingWorkshopCatalog = livingWorkshopCatalog ??
+                throw new ArgumentNullException(
+                    nameof(livingWorkshopCatalog));
+            _workshopAnalyticsSession = workshopAnalyticsSession ??
+                throw new ArgumentNullException(
+                    nameof(workshopAnalyticsSession));
+            _workshopAvailability = workshopAvailability ??
+                throw new ArgumentNullException(
+                    nameof(workshopAvailability));
         }
 
         private void Awake()
@@ -278,6 +346,7 @@ namespace CalmSpace.UI
                 RefreshLevelButtons();
                 RefreshDecorationUi();
                 RefreshMusicUi(_musicService.IsEnabled);
+                SetCompletionRecoveryVisible(false);
 
                 if (_levelFlow.CurrentLevel != null)
                 {
@@ -324,50 +393,125 @@ namespace CalmSpace.UI
                 return UniTask.FromResult(false);
             }
 
-            var recommended =
-                DemoProgressRules.GetRecommendedLevel(
-                    _progressStore.Current,
-                    _levelCatalog.Count);
-            return PlayLevelAsync(recommended, cancellationToken);
+            WorkshopRecommendedAction? action =
+                _workshopFlowCoordinator.GetRecommendedAction();
+            if (action.HasValue)
+            {
+                return _workshopFlowCoordinator.TryCreateLaunchRequest(
+                        action.Value,
+                        out LevelLaunchRequest request)
+                    ? PlayLevelAsync(request, cancellationToken)
+                    : UniTask.FromResult(false);
+            }
+
+            int recommended = DemoProgressRules.GetRecommendedLevel(
+                _progressStore.Current,
+                _levelCatalog.Count);
+            return recommended >= 0
+                ? PlayLevelAsync(recommended, cancellationToken)
+                : UniTask.FromResult(false);
         }
 
-        public async UniTask<bool> PlayLevelAsync(
+        public UniTask<bool> PlayLevelAsync(
             int levelIndex,
             CancellationToken cancellationToken = default)
         {
-            if (!CanNavigate() ||
-                !_progressStore.IsLevelUnlocked(levelIndex) ||
-                !_levelCatalog.TryGetEntry(
+            if (!_levelCatalog.TryGetEntry(
                     levelIndex,
-                    out var entry))
+                    out LevelCatalogEntry entry))
+            {
+                return UniTask.FromResult(false);
+            }
+
+            return PlayLevelAsync(
+                new LevelLaunchRequest(
+                    entry.Definition.LevelId,
+                    levelIndex,
+                    LevelLaunchSource.Catalog,
+                    string.Empty,
+                    string.Empty),
+                cancellationToken);
+        }
+
+        public async UniTask<bool> PlayLevelAsync(
+            LevelLaunchRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!CanNavigate() ||
+                !_progressStore.IsLevelUnlocked(request.LevelIndex) ||
+                !_levelCatalog.TryGetEntry(
+                    request.LevelIndex,
+                    out LevelCatalogEntry entry) ||
+                !string.Equals(
+                    entry.Definition.LevelId,
+                    request.LevelId,
+                    StringComparison.Ordinal) ||
+                !Enum.IsDefined(
+                    typeof(LevelLaunchSource),
+                    request.Source))
             {
                 return false;
             }
 
             BeginNavigation(true);
+            bool restoredWorkshop = false;
             try
             {
                 await _levelTransitionCurtain.FadeToOpaqueAsync(
                     cancellationToken);
-                return await LoadLevelCoreAsync(
+                bool loaded = await LoadLevelCoreAsync(
                     entry.Definition.LevelId,
-                    levelIndex,
+                    request.LevelIndex,
                     false,
+                    request.Source,
                     cancellationToken);
+                if (!loaded)
+                {
+                    restoredWorkshop = true;
+                    await PrepareWorkshopRecoveryAsync(
+                        WorkshopHomeEntryReason.ReturnFromLevel);
+                    ShowLoadRetry(request);
+                }
+                else
+                {
+                    _workshopHomeController.NotifyHidden();
+                }
+
+                return loaded;
             }
             catch (OperationCanceledException)
             {
+                RestorePresentationAfterInterruptedLoad();
+                restoredWorkshop = _activeScreen == _homeScreen;
+                if (restoredWorkshop)
+                {
+                    await PrepareWorkshopRecoveryAsync(
+                        WorkshopHomeEntryReason.ReturnFromLevel);
+                }
                 return false;
             }
             catch (Exception exception)
             {
                 Debug.LogException(exception, this);
+                RestorePresentationAfterInterruptedLoad();
+                restoredWorkshop = _activeScreen == _homeScreen;
+                if (restoredWorkshop)
+                {
+                    await PrepareWorkshopRecoveryAsync(
+                        WorkshopHomeEntryReason.ReturnFromLevel);
+                    ShowLoadRetry(request);
+                }
                 return false;
             }
             finally
             {
                 await RevealAfterLevelTransitionAsync();
                 EndNavigation();
+                if (restoredWorkshop && !_destroying)
+                {
+                    await NotifyWorkshopVisibleRecoveryAsync(
+                        WorkshopHomeEntryReason.ReturnFromLevel);
+                }
             }
         }
 
@@ -379,51 +523,22 @@ namespace CalmSpace.UI
                 return false;
             }
 
-            BeginNavigation(true);
-            try
-            {
-                await _levelTransitionCurtain.FadeToOpaqueAsync(
-                    cancellationToken);
-                var nextIndex = _currentLevelIndex + 1;
-                if (nextIndex >= _levelCatalog.Count)
-                {
-                    await ReturnHomeCoreAsync(
-                        cancellationToken,
-                        true);
-                    return true;
-                }
-
-                if (!_progressStore.IsLevelUnlocked(nextIndex) ||
-                    !_levelCatalog.TryGetEntry(
-                        nextIndex,
-                        out var entry))
-                {
-                    return false;
-                }
-
-                return await LoadLevelCoreAsync(
-                    entry.Definition.LevelId,
-                    nextIndex,
-                    true,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                return false;
-            }
-            catch (Exception exception)
-            {
-                Debug.LogException(exception, this);
-                return false;
-            }
-            finally
-            {
-                await RevealAfterLevelTransitionAsync();
-                EndNavigation();
-            }
+            await ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                cancellationToken);
+            return _currentLevelIndex < 0;
         }
 
         public async UniTask ReturnHomeAsync(
+            CancellationToken cancellationToken = default)
+        {
+            await ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ExplicitWorkshopView,
+                cancellationToken);
+        }
+
+        public async UniTask ReturnToWorkshopAsync(
+            WorkshopHomeEntryReason reason,
             CancellationToken cancellationToken = default)
         {
             if (!CanNavigate())
@@ -432,6 +547,7 @@ namespace CalmSpace.UI
             }
 
             BeginNavigation(true);
+            bool restoredWorkshop = false;
             try
             {
                 await _levelTransitionCurtain.FadeToOpaqueAsync(
@@ -439,19 +555,32 @@ namespace CalmSpace.UI
                 await ReturnHomeCoreAsync(
                     cancellationToken,
                     true);
+                await _workshopHomeController.PrepareEntryAsync(
+                    reason,
+                    cancellationToken);
+                restoredWorkshop = true;
             }
             catch (OperationCanceledException)
             {
-                // A scene shutdown cancels the visual transition.
+                restoredWorkshop =
+                    await RecoverInterruptedReturnAsync(reason);
             }
             catch (Exception exception)
             {
                 Debug.LogException(exception, this);
+                restoredWorkshop =
+                    await RecoverInterruptedReturnAsync(reason);
             }
             finally
             {
                 await RevealAfterLevelTransitionAsync();
                 EndNavigation();
+                if (restoredWorkshop &&
+                    _activeScreen == _homeScreen &&
+                    !_destroying)
+                {
+                    await NotifyWorkshopVisibleRecoveryAsync(reason);
+                }
             }
         }
 
@@ -459,6 +588,7 @@ namespace CalmSpace.UI
             string levelId,
             int requestedIndex,
             bool loadSequentially,
+            LevelLaunchSource launchSource,
             CancellationToken cancellationToken)
         {
             UnbindLevel();
@@ -496,6 +626,7 @@ namespace CalmSpace.UI
             }
 
             _currentLevelIndex = _levelFlow.CurrentLevelIndex;
+            _currentLaunchSource = launchSource;
             BindLevel(_levelFlow.CurrentLevel);
             _levelUndoCount = 0;
             _levelStartedAtSeconds = _clock.NowSeconds;
@@ -504,7 +635,9 @@ namespace CalmSpace.UI
                     _boundLevel.Definition,
                     _currentLevelIndex,
                     _progressStore.Current.CozyTokens,
-                    _levelCatalog.RestorationMetadataValid));
+                    launchSource,
+                    HasValidRestorationChapter(
+                        _boundLevel.Definition)));
             ApplyCurrentThemeToLevel();
             RefreshHud(
                 _boundLevel.ProgressCurrent,
@@ -542,6 +675,43 @@ namespace CalmSpace.UI
                 RefreshCleaningProgress(
                     _boundCleaner.CleanedFraction);
             }
+
+            SetActiveScreenBehindCurtain(_hudScreen);
+        }
+
+        private async UniTask<bool> RecoverInterruptedReturnAsync(
+            WorkshopHomeEntryReason reason)
+        {
+            LevelBase current = _levelFlow.CurrentLevel;
+            if (current != null)
+            {
+                _currentLevelIndex = _levelFlow.CurrentLevelIndex;
+                BindLevel(current);
+                ApplyCurrentThemeToLevel();
+                RefreshHud(
+                    current.ProgressCurrent,
+                    current.ProgressTotal);
+                if (_boundCleaner != null)
+                {
+                    RefreshCleaningProgress(
+                        _boundCleaner.CleanedFraction);
+                }
+
+                SetActiveScreenBehindCurtain(_hudScreen);
+                return false;
+            }
+
+            UnbindLevel();
+            _currentLevelIndex = -1;
+            _levelUndoCount = 0;
+            _levelStartedAtSeconds = 0d;
+            _levelThemeApplicator?.ClearCurrentLevel();
+            RefreshProgressUi();
+            RefreshLevelButtons();
+            RefreshDecorationUi();
+            SetActiveScreenBehindCurtain(_homeScreen);
+            await PrepareWorkshopRecoveryAsync(reason);
+            return true;
         }
 
         private async UniTask ReturnHomeCoreAsync(
@@ -591,7 +761,8 @@ namespace CalmSpace.UI
                     _levelUndoCount,
                     _boundLevel.ProgressCurrent,
                     _boundLevel.ProgressTotal,
-                    _levelCatalog.RestorationMetadataValid));
+                    HasValidRestorationChapter(
+                        _boundLevel.Definition)));
         }
 
         private double GetCurrentLevelDurationSeconds()
@@ -626,6 +797,7 @@ namespace CalmSpace.UI
                 await ShowScreenAsync(
                     _levelSelectScreen,
                     cancellationToken);
+                _workshopHomeController.NotifyHidden();
             }
             catch (OperationCanceledException)
             {
@@ -634,32 +806,20 @@ namespace CalmSpace.UI
             finally
             {
                 EndNavigation();
+                if (_activeScreen == _homeScreen && !_destroying)
+                {
+                    await NotifyWorkshopVisibleRecoveryAsync(
+                        WorkshopHomeEntryReason.CatalogBack);
+                }
             }
         }
 
         private async UniTask ShowHomeFromMenuAsync(
             CancellationToken cancellationToken)
         {
-            if (!CanNavigate())
-            {
-                return;
-            }
-
-            BeginNavigation(false);
-            try
-            {
-                await ShowScreenAsync(
-                    _homeScreen,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected while the scene is closing.
-            }
-            finally
-            {
-                EndNavigation();
-            }
+            await ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.CatalogBack,
+                cancellationToken);
         }
 
         private async UniTask ShowScreenAsync(
@@ -730,6 +890,7 @@ namespace CalmSpace.UI
         {
             UnbindLevel();
             _boundLevel = level;
+            _completionCuePlayed = false;
             if (_boundLevel == null)
             {
                 return;
@@ -869,21 +1030,133 @@ namespace CalmSpace.UI
                 return;
             }
 
+            _pendingCompletionLevelId = level.Definition.LevelId;
+            _pendingCompletionLevelIndex = _currentLevelIndex;
+            _pendingCompletionReward =
+                _decorationCatalog.CompletionReward;
+            CapturePendingWorkshopBeat();
+            CompleteCapturedLevel();
+        }
+
+        /// <summary>
+        /// Prefers the authored result line for the restored beat, e.g. "The
+        /// way to the workbench is clear." It is already localized in every
+        /// shipped language, so a missing catalog is the only reason to fall
+        /// back to the generic completion sentence.
+        /// </summary>
+        private string ResolveCompletionBody()
+        {
+            if (!string.IsNullOrEmpty(_pendingCompletionResultTextKey) &&
+                _workshopAvailability != null &&
+                _workshopAvailability.TextAvailable &&
+                _workshopText != null)
+            {
+                string authored =
+                    _workshopText.Get(_pendingCompletionResultTextKey);
+                if (!string.IsNullOrWhiteSpace(authored) &&
+                    !string.Equals(
+                        authored,
+                        _pendingCompletionResultTextKey,
+                        StringComparison.Ordinal))
+                {
+                    return authored;
+                }
+            }
+
+            return _localization.FormatCompletionBody(
+                _boundLevel.Definition,
+                HasValidRestorationChapter(_boundLevel.Definition));
+        }
+
+        private void CapturePendingWorkshopBeat()
+        {
+            _pendingCompletionBeatId = string.Empty;
+            _pendingCompletionMemoryId = string.Empty;
+            _pendingCompletionChapterId = string.Empty;
+            _pendingCompletionResultTextKey = string.Empty;
+            _pendingCompletionIsFinale = false;
+            if (!_workshopAvailability.HomeMetaAvailable ||
+                _livingWorkshopCatalog == null ||
+                !_levelCatalog.TryGetRestorationStage(
+                    _pendingCompletionLevelIndex,
+                    out RestorationStageInfo stage) ||
+                !_livingWorkshopCatalog.TryFindBeat(
+                    stage.ChapterId,
+                    stage.StageIndex,
+                    out WorkshopBeatDefinition beat))
+            {
+                return;
+            }
+
+            _pendingCompletionBeatId = beat.BeatId;
+            _pendingCompletionMemoryId = beat.MemoryId;
+            _pendingCompletionChapterId = beat.ChapterId;
+            _pendingCompletionResultTextKey = beat.ResultTextKey;
+            _pendingCompletionIsFinale = beat.IsFinale;
+        }
+
+        private void CompleteCapturedLevel()
+        {
+            if (_destroying ||
+                _boundLevel == null ||
+                string.IsNullOrEmpty(_pendingCompletionLevelId) ||
+                _pendingCompletionLevelIndex < 0)
+            {
+                return;
+            }
+
+            ProfileMutationResult<LevelCompletionMutation> result =
+                _workshopFlowCoordinator.CompleteLevel(
+                    _pendingCompletionLevelId,
+                    _pendingCompletionLevelIndex,
+                    _pendingCompletionReward);
+            _lastCompletionStatus = result.Status;
+            switch (result.Status)
+            {
+                case ProfileMutationStatus.Invalid:
+                    if (!_invalidCompletionLogged)
+                    {
+                        _invalidCompletionLogged = true;
+                        Debug.LogError(
+                            "Calm Space ignored an invalid workshop completion.",
+                            this);
+                    }
+                    return;
+                case ProfileMutationStatus.PersistFailed:
+                    ShowPersistFailure();
+                    return;
+                case ProfileMutationStatus.Applied:
+                case ProfileMutationStatus.AlreadyApplied:
+                    PresentSuccessfulCompletion(result);
+                    return;
+            }
+        }
+
+        private void PresentSuccessfulCompletion(
+            ProfileMutationResult<LevelCompletionMutation> result)
+        {
+            LevelCompletionMutation completion = result.Payload;
             _lastCompletionReward = Mathf.Max(
                 0,
-                _progressStore.CompleteLevelAndReward(
-                    _currentLevelIndex,
-                    _decorationCatalog.CompletionReward));
+                completion.RewardAmount);
+            if (!_completionCuePlayed)
+            {
+                _completionCuePlayed = true;
+                PlayAudioCue(AsmrAudioCue.LevelComplete);
+            }
+            SetCompletionRecoveryVisible(false);
             _analytics.Track(
                 ProductAnalyticsEvent.LevelCompleted(
-                    level.Definition,
-                    _currentLevelIndex,
+                    _boundLevel.Definition,
+                    _pendingCompletionLevelIndex,
                     GetCurrentLevelDurationSeconds(),
                     _levelUndoCount,
                     _lastCompletionReward,
-                    _progressStore.Current.CozyTokens,
-                    _lastCompletionReward > 0,
-                    _levelCatalog.RestorationMetadataValid));
+                    completion.TokenBalance,
+                    completion.FirstCompletion,
+                    HasValidRestorationChapter(
+                        _boundLevel.Definition)));
+            TrackWorkshopCompletionMilestones(result, completion);
             RefreshProgressUi();
             RefreshLevelButtons();
             RefreshDecorationUi();
@@ -894,7 +1167,7 @@ namespace CalmSpace.UI
                 DemoTextKey titleKey =
                     DemoTextKey.CompletionTitle;
                 if (_levelCatalog.TryGetRestorationStage(
-                        _currentLevelIndex,
+                        _pendingCompletionLevelIndex,
                         out var stage))
                 {
                     titleKey =
@@ -910,39 +1183,93 @@ namespace CalmSpace.UI
 
             if (_completionBodyText != null)
             {
-                _completionBodyText.text =
-                    _localization.FormatCompletionBody(
-                        level.Definition,
-                        _levelCatalog.RestorationMetadataValid);
+                // The authored beat line is the story payoff for restoring
+                // this zone; the generic progress sentence is the fallback
+                // when workshop text is unavailable or the level is not part
+                // of a chapter.
+                _completionBodyText.text = ResolveCompletionBody();
             }
 
-            bool hasNext =
-                _currentLevelIndex + 1 < _levelCatalog.Count;
-            bool continuesRestoration =
-                hasNext &&
-                _levelCatalog.IsRestorationContinuation(
-                    _currentLevelIndex,
-                    _currentLevelIndex + 1);
             if (_completionHomeButton != null)
             {
-                _completionHomeButton.gameObject.SetActive(hasNext);
+                _completionHomeButton.gameObject.SetActive(false);
             }
 
+            _nextButton?.gameObject.SetActive(true);
             if (_nextButtonText != null)
             {
-                _nextButtonText.text =
-                    continuesRestoration
-                        ? _localization.Get(
-                            DemoTextKey.ContinueRestoration)
-                        : hasNext
-                            ? _localization.Get(
-                                DemoTextKey.NextSpace)
-                        : _localization.Get(
-                            DemoTextKey.BackHome);
+                _nextButtonText.text = _localization.Get(
+                    DemoTextKey.BackHome);
             }
 
             PresentCompletionAsync(
                 _lifetimeCancellation.Token).Forget();
+        }
+
+        private void TrackWorkshopCompletionMilestones(
+            ProfileMutationResult<LevelCompletionMutation> result,
+            LevelCompletionMutation completion)
+        {
+            if (result.Status != ProfileMutationStatus.Applied ||
+                !completion.FirstCompletion)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(_pendingCompletionMemoryId) &&
+                _workshopAnalyticsSession.TryAdmitMemoryUnlocked(
+                    _pendingCompletionMemoryId,
+                    result.Status))
+            {
+                _analytics.Track(ProductAnalyticsEvent.MemoryUnlocked(
+                    _pendingCompletionBeatId,
+                    _pendingCompletionMemoryId));
+            }
+
+            if (_pendingCompletionIsFinale &&
+                _workshopAnalyticsSession.TryAdmitChapterCompleted(
+                    _pendingCompletionChapterId,
+                    result.Status))
+            {
+                _analytics.Track(ProductAnalyticsEvent.ChapterCompleted(
+                    _pendingCompletionChapterId,
+                    _pendingCompletionBeatId));
+            }
+        }
+
+        private void ShowPersistFailure()
+        {
+            _lastCompletionReward = 0;
+            RefreshCompletionRewardUi();
+            SetCompletionRecoveryVisible(true);
+            _nextButton?.gameObject.SetActive(false);
+            _completionHomeButton?.gameObject.SetActive(false);
+            PresentCompletionAsync(
+                _lifetimeCancellation.Token).Forget();
+        }
+
+        private void SetCompletionRecoveryVisible(bool visible)
+        {
+            if (_retrySaveButton != null)
+            {
+                _retrySaveButton.gameObject.SetActive(visible);
+            }
+
+            if (_returnWithoutSavingButton != null)
+            {
+                _returnWithoutSavingButton.gameObject.SetActive(visible);
+            }
+
+            if (_retrySaveButtonText != null)
+            {
+                _retrySaveButtonText.text = _workshopText.Get("save.retry");
+            }
+
+            if (_returnWithoutSavingButtonText != null)
+            {
+                _returnWithoutSavingButtonText.text =
+                    _workshopText.Get("save.return-without");
+            }
         }
 
         private async UniTask PresentCompletionAsync(
@@ -989,12 +1316,6 @@ namespace CalmSpace.UI
 
         private void HandleMusicEnabledChanged(bool enabled)
         {
-            if (_progressStore.IsInitialized &&
-                _progressStore.Current.MusicEnabled != enabled)
-            {
-                _progressStore.SetMusicEnabled(enabled);
-            }
-
             RefreshMusicUi(enabled);
             if (_initialized)
             {
@@ -1200,7 +1521,8 @@ namespace CalmSpace.UI
                 _hudLevelNameText.text =
                     _localization.FormatRestorationStageTitle(
                         _boundLevel?.Definition,
-                        _levelCatalog.RestorationMetadataValid);
+                        HasValidRestorationChapter(
+                            _boundLevel?.Definition));
             }
 
             if (_hudProgressText == null)
@@ -1306,7 +1628,8 @@ namespace CalmSpace.UI
                     index + 1,
                     _localization.FormatRestorationStageTitle(
                         entry.Definition,
-                        _levelCatalog.RestorationMetadataValid));
+                        HasValidRestorationChapter(
+                            entry.Definition)));
                 binding.SetState(
                     unlocked,
                     completed,
@@ -1437,6 +1760,13 @@ namespace CalmSpace.UI
             SetButtonInteractable(_nextButton, enabled);
             SetButtonInteractable(_musicButton, enabled);
             SetButtonInteractable(_languageButton, enabled);
+            bool recoveryEnabled = enabled &&
+                _lastCompletionStatus ==
+                    ProfileMutationStatus.PersistFailed;
+            SetButtonInteractable(_retrySaveButton, recoveryEnabled);
+            SetButtonInteractable(
+                _returnWithoutSavingButton,
+                recoveryEnabled);
             RefreshLevelButtons();
             RefreshThemeButtons();
             RefreshDecorationUi();
@@ -1453,6 +1783,11 @@ namespace CalmSpace.UI
         private void EndNavigation()
         {
             _isNavigating = false;
+            if (_destroying)
+            {
+                return;
+            }
+
             RefreshNavigationAvailability();
             RefreshRoomVisibility();
         }
@@ -1474,6 +1809,56 @@ namespace CalmSpace.UI
             {
                 // Expected while the scene is closing.
             }
+        }
+
+        private async UniTask PrepareWorkshopRecoveryAsync(
+            WorkshopHomeEntryReason reason)
+        {
+            if (_destroying)
+            {
+                return;
+            }
+
+            try
+            {
+                await _workshopHomeController.PrepareEntryAsync(
+                    reason,
+                    _lifetimeCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Scene shutdown owns cancellation; screen recovery is
+                // already synchronous and remains on the workshop.
+            }
+        }
+
+        private async UniTask NotifyWorkshopVisibleRecoveryAsync(
+            WorkshopHomeEntryReason reason)
+        {
+            if (_destroying)
+            {
+                return;
+            }
+
+            try
+            {
+                await _workshopHomeController.NotifyVisibleAsync(
+                    reason,
+                    _lifetimeCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected while the scene is closing.
+            }
+        }
+
+        private void ShowLoadRetry(LevelLaunchRequest request)
+        {
+            _workshopHomeRecovery.ShowLoadFailure(
+                request,
+                retry => PlayLevelAsync(
+                    retry,
+                    _lifetimeCancellation.Token).Forget());
         }
 
         private void SetActiveScreenBehindCurtain(
@@ -1529,6 +1914,10 @@ namespace CalmSpace.UI
                 HandleMusicPressed);
             _languageButton.onClick.AddListener(
                 HandleLanguagePressed);
+            _retrySaveButton.onClick.AddListener(
+                HandleRetrySavePressed);
+            _returnWithoutSavingButton.onClick.AddListener(
+                HandleReturnWithoutSavingPressed);
 
             _levelButtonActions =
                 new UnityAction[_levelButtons.Length];
@@ -1583,6 +1972,10 @@ namespace CalmSpace.UI
                 HandleRoomDecorationPlacementRequested;
             _undoHistory.AvailabilityChanged +=
                 HandleUndoAvailabilityChanged;
+            _workshopHomeController.LevelLaunchRequested +=
+                HandleWorkshopLevelLaunchRequested;
+            _workshopHomeController.CatalogRequested +=
+                HandleWorkshopCatalogRequested;
             _eventsBound = true;
         }
 
@@ -1613,6 +2006,10 @@ namespace CalmSpace.UI
                 HandleMusicPressed);
             _languageButton?.onClick.RemoveListener(
                 HandleLanguagePressed);
+            _retrySaveButton?.onClick.RemoveListener(
+                HandleRetrySavePressed);
+            _returnWithoutSavingButton?.onClick.RemoveListener(
+                HandleReturnWithoutSavingPressed);
 
             if (_levelButtonActions != null &&
                 _levelButtons != null)
@@ -1704,11 +2101,25 @@ namespace CalmSpace.UI
                     HandleUndoAvailabilityChanged;
             }
 
+            if (_workshopHomeController != null)
+            {
+                _workshopHomeController.LevelLaunchRequested -=
+                    HandleWorkshopLevelLaunchRequested;
+                _workshopHomeController.CatalogRequested -=
+                    HandleWorkshopCatalogRequested;
+            }
+
             _eventsBound = false;
         }
 
         private void HandlePlayPressed()
         {
+            if (!CanNavigate() || !HasRecommendedLevelAction())
+            {
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
             PlayRecommendedLevelAsync(
                 _lifetimeCancellation.Token).Forget();
         }
@@ -1733,7 +2144,51 @@ namespace CalmSpace.UI
 
         private void HandleNextPressed()
         {
-            LoadNextLevelAsync(
+            if (!CanNavigate())
+            {
+                return;
+            }
+
+            PlayAudioCue(AsmrAudioCue.UiTap);
+            ReturnToWorkshopAsync(
+                WorkshopHomeEntryReason.ReturnFromLevel,
+                _lifetimeCancellation.Token).Forget();
+        }
+
+        private void HandleRetrySavePressed()
+        {
+            if (CanNavigate() &&
+                _lastCompletionStatus ==
+                    ProfileMutationStatus.PersistFailed)
+            {
+                PlayAudioCue(AsmrAudioCue.UiTap);
+                CompleteCapturedLevel();
+            }
+        }
+
+        private void HandleReturnWithoutSavingPressed()
+        {
+            if (CanNavigate() &&
+                _lastCompletionStatus ==
+                    ProfileMutationStatus.PersistFailed)
+            {
+                ReturnToWorkshopAsync(
+                    WorkshopHomeEntryReason.ReturnFromLevel,
+                    _lifetimeCancellation.Token).Forget();
+            }
+        }
+
+        private void HandleWorkshopLevelLaunchRequested(
+            LevelLaunchRequest request)
+        {
+            PlayLevelAsync(
+                request,
+                _lifetimeCancellation.Token).Forget();
+        }
+
+        private void HandleWorkshopCatalogRequested()
+        {
+            ShowLevelSelectAsync(
                 _lifetimeCancellation.Token).Forget();
         }
 
@@ -1752,7 +2207,8 @@ namespace CalmSpace.UI
                             _levelUndoCount,
                             _boundLevel.ProgressCurrent,
                             _boundLevel.ProgressTotal,
-                            _levelCatalog.RestorationMetadataValid));
+                            HasValidRestorationChapter(
+                                _boundLevel.Definition)));
                 }
 
                 RefreshNavigationAvailability();
@@ -1764,11 +2220,30 @@ namespace CalmSpace.UI
             RefreshNavigationAvailability();
         }
 
+        private bool HasValidRestorationChapter(
+            LevelDefinition definition)
+        {
+            return
+                definition != null &&
+                _levelCatalog != null &&
+                _levelCatalog.IsRestorationChapterValid(
+                    definition.RestorationChapterId);
+        }
+
         private void HandleMusicPressed()
         {
-            if (CanNavigate())
+            if (!CanNavigate() ||
+                !_progressStore.IsInitialized)
             {
-                _musicService.Toggle();
+                return;
+            }
+
+            bool enabled = !_musicService.IsEnabled;
+            ProfileMutationResult<PreferenceMutation> result =
+                _progressStore.SetMusicEnabled(enabled);
+            if (result.IsSuccess)
+            {
+                _musicService.SetEnabled(enabled);
             }
         }
 
@@ -1868,6 +2343,37 @@ namespace CalmSpace.UI
             }
         }
 
+        private bool HasRecommendedLevelAction()
+        {
+            WorkshopRecommendedAction? action =
+                _workshopFlowCoordinator.GetRecommendedAction();
+            if (action.HasValue)
+            {
+                return _workshopFlowCoordinator.TryCreateLaunchRequest(
+                    action.Value,
+                    out _);
+            }
+
+            int recommended = DemoProgressRules.GetRecommendedLevel(
+                _progressStore.Current,
+                _levelCatalog.Count);
+            return recommended >= 0 &&
+                _progressStore.IsLevelUnlocked(recommended) &&
+                _levelCatalog.TryGetEntry(recommended, out _);
+        }
+
+        private void PlayAudioCue(AsmrAudioCue cue)
+        {
+            try
+            {
+                _audioService.PlayCue(cue);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, this);
+            }
+        }
+
         private void ValidateDependencies()
         {
             if (_levelFlow == null ||
@@ -1877,9 +2383,17 @@ namespace CalmSpace.UI
                 _themeService == null ||
                 _localization == null ||
                 _musicService == null ||
+                _audioService == null ||
                 _undoHistory == null ||
                 _analytics == null ||
-                _clock == null)
+                _clock == null ||
+                _workshopHomeController == null ||
+                _workshopHomeRecovery == null ||
+                _workshopFlowCoordinator == null ||
+                _workshopText == null ||
+                _livingWorkshopCatalog == null ||
+                _workshopAnalyticsSession == null ||
+                _workshopAvailability == null)
             {
                 throw new InvalidOperationException(
                     "DemoExperienceController was not injected.");
@@ -1904,7 +2418,11 @@ namespace CalmSpace.UI
                 _nextButton == null ||
                 _musicButton == null ||
                 _languageButton == null ||
+                _retrySaveButton == null ||
+                _returnWithoutSavingButton == null ||
                 _languageButtonText == null ||
+                _retrySaveButtonText == null ||
+                _returnWithoutSavingButtonText == null ||
                 _roomCurrencyText == null ||
                 _completionRewardText == null ||
                 _roomPresenter == null ||
@@ -1943,10 +2461,12 @@ namespace CalmSpace.UI
             }
 
             if (_themeButtons == null ||
-                _themeButtons.Length != ExpectedThemeCount)
+                (_themeButtons.Length != 0 &&
+                 _themeButtons.Length != ExpectedThemeCount))
             {
                 throw new InvalidOperationException(
-                    "Exactly three theme button bindings are required.");
+                    "Theme bindings must be hidden or provide exactly " +
+                    "three configured controls.");
             }
 
             for (var index = 0;
@@ -1962,8 +2482,9 @@ namespace CalmSpace.UI
             }
 
             if (_decorationButtons == null ||
-                _decorationButtons.Length !=
-                    _decorationCatalog.Count)
+                (_decorationButtons.Length != 0 &&
+                 _decorationButtons.Length !=
+                    _decorationCatalog.Count))
             {
                 throw new InvalidOperationException(
                     "The home room needs one decoration button binding per " +
@@ -1987,8 +2508,9 @@ namespace CalmSpace.UI
             }
 
             if (_roomPresenter.RoomRoot == null ||
-                _roomPresenter.DecorationCount !=
-                    _decorationCatalog.Count)
+                (_roomPresenter.DecorationCount != 0 &&
+                 _roomPresenter.DecorationCount !=
+                    _decorationCatalog.Count))
             {
                 throw new InvalidOperationException(
                     "The home room presenter must provide one visual per " +
@@ -2102,6 +2624,7 @@ namespace CalmSpace.UI
             }
 
             if (_themeButtons != null &&
+                _themeButtons.Length != 0 &&
                 _themeButtons.Length != ExpectedThemeCount)
             {
                 Debug.LogWarning(
@@ -2109,11 +2632,10 @@ namespace CalmSpace.UI
                     this);
             }
 
-            if (_decorationButtons == null ||
-                _decorationButtons.Length == 0)
+            if (_decorationButtons == null)
             {
                 Debug.LogWarning(
-                    "Calm Space needs home room decoration buttons.",
+                    "Calm Space decoration bindings must be an array.",
                     this);
             }
         }

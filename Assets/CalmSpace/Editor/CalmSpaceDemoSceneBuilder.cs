@@ -244,7 +244,11 @@ namespace CalmSpace.Editor
                 out Text completionTitleText,
                 out Text completionBodyText,
                 out Text completionRewardText,
-                out Text nextButtonText);
+                out Text nextButtonText,
+                out Button retrySaveButton,
+                out Button returnWithoutSavingButton,
+                out Text retrySaveButtonText,
+                out Text returnWithoutSavingButtonText);
 
             CanvasGroup loading =
                 CreateScreen(uiRoot.transform, "Loading");
@@ -323,6 +327,14 @@ namespace CalmSpace.Editor
                 languageButton);
             SetObjectReference(
                 experience,
+                "_retrySaveButton",
+                retrySaveButton);
+            SetObjectReference(
+                experience,
+                "_returnWithoutSavingButton",
+                returnWithoutSavingButton);
+            SetObjectReference(
+                experience,
                 "_homeProgressText",
                 homeProgressText);
             SetObjectReference(
@@ -361,6 +373,14 @@ namespace CalmSpace.Editor
                 experience,
                 "_languageButtonText",
                 languageButtonText);
+            SetObjectReference(
+                experience,
+                "_retrySaveButtonText",
+                retrySaveButtonText);
+            SetObjectReference(
+                experience,
+                "_returnWithoutSavingButtonText",
+                returnWithoutSavingButtonText);
             SetObjectReference(
                 experience,
                 "_levelThemeApplicator",
@@ -435,6 +455,34 @@ namespace CalmSpace.Editor
                 decorationBindings,
             out Image backgroundWash)
         {
+            if (CalmSpaceWorkshopSceneBuilder.TryBuildHome(
+                    screen,
+                    rounded,
+                    font,
+                    roomPresenter,
+                    out WorkshopHomeBuildResult workshopHome))
+            {
+                playButton = workshopHome.LegacyPlay;
+                levelsButton = workshopHome.LegacyCatalog;
+                musicButton = workshopHome.LegacyMusic;
+                languageButton = workshopHome.LegacyLanguage;
+                progressText = workshopHome.Progress;
+                currencyText = workshopHome.Currency;
+                musicText = workshopHome.LegacyMusicText;
+                languageText = workshopHome.LegacyLanguageText;
+                musicStateImage = workshopHome.MusicState;
+                backgroundWash = workshopHome.BackgroundWash;
+                themeBindings = Array.Empty<
+                    DemoExperienceController.ThemeButtonBinding>();
+                decorationBindings = Array.Empty<
+                    DemoExperienceController.DecorationButtonBinding>();
+                primaryTexts.AddRange(workshopHome.PrimaryTexts);
+                secondaryTexts.AddRange(workshopHome.SecondaryTexts);
+                panelImages.AddRange(workshopHome.Panels);
+                accentImages.AddRange(workshopHome.Accents);
+                return;
+            }
+
             Image homeBackground = CreateBackground(
                 screen,
                 background);
@@ -1306,7 +1354,11 @@ namespace CalmSpace.Editor
             out Text title,
             out Text body,
             out Text reward,
-            out Text nextText)
+            out Text nextText,
+            out Button retrySaveButton,
+            out Button returnWithoutSavingButton,
+            out Text retrySaveText,
+            out Text returnWithoutSavingText)
         {
             Image dim = CreateImage(
                 screen,
@@ -1467,6 +1519,44 @@ namespace CalmSpace.Editor
                 localizedTexts,
                 home.Label,
                 DemoTextKey.BackHome);
+
+            ButtonVisual retry = CreateButton(
+                card.rectTransform,
+                "Retry Save",
+                "Retry save",
+                rounded,
+                font,
+                24,
+                Coral);
+            SetAnchored(
+                retry.Rect,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(-208f, 66f),
+                new Vector2(394f, 108f));
+            retrySaveButton = retry.Button;
+            retrySaveText = retry.Label;
+            accentImages.Add(retry.Background);
+            primaryTexts.Add(retry.Label);
+
+            ButtonVisual returnWithout = CreateButton(
+                card.rectTransform,
+                "Return Without Saving",
+                "Return without saving",
+                rounded,
+                font,
+                22,
+                new Color(0.15f, 0.23f, 0.20f, 1f));
+            SetAnchored(
+                returnWithout.Rect,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(208f, 66f),
+                new Vector2(394f, 108f));
+            returnWithoutSavingButton = returnWithout.Button;
+            returnWithoutSavingText = returnWithout.Label;
+            panelImages.Add(returnWithout.Background);
+            primaryTexts.Add(returnWithout.Label);
         }
 
         private static void BuildLoadingOverlay(
